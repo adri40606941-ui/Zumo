@@ -585,4 +585,20 @@ while true; do
   banner
   op 1 "Usuario"
   op 2 "Protocolos"
-  op 0
+    op 0 "Salir"
+  echo -e "\n  $L"
+  read -t 10 -rp "  Opción: " o || continue
+  case $o in
+    1) menu_usuario ;; 2) menu_protocolos ;;
+    0) clear; exit 0 ;;
+    "") continue ;;
+    *) msg_err "Opción inválida"; sleep 1 ;;
+  esac
+done
+PANELEOF
+chmod +x /usr/local/bin/zumo
+echo -e "      \e[1;32m✔ listo\e[0m"
+
+echo
+echo -e "\e[1;32m✔ Panel instalado correctamente.\e[0m"
+echo -e "\e[1;32mEscribí \e[1;38;5;87mzumo\e[1;32m para abrir el panel.\e[0m"
