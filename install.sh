@@ -361,7 +361,7 @@ cat > /etc/zumo/limitador.sh <<'LIMEOF'
 #!/bin/bash
 DB=/etc/zumo/usuarios.db
 while true; do
-while IFS=: read -r u lim exp hwid; do
+while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 mapfile -t pids < <(ps -u "$u" -o pid=,comm= --sort=start_time 2>/dev/null | awk '$2=="sshd"{print $1}')
 n=${#pids[@]}
@@ -394,7 +394,7 @@ echo -e "\e[1;33m[5/5]\e[0m Instalando panel..."
 
 cat > /usr/local/bin/zumo <<'PANELEOF'
 #!/bin/bash
-# DB: usuario:limite:vencimiento:hwid   (hwid = "-" si no tiene)
+# DB: usuario:limite:vencimiento
 DB=/etc/zumo/usuarios.db
 N='\e[0m'
 L='\e[38;5;240m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m'
@@ -453,39 +453,13 @@ read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
 [[ "$lim" =~ ^[0-9]+$ ]] || { msg_err "Límite inválido"; pausa; return; }
 exp=$(date -d "+$d days" +%F)
 useradd -M -s /bin/false -e "$exp" "$u" && echo "$u:$p" | chpasswd
-echo "$u:$lim:$exp:-" >> "$DB"
+echo "$u:$lim:$exp" >> "$DB"
 echo; echo -e " $L"
 msg_ok "Usuario creado"
 echo -e "   Usuario:    \e[1;38;5;87m$u${N}"
 echo -e "   Contraseña: \e[1;38;5;87m$p${N}"
 echo -e "   Duración:   \e[1;38;5;87m$(dias "$exp")${N}"
 echo -e "   Límite:     \e[1;38;5;87m$lim conexión(es)${N}"
-echo -e " $L"; pausa
-}
-
-crear_usuario_hwid() {
-banner; echo -e " \e[1;38;5;87mCREAR USUARIO CON HWID${N}\n"
-echo -e " \e[1;38;5;240mEl candado por HWID lo aplica la app (HTTP Custom).\e[0m"
-echo -e " \e[1;38;5;240mAcá se guarda el HWID y se fija 1 sola conexión.\e[0m\n"
-read -rp " Usuario: " u
-[[ "$u" =~ ^[a-z_][a-z0-9_-]*$ ]] || { msg_err "Nombre inválido"; pausa; return; }
-id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
-read -rp " HWID del dispositivo: " hwid
-hwid=$(echo "$hwid" | tr -d ' :')
-[ -z "$hwid" ] && { msg_err "HWID vacío"; pausa; return; }
-read -rp " Días de duración: " d
-[[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
-p=$(tr -dc 'a-z0-9' </dev/urandom | head -c8)
-exp=$(date -d "+$d days" +%F)
-useradd -M -s /bin/false -e "$exp" "$u" && echo "$u:$p" | chpasswd
-echo "$u:1:$exp:$hwid" >> "$DB"
-echo; echo -e " $L"
-msg_ok "Usuario con HWID creado"
-echo -e "   Usuario:    \e[1;38;5;87m$u${N}"
-echo -e "   Contraseña: \e[1;38;5;87m$p${N}"
-echo -e "   HWID:       \e[1;38;5;87m$hwid${N}"
-echo -e "   Duración:   \e[1;38;5;87m$(dias "$exp")${N}"
-echo -e "   Límite:     \e[1;38;5;87m1 conexión (un dispositivo)${N}"
 echo -e " $L"; pausa
 }
 
@@ -503,7 +477,7 @@ banner; echo -e " \e[1;38;5;87mUSUARIOS VENCIDOS${N}\n"
 if [ ! -s "$DB" ]; then msg_err "No hay usuarios"; pausa; return; fi
 hoy=$(date -d "$(date +%F)" +%s)
 VENC=()
-while IFS=: read -r u lim exp hwid; do
+while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 e=$(date -d "$exp" +%s 2>/dev/null) || continue
 [ "$e" -lt "$hoy" ] && VENC+=("$u|$exp")
@@ -543,12 +517,11 @@ msg_ok "Límite de $SEL ahora es $lim"; pausa
 listar_usuarios() {
 banner; echo -e " \e[1;38;5;87mUSUARIOS REGISTRADOS${N}\n"
 if [ ! -s "$DB" ]; then msg_err "No hay usuarios"; pausa; return; fi
-printf " \e[1;38;5;213m%-12s %-5s %-6s %-13s %s${N}\n" "USUARIO" "LÍM" "ONLINE" "VENCIMIENTO" "HWID"
-while IFS=: read -r u lim exp hwid; do
+printf " \e[1;38;5;213m%-14s %-8s %-10s %s${N}\n" "USUARIO" "LÍMITE" "ONLINE" "VENCIMIENTO"
+while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 on=$(ps -u "$u" -o comm= 2>/dev/null | grep -c '^sshd$')
-[ -z "$hwid" ] && hwid="-"
-printf " %-12s %-5s %-6s %-13s %s\n" "$u" "$lim" "$on" "$(dias "$exp")" "$hwid"
+printf " %-14s %-8s %-10s %s\n" "$u" "$lim" "$on" "$(dias "$exp")"
 done < "$DB"
 pausa
 }
@@ -557,20 +530,18 @@ menu_usuario() {
 while true; do
 banner; echo -e " \e[1;38;5;87mUSUARIO${N}\n"
 op 1 "Crear usuario"
-op 2 "Crear usuario con HWID"
-op 3 "Eliminar usuario"
-op 4 "Cambiar límite de conexiones"
-op 5 "Ver usuarios"
-op 6 "Usuarios vencidos"
+op 2 "Eliminar usuario"
+op 3 "Cambiar límite de conexiones"
+op 4 "Ver usuarios"
+op 5 "Usuarios vencidos"
 op 0 "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) crear_usuario ;;
-2) crear_usuario_hwid ;;
-3) eliminar_usuario ;;
-4) cambiar_limite ;;
-5) listar_usuarios ;;
-6) vencidos ;;
+2) eliminar_usuario ;;
+3) cambiar_limite ;;
+4) listar_usuarios ;;
+5) vencidos ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
