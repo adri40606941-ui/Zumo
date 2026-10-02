@@ -470,13 +470,12 @@ echo -e " \e[1;38;5;240mAcá se guarda el HWID y se fija 1 sola conexión.\e[0m\
 read -rp " Usuario: " u
 [[ "$u" =~ ^[a-z_][a-z0-9_-]*$ ]] || { msg_err "Nombre inválido"; pausa; return; }
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
-read -rp " Contraseña: " p
-[ -z "$p" ] && { msg_err "Contraseña vacía"; pausa; return; }
 read -rp " HWID del dispositivo: " hwid
 hwid=$(echo "$hwid" | tr -d ' :')
 [ -z "$hwid" ] && { msg_err "HWID vacío"; pausa; return; }
 read -rp " Días de duración: " d
 [[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
+p=$(tr -dc 'a-z0-9' </dev/urandom | head -c8)
 exp=$(date -d "+$d days" +%F)
 useradd -M -s /bin/false -e "$exp" "$u" && echo "$u:$p" | chpasswd
 echo "$u:1:$exp:$hwid" >> "$DB"
