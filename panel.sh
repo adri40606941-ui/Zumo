@@ -52,7 +52,15 @@ read -rp " Usuario: " u
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
 read -rp " Contraseña: " p
 [ -z "$p" ] && { msg_err "Contraseña vacía"; pausa; return; }
-read -rp " Días de duración: " d
+echo -e " Sugerencias: \e[1;38;5;213m[1]\e[0m 7 días   \e[1;38;5;213m[2]\e[0m 15 días   \e[1;38;5;213m[3]\e[0m 30 días   \e[1;38;5;213m[4]\e[0m Otro"
+read -rp " Días de duración: " dopt
+case "$dopt" in
+1) d=7 ;;
+2) d=15 ;;
+3) d=30 ;;
+4) read -rp " Cuántos días: " d ;;
+*) d="$dopt" ;;
+esac
 [[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
 read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
 [[ "$lim" =~ ^[0-9]+$ ]] || { msg_err "Límite inválido"; pausa; return; }
@@ -110,13 +118,49 @@ msg_ok "${#VENC[@]} usuario(s) vencido(s) eliminado(s)"; pausa ;;
 esac
 }
 
-cambiar_limite() {
-banner; echo -e " \e[1;38;5;87mCAMBIAR LÍMITE DE CONEXIONES${N}\n"
+editar_usuario() {
+banner; echo -e " \e[1;38;5;87mEDITAR USUARIO${N}\n"
 elegir_usuario || { pausa; return; }
-read -rp " Nuevo límite para $SEL: " lim
-[[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido"; pausa; return; }
-awk -F: -v u="$SEL" -v l="$lim" 'BEGIN{OFS=":"} $1==u{$2=l} {print}' "$DB" > "$DB.tmp" && mv "$DB.tmp" "$DB"
-msg_ok "Límite de $SEL ahora es $lim"; pausa
+while true; do
+local info lim exp
+info=$(awk -F: -v u="$SEL" '$1==u{print $2":"$3}' "$DB")
+lim="${info%%:*}"
+exp="${info#*:}"
+banner; echo -e " \e[1;38;5;87mEDITAR USUARIO: $SEL${N}\n"
+echo -e "   Límite actual:      \e[1;33m$lim${N}"
+echo -e "   Vencimiento actual: \e[1;33m$exp ($(dias "$exp"))${N}\n"
+op 1 "Cambiar contraseña"
+op 2 "Cambiar límite de conexiones"
+op 3 "Cambiar días (vencimiento)"
+op 0 "Volver"
+echo -e "\n $L"; read -rp " Opción: " eo
+case $eo in
+1) read -rp " Contraseña nueva para $SEL: " np
+[ -z "$np" ] && { msg_err "Contraseña vacía"; sleep 1; continue; }
+echo "$SEL:$np" | chpasswd
+msg_ok "Contraseña de $SEL actualizada"; sleep 1 ;;
+2) read -rp " Nuevo límite para $SEL [$lim]: " nl; nl=${nl:-$lim}
+[[ "$nl" =~ ^[0-9]+$ ]] && [ "$nl" -ge 1 ] || { msg_err "Límite inválido"; sleep 1; continue; }
+awk -F: -v u="$SEL" -v l="$nl" 'BEGIN{OFS=":"} $1==u{$2=l} {print}' "$DB" > "$DB.tmp" && mv "$DB.tmp" "$DB"
+msg_ok "Límite de $SEL ahora es $nl"; sleep 1 ;;
+3) echo -e " Sugerencias: \e[1;38;5;213m[1]\e[0m 7 días   \e[1;38;5;213m[2]\e[0m 15 días   \e[1;38;5;213m[3]\e[0m 30 días   \e[1;38;5;213m[4]\e[0m Otro"
+read -rp " Días desde hoy: " dopt
+case "$dopt" in
+1) nd=7 ;;
+2) nd=15 ;;
+3) nd=30 ;;
+4) read -rp " Cuántos días: " nd ;;
+*) nd="$dopt" ;;
+esac
+[[ "$nd" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; sleep 1; continue; }
+nexp=$(date -d "+$nd days" +%F)
+usermod -e "$nexp" "$SEL" 2>/dev/null
+awk -F: -v u="$SEL" -v e="$nexp" 'BEGIN{OFS=":"} $1==u{$3=e} {print}' "$DB" > "$DB.tmp" && mv "$DB.tmp" "$DB"
+msg_ok "Vencimiento de $SEL ahora: $nexp ($(dias "$nexp"))"; sleep 1 ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
 }
 
 listar_usuarios() {
@@ -136,7 +180,7 @@ while true; do
 banner; echo -e " \e[1;38;5;87mUSUARIO${N}\n"
 op 1 "Crear usuario"
 op 2 "Eliminar usuario"
-op 3 "Cambiar límite de conexiones"
+op 3 "Editar usuario"
 op 4 "Ver usuarios"
 op 5 "Usuarios vencidos"
 op 0 "Volver"
@@ -144,7 +188,7 @@ echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) crear_usuario ;;
 2) eliminar_usuario ;;
-3) cambiar_limite ;;
+3) editar_usuario ;;
 4) listar_usuarios ;;
 5) vencidos ;;
 0) return ;;
