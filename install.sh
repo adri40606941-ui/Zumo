@@ -9,7 +9,7 @@ echo -e "║         INSTALANDO PANEL         ║"
 echo -e "╚══════════════════════════════════╝\e[0m"
 echo
 
-echo -e "\e[1;33m[1/8]\e[0m Instalando dependencias..."
+echo -e "\e[1;33m[1/7]\e[0m Instalando dependencias..."
 apt-get update -y >/dev/null 2>&1
 apt-get install -y --no-install-recommends procps iproute2 curl ca-certificates >/dev/null 2>&1
 mkdir -p /etc/zumo
@@ -17,7 +17,7 @@ touch /etc/zumo/usuarios.db
 grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[2/8]\e[0m Creando activador de protocolos..."
+echo -e "\e[1;33m[2/7]\e[0m Creando activador de protocolos..."
 
 cat > /etc/zumo/activar-protocolos.sh <<'ZUMOACT'
 #!/bin/bash
@@ -357,7 +357,7 @@ ZUMOACT
 chmod +x /etc/zumo/activar-protocolos.sh
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[3/8]\e[0m Creando desactivador de protocolos..."
+echo -e "\e[1;33m[3/7]\e[0m Creando desactivador de protocolos..."
 
 cat > /etc/zumo/desactivar-protocolos.sh <<'DESEOF'
 #!/bin/bash
@@ -379,7 +379,7 @@ DESEOF
 chmod +x /etc/zumo/desactivar-protocolos.sh
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[4/8]\e[0m Instalando limitador de conexiones..."
+echo -e "\e[1;33m[4/7]\e[0m Instalando limitador de conexiones..."
 
 cat > /etc/zumo/limitador.sh <<'LIMEOF'
 #!/bin/bash
@@ -414,14 +414,17 @@ systemctl daemon-reload >/dev/null 2>&1
 systemctl enable --now zumo-limit >/dev/null 2>&1
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[5/8]\e[0m Creando activador de HCR Server..."
+echo -e "\e[1;33m[5/7]\e[0m Creando activador de HCR Server..."
 
 cat > /etc/zumo/activar-hcr.sh <<'ZUMOHCRACT'
 #!/bin/bash
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 DIR=/opt/hcr-server
-PUERTO=8880
+PUERTO="${1:-8880}"
+case "$PUERTO" in ''|*[!0-9]*) echo "Puerto inválido: $PUERTO"; exit 1 ;; esac
+PUERTO=$((10#$PUERTO))
+if [ "$PUERTO" -lt 1 ] || [ "$PUERTO" -gt 65535 ]; then echo "El puerto debe estar entre 1 y 65535"; exit 1; fi
 BASE="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
 
 __oculto() {
@@ -472,6 +475,7 @@ mv -f "$INS_TMP" "$DIR/install.sh"
 _hcr_install() { "$DIR/install.sh" --port "$PUERTO" --transport plain; }
 __oculto "[3/3] Instalando servicio en el puerto $PUERTO" _hcr_install || { echo "Falló el instalador de HCR"; exit 1; }
 systemctl is-active --quiet hcr-server || { echo "hcr-server no quedó activo"; exit 1; }
+echo "$PUERTO" > /etc/zumo/hcr.port
 echo "hcr-server activo en el puerto $PUERTO"
 ZUMOHCRACT
 
@@ -480,6 +484,8 @@ chmod +x /etc/zumo/activar-hcr.sh
 cat > /etc/zumo/desactivar-hcr.sh <<'DESHCREOF'
 #!/bin/bash
 DIR=/opt/hcr-server
+PUERTO=$(cat /etc/zumo/hcr.port 2>/dev/null)
+[[ "$PUERTO" =~ ^[0-9]+$ ]] || PUERTO=8880
 if [ -x "$DIR/install.sh" ]; then
 "$DIR/install.sh" --uninstall >/dev/null 2>&1 || true
 fi
@@ -487,7 +493,8 @@ systemctl disable --now hcr-server 2>/dev/null
 while read -r pid; do
 [ -z "$pid" ] && continue
 [ "$(ps -o comm= -p "$pid" 2>/dev/null)" = "hcr-server" ] && kill -9 "$pid" 2>/dev/null
-done < <(ss -ltnpH "sport = :8880" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+done < <(ss -ltnpH "sport = :$PUERTO" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+rm -f /etc/zumo/hcr.port
 systemctl daemon-reload
 systemctl reset-failed hcr-server 2>/dev/null
 exit 0
@@ -496,7 +503,7 @@ DESHCREOF
 chmod +x /etc/zumo/desactivar-hcr.sh
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[6/8]\e[0m Creando activador de BHTTP..."
+echo -e "\e[1;33m[6/7]\e[0m Creando activador de BHTTP..."
 
 cat > /etc/zumo/activar-bhttp.sh <<'ZUMOBHTTPACT'
 #!/bin/bash
@@ -660,7 +667,7 @@ DESBHTTPEOF
 chmod +x /etc/zumo/desactivar-bhttp.sh
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[7/8]\e[0m Instalando panel..."
+echo -e "\e[1;33m[7/7]\e[0m Instalando panel..."
 
 PANEL_URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/panel.sh"
 PANEL_TMP=$(mktemp)
@@ -675,28 +682,8 @@ fi
 echo -e " \e[1;32m✔ listo\e[0m"
 echo
 
-echo -e "\e[1;33m[8/8]\e[0m Instalando banner de bienvenida..."
-BANNER_URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/zumo-banner.sh"
-if curl -fsSL "$BANNER_URL" -o /etc/zumo/banner.sh && bash -n /etc/zumo/banner.sh; then
-chmod +x /etc/zumo/banner.sh
-mkdir -p /etc/update-motd.d
-cat > /etc/update-motd.d/00-zumo <<'MOTDEOF'
-#!/bin/bash
-[ -x /etc/zumo/banner.sh ] && /etc/zumo/banner.sh
-MOTDEOF
-chmod +x /etc/update-motd.d/00-zumo
-/etc/zumo/banner.sh > /etc/motd 2>/dev/null
-echo -e "\e[38;5;214m   ¡Hasta pronto! — ZUMO\e[0m" > /root/.zumo-bye 2>/dev/null
-grep -q '.zumo-bye' /root/.bash_logout 2>/dev/null || echo 'cat /root/.zumo-bye 2>/dev/null' >> /root/.bash_logout
-echo -e " \e[1;32m✔ listo\e[0m"
-else
-echo -e " \e[1;31m✘ No se pudo instalar el banner (no afecta el resto del panel)\e[0m"
-fi
-echo
-
 echo -e "\e[1;38;5;201m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
 echo -e "\e[1;32m ✔ instalado correctamente.\e[0m"
 echo -e "\e[1;32m Escribí \e[1;38;5;87mzumo\e[1;32m para abrir el panel.\e[0m"
 echo -e "\e[1;38;5;201m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
 echo
-[ -x /etc/zumo/banner.sh ] && /etc/zumo/banner.sh

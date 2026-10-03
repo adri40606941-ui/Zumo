@@ -262,28 +262,40 @@ esac
 done
 }
 
+hcr_port() {
+local p
+p=$(cat /etc/zumo/hcr.port 2>/dev/null)
+[[ "$p" =~ ^[0-9]+$ ]] || p=8880
+echo "$p"
+}
+
 menu_hcr() {
 while true; do
 banner; echo -e " \e[1;38;5;141mHCR SERVER${N}\n"
 if systemctl is-active --quiet hcr-server; then
-echo -e " \e[1;32m● HCR Server: activo (8880 → SSH)${N}\n"
+echo -e " \e[1;32m● HCR Server: activo ($(hcr_port) → SSH)${N}\n"
 else
 echo -e " \e[1;31m● HCR Server: inactivo${N}\n"
 fi
-op 1 "⚡" "Activar"
+op 1 "⚡" "Activar (elegís el puerto)"
 op 2 "✖" "Desactivar"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
-1) echo -e " \e[1;38;5;141mInstalando HCR Server, aguardá...${N}"
-if bash /etc/zumo/activar-hcr.sh; then
-msg_ok "HCR Server activo en el puerto 8880 (→ SSH 22)"
+1) read -rp " Puerto para HCR [8880]: " hp; hp=${hp:-8880}
+if ! [[ "$hp" =~ ^[0-9]+$ ]] || [ "$hp" -lt 1 ] || [ "$hp" -gt 65535 ]; then
+msg_err "Puerto inválido (1-65535)"
+else
+echo -e " \e[1;38;5;141mInstalando HCR Server en el puerto ${hp}, aguardá...${N}"
+if bash /etc/zumo/activar-hcr.sh "$hp"; then
+msg_ok "HCR Server activo en el puerto $hp (→ SSH 22)"
 else
 msg_err "Falló; revisá 'journalctl -u hcr-server'"
+fi
 fi; pausa ;;
-2) echo -e " \e[1;38;5;141mLiberando puerto 8880...${N}"
+2) echo -e " \e[1;38;5;141mLiberando el puerto de HCR...${N}"
 bash /etc/zumo/desactivar-hcr.sh
-msg_ok "HCR Server desactivado; puerto 8880 liberado"; pausa ;;
+msg_ok "HCR Server desactivado; puerto liberado"; pausa ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
