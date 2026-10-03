@@ -397,7 +397,7 @@ cat > /etc/zumo/activar-hcr.sh <<'ZUMOHCRACT'
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 DIR=/opt/hcr-server
-PUERTO=8080
+PUERTO=8880
 BASE="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
 
 echo "[1/3] Dependencias..."
@@ -438,7 +438,7 @@ systemctl disable --now hcr-server 2>/dev/null
 while read -r pid; do
 [ -z "$pid" ] && continue
 [ "$(ps -o comm= -p "$pid" 2>/dev/null)" = "hcr-server" ] && kill -9 "$pid" 2>/dev/null
-done < <(ss -ltnpH "sport = :8080" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+done < <(ss -ltnpH "sport = :8880" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
 systemctl daemon-reload
 systemctl reset-failed hcr-server 2>/dev/null
 exit 0
