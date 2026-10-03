@@ -452,8 +452,9 @@ function toggleEdit(usuario){
 }
 
 function fila(u){
+  // u.usuario solo trae letras/números/_/- (validado en el servidor), así que es
+  // seguro meterlo directo en atributos HTML y en URLs sin escapar comillas a mano.
   var nombre = escapeHtml(u.nombre);
-  var nombreJs = nombre.replace(/'/g, "\\'");
   var usr = encodeURIComponent(u.usuario);
   var expClass = u.dias === 'vencido' ? 'bad' : (u.dias === 'vence hoy' ? 'warn' : '');
   var estado = u.bloqueado
@@ -464,16 +465,16 @@ function fila(u){
   var editId = 'edit-' + u.usuario;
   var abierto = !!abiertos[u.usuario];
   return '' +
-  '<div class="urow-wrap">' +
+  '<div class="urow-wrap" data-usuario="'+u.usuario+'" data-nombre="'+nombre+'">' +
     '<div class="urow">' +
-      '<div class="uinfo" onclick="toggleEdit(\''+u.usuario+'\')">' +
+      '<div class="uinfo" data-action="toggle">' +
         '<div class="uname">'+nombre+'</div>' +
         '<div class="umeta">' + estado +
           '<span>límite '+u.limite+'</span>' +
           '<span class="exp '+expClass+'">'+u.dias+'</span>' +
         '</div>' +
       '</div>' +
-      '<button type="button" class="btn-edit" onclick="toggleEdit(\''+u.usuario+'\')">Editar</button>' +
+      '<button type="button" class="btn-edit" data-action="toggle">Editar</button>' +
     '</div>' +
     '<div class="edit-panel'+(abierto ? '' : ' hide')+'" id="'+editId+'">' +
       '<div class="erow">' +
@@ -499,12 +500,26 @@ function fila(u){
         '<form method="post" action="/bloquear/'+usr+'">' +
           '<button class="btn-mini'+(u.bloqueado ? '' : ' btn-warn')+'" type="submit">'+(u.bloqueado ? 'Desbloquear' : 'Bloquear')+'</button>' +
         '</form>' +
-        '<form method="post" action="/eliminar/'+usr+'" onsubmit="return confirm(\\'Borrar a '+nombreJs+'?\\')">' +
+        '<form method="post" action="/eliminar/'+usr+'" data-action="confirmar-borrado">' +
           '<button class="btn-danger" type="submit">Borrar</button>' +
         '</form>' +
       '</div>' +
     '</div>' +
   '</div>';
+}
+
+function bindRows(){
+  document.querySelectorAll('[data-action="toggle"]').forEach(function(el){
+    el.onclick = function(){
+      toggleEdit(el.closest('.urow-wrap').dataset.usuario);
+    };
+  });
+  document.querySelectorAll('[data-action="confirmar-borrado"]').forEach(function(f){
+    f.onsubmit = function(){
+      var nombre = f.closest('.urow-wrap').dataset.nombre;
+      return confirm('¿Borrar a ' + nombre + '?');
+    };
+  });
 }
 
 function actualizar(){
@@ -519,7 +534,8 @@ function actualizar(){
       return;
     }
     el.innerHTML = d.usuarios.map(fila).join('');
-  }).catch(() => {});
+    bindRows();
+  }).catch(e => { console.error('Panel Zumo: fallo al actualizar', e); });
 }
 actualizar();
 setInterval(actualizar, 3000);
