@@ -346,6 +346,7 @@ input:focus{outline:none;border-color:var(--violet-dim)}
 .erow form{display:flex;gap:8px;flex:1}
 .erow input{flex:1}
 .erow-actions{display:flex;gap:8px;justify-content:flex-end}
+.erow-msg{background:var(--bad-bg);color:var(--bad);padding:8px 10px;border-radius:7px;font-size:.78rem}
 
 .empty{color:var(--text-dim);font-size:.85rem;text-align:center;padding:20px 0}
 
@@ -444,9 +445,11 @@ function escapeHtml(s){
 }
 
 var abiertos = {};
+var errores = {};
 
 function toggleEdit(usuario){
   abiertos[usuario] = !abiertos[usuario];
+  if (!abiertos[usuario]) delete errores[usuario];
   var el = document.getElementById('edit-' + usuario);
   if (el) el.classList.toggle('hide', !abiertos[usuario]);
 }
@@ -464,6 +467,7 @@ function fila(u){
       : '<span class="status"><span class="bulb"></span>offline</span>');
   var editId = 'edit-' + u.usuario;
   var abierto = !!abiertos[u.usuario];
+  var error = errores[u.usuario] || '';
   return '' +
   '<div class="urow-wrap" data-usuario="'+u.usuario+'" data-nombre="'+nombre+'">' +
     '<div class="urow">' +
@@ -477,30 +481,31 @@ function fila(u){
       '<button type="button" class="btn-edit" data-action="toggle">Editar</button>' +
     '</div>' +
     '<div class="edit-panel'+(abierto ? '' : ' hide')+'" id="'+editId+'">' +
+      '<div class="erow-msg'+(error ? '' : ' hide')+'" id="msg-'+editId+'">'+error+'</div>' +
       '<div class="erow">' +
-        '<form method="post" action="/renovar/'+usr+'">' +
+        '<form method="post" action="/renovar/'+usr+'" class="ajax-form">' +
           '<input type="number" name="dias" min="1" placeholder="Días a sumar" required>' +
           '<button class="btn-mini" type="submit">Renovar</button>' +
         '</form>' +
       '</div>' +
       '<div class="erow">' +
-        '<form method="post" action="/limite/'+usr+'">' +
+        '<form method="post" action="/limite/'+usr+'" class="ajax-form">' +
           '<input type="number" name="limite" min="1" value="'+u.limite+'">' +
           '<button class="btn-mini" type="submit">Guardar límite</button>' +
         '</form>' +
       '</div>' +
       (u.es_hwid ?
         '<div class="erow">' +
-          '<form method="post" action="/hwid/'+usr+'">' +
+          '<form method="post" action="/hwid/'+usr+'" class="ajax-form f-hwid">' +
             '<input type="text" name="nuevo_hwid" placeholder="HWID nuevo (app regenerada)" maxlength="32">' +
             '<button class="btn-mini" type="submit">Cambiar HWID</button>' +
           '</form>' +
         '</div>' : '') +
       '<div class="erow-actions">' +
-        '<form method="post" action="/bloquear/'+usr+'">' +
+        '<form method="post" action="/bloquear/'+usr+'" class="ajax-form">' +
           '<button class="btn-mini'+(u.bloqueado ? '' : ' btn-warn')+'" type="submit">'+(u.bloqueado ? 'Desbloquear' : 'Bloquear')+'</button>' +
         '</form>' +
-        '<form method="post" action="/eliminar/'+usr+'" data-action="confirmar-borrado">' +
+        '<form method="post" action="/eliminar/'+usr+'" class="ajax-form" data-action="confirmar-borrado">' +
           '<button class="btn-danger" type="submit">Borrar</button>' +
         '</form>' +
       '</div>' +
@@ -508,16 +513,53 @@ function fila(u){
   '</div>';
 }
 
+var MENSAJES_ERROR = {
+  hwid: 'HWID inválido, o ya usado por otro cliente.',
+  existe: 'Ya existe un usuario con ese nombre o HWID.'
+};
+
 function bindRows(){
   document.querySelectorAll('[data-action="toggle"]').forEach(function(el){
     el.onclick = function(){
       toggleEdit(el.closest('.urow-wrap').dataset.usuario);
     };
   });
-  document.querySelectorAll('[data-action="confirmar-borrado"]').forEach(function(f){
-    f.onsubmit = function(){
-      var nombre = f.closest('.urow-wrap').dataset.nombre;
-      return confirm('¿Borrar a ' + nombre + '?');
+
+  document.querySelectorAll('.ajax-form').forEach(function(f){
+    f.onsubmit = function(e){
+      e.preventDefault();
+      var wrap = f.closest('.urow-wrap');
+      var usuario = wrap.dataset.usuario;
+      var nombre = wrap.dataset.nombre;
+
+      if (f.dataset.action === 'confirmar-borrado' && !confirm('¿Borrar a ' + nombre + '?')) return;
+
+      // Si es "cambiar HWID", guardamos el nuevo nombre para que el panel
+      // siga abierto después del refresh (la fila cambia de usuario).
+      var nuevoHwidInput = f.querySelector('input[name="nuevo_hwid"]');
+      var nuevoHwid = nuevoHwidInput ? nuevoHwidInput.value.trim() : null;
+
+      var btn = f.querySelector('button');
+      var textoOriginal = btn.textContent;
+      btn.disabled = true; btn.textContent = '…';
+
+      fetch(f.action, { method: 'POST', body: new FormData(f) }).then(function(r){
+        var url = new URL(r.url);
+        var error = url.searchParams.get('error');
+        abiertos[usuario] = true;
+        if (error){
+          errores[usuario] = MENSAJES_ERROR[error] || 'No se pudo completar la acción.';
+        } else {
+          delete errores[usuario];
+          if (nuevoHwid){ abiertos[nuevoHwid] = true; delete errores[nuevoHwid]; }
+        }
+      }).catch(function(){
+        abiertos[usuario] = true;
+        errores[usuario] = 'No se pudo conectar con el panel.';
+      }).finally(function(){
+        btn.disabled = false; btn.textContent = textoOriginal;
+        actualizar();
+      });
     };
   });
 }
