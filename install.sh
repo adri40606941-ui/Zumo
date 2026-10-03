@@ -9,7 +9,7 @@ echo -e "║         INSTALANDO PANEL         ║"
 echo -e "╚══════════════════════════════════╝\e[0m"
 echo
 
-echo -e "\e[1;33m[1/7]\e[0m Instalando dependencias..."
+echo -e "\e[1;33m[1/9]\e[0m Instalando dependencias..."
 apt-get update -y >/dev/null 2>&1
 apt-get install -y --no-install-recommends procps iproute2 curl ca-certificates >/dev/null 2>&1
 mkdir -p /etc/zumo
@@ -17,9 +17,9 @@ touch /etc/zumo/usuarios.db
 grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[2/7]\e[0m Creando activador de protocolos..."
+echo -e "\e[1;33m[2/9]\e[0m Creando activador de PDirect (WebSocket 80)..."
 
-cat > /etc/zumo/activar-protocolos.sh <<'ZUMOACT'
+cat > /etc/zumo/activar-pdirect.sh <<'ZUMOPDIRECTACT'
 #!/bin/bash
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
@@ -48,8 +48,8 @@ rm -f "$log"
 return $rc
 }
 
-_deps_protocolos() { apt-get update && apt-get install -y --no-install-recommends ca-certificates git cmake make gcc libc6-dev libevent-dev; }
-__oculto "[1/4] Dependencias" _deps_protocolos || exit 1
+_deps_pdirect() { apt-get update && apt-get install -y --no-install-recommends ca-certificates gcc libc6-dev libevent-dev; }
+__oculto "[1/3] Dependencias" _deps_pdirect || exit 1
 
 cat > "$WORK/pdirect.c" <<'ZUMO_PDIRECT_C'
 #define _GNU_SOURCE
@@ -298,21 +298,11 @@ return 0;
 ZUMO_PDIRECT_C
 
 _pdirect_build() { gcc -O2 -o "$WORK/pdirect-c" "$WORK/pdirect.c" -levent_core; }
-__oculto "[2/4] Compilando PDirect-C" _pdirect_build || exit 1
+__oculto "[2/3] Compilando PDirect-C" _pdirect_build || exit 1
 
-_badvpn_build() {
-git clone --depth 1 https://github.com/ambrop72/badvpn.git "$WORK/badvpn" &&
-cmake -S "$WORK/badvpn" -B "$WORK/badvpn/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 &&
-cmake --build "$WORK/badvpn/build" --parallel 2
-}
-__oculto "[3/4] Compilando BadVPN UDPGW" _badvpn_build || exit 1
-[ -x "$WORK/badvpn/build/udpgw/badvpn-udpgw" ] || { echo " No se compiló UDPGW"; exit 1; }
-
-echo "[4/4] Instalando y activando..."
-systemctl stop pdirect-80 udpgw-7300 2>/dev/null || true
-install -d -m 0755 /opt/badvpn
+echo "[3/3] Instalando y activando..."
+systemctl stop pdirect-80 2>/dev/null || true
 install -m 0755 "$WORK/pdirect-c" /usr/local/bin/pdirect-c
-install -m 0755 "$WORK/badvpn/build/udpgw/badvpn-udpgw" /opt/badvpn/badvpn-udpgw
 
 cat > /etc/systemd/system/pdirect-80.service <<'U1'
 [Unit]
@@ -331,12 +321,86 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 U1
 
+systemctl daemon-reload
+systemctl enable --now pdirect-80
+rm -rf "$WORK"
+sleep 1
+systemctl is-active --quiet pdirect-80
+ZUMOPDIRECTACT
+
+chmod +x /etc/zumo/activar-pdirect.sh
+echo -e " \e[1;32m✔ listo\e[0m"
+
+echo -e "\e[1;33m[3/9]\e[0m Creando desactivador de PDirect..."
+
+cat > /etc/zumo/desactivar-pdirect.sh <<'DESPDEOF'
+#!/bin/bash
+systemctl disable --now pdirect-80 2>/dev/null
+while read -r pid; do
+[ -z "$pid" ] && continue
+[ "$(ps -o comm= -p "$pid" 2>/dev/null)" = "pdirect-c" ] && kill -9 "$pid" 2>/dev/null
+done < <(ss -ltnpH "sport = :80" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+rm -f /etc/systemd/system/pdirect-80.service
+systemctl daemon-reload
+systemctl reset-failed pdirect-80 2>/dev/null
+DESPDEOF
+
+chmod +x /etc/zumo/desactivar-pdirect.sh
+echo -e " \e[1;32m✔ listo\e[0m"
+
+echo -e "\e[1;33m[4/9]\e[0m Creando activador de BadVPN..."
+
+cat > /etc/zumo/activar-badvpn.sh <<'ZUMOBADVPNACT'
+#!/bin/bash
+[ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+export DEBIAN_FRONTEND=noninteractive
+WORK=$(mktemp -d)
+
+__oculto() {
+local msg="$1"; shift
+local log; log=$(mktemp)
+"$@" >"$log" 2>&1 &
+local pid=$!
+local p=0
+while kill -0 "$pid" 2>/dev/null; do
+p=$(( p + (RANDOM % 4 + 1) ))
+[ "$p" -gt 96 ] && p=96
+printf "\r \e[1;38;5;141m%s...\e[0m \e[1;33m%3d%%\e[0m" "$msg" "$p"
+sleep 0.3
+done
+wait "$pid"; local rc=$?
+if [ "$rc" -eq 0 ]; then
+printf "\r \e[1;38;5;141m%s...\e[0m \e[1;32m100%%\e[0m \e[1;32m✔\e[0m          \n" "$msg"
+else
+printf "\r \e[1;38;5;141m%s...\e[0m \e[1;31mFalló\e[0m          \n" "$msg"
+tail -n 15 "$log" | sed 's/^/   /'
+fi
+rm -f "$log"
+return $rc
+}
+
+_deps_badvpn() { apt-get update && apt-get install -y --no-install-recommends ca-certificates git cmake make gcc libc6-dev; }
+__oculto "[1/3] Dependencias" _deps_badvpn || exit 1
+
+_badvpn_build() {
+git clone --depth 1 https://github.com/ambrop72/badvpn.git "$WORK/badvpn" &&
+cmake -S "$WORK/badvpn" -B "$WORK/badvpn/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 &&
+cmake --build "$WORK/badvpn/build" --parallel 2
+}
+__oculto "[2/3] Compilando BadVPN UDPGW" _badvpn_build || exit 1
+[ -x "$WORK/badvpn/build/udpgw/badvpn-udpgw" ] || { echo " No se compiló UDPGW"; exit 1; }
+
+echo "[3/3] Instalando y activando..."
+systemctl stop udpgw-7300 2>/dev/null || true
+install -d -m 0755 /opt/badvpn
+install -m 0755 "$WORK/badvpn/build/udpgw/badvpn-udpgw" /opt/badvpn/badvpn-udpgw
+
 cat > /etc/systemd/system/udpgw-7300.service <<'U2'
 [Unit]
 Description=ZUMO - BadVPN UDPGW (TCP 7300)
 After=network.target
 [Service]
-ExecStart=/opt/badvpn/badvpn-udpgw --listen-addr 0.0.0.0:7300 --max-clients 3 --max-connections-for-client 256
+ExecStart=/opt/badvpn/badvpn-udpgw --listen-addr 0.0.0.0:7300 --max-clients 200 --max-connections-for-client 256
 SuccessExitStatus=1
 Restart=always
 RestartSec=2
@@ -348,38 +412,33 @@ WantedBy=multi-user.target
 U2
 
 systemctl daemon-reload
-systemctl enable --now pdirect-80 udpgw-7300
+systemctl enable --now udpgw-7300
 rm -rf "$WORK"
-sleep 2
-systemctl is-active pdirect-80 udpgw-7300
-ZUMOACT
+sleep 1
+systemctl is-active --quiet udpgw-7300
+ZUMOBADVPNACT
 
-chmod +x /etc/zumo/activar-protocolos.sh
+chmod +x /etc/zumo/activar-badvpn.sh
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[3/7]\e[0m Creando desactivador de protocolos..."
+echo -e "\e[1;33m[5/9]\e[0m Creando desactivador de BadVPN..."
 
-cat > /etc/zumo/desactivar-protocolos.sh <<'DESEOF'
+cat > /etc/zumo/desactivar-badvpn.sh <<'DESBVEOF'
 #!/bin/bash
-systemctl disable --now pdirect-80 udpgw-7300 2>/dev/null
-for port in 80 7300; do
+systemctl disable --now udpgw-7300 2>/dev/null
 while read -r pid; do
 [ -z "$pid" ] && continue
-name=$(ps -o comm= -p "$pid" 2>/dev/null)
-case "$name" in
-pdirect-c|badvpn-udpgw) kill -9 "$pid" 2>/dev/null ;;
-esac
-done < <(ss -ltnpH "sport = :$port" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
-done
-rm -f /etc/systemd/system/pdirect-80.service /etc/systemd/system/udpgw-7300.service
+[ "$(ps -o comm= -p "$pid" 2>/dev/null)" = "badvpn-udpgw" ] && kill -9 "$pid" 2>/dev/null
+done < <(ss -ltnpH "sport = :7300" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+rm -f /etc/systemd/system/udpgw-7300.service
 systemctl daemon-reload
-systemctl reset-failed pdirect-80 udpgw-7300 2>/dev/null
-DESEOF
+systemctl reset-failed udpgw-7300 2>/dev/null
+DESBVEOF
 
-chmod +x /etc/zumo/desactivar-protocolos.sh
+chmod +x /etc/zumo/desactivar-badvpn.sh
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[4/7]\e[0m Instalando limitador de conexiones..."
+echo -e "\e[1;33m[6/9]\e[0m Instalando limitador de conexiones..."
 
 cat > /etc/zumo/limitador.sh <<'LIMEOF'
 #!/bin/bash
@@ -414,7 +473,7 @@ systemctl daemon-reload >/dev/null 2>&1
 systemctl enable --now zumo-limit >/dev/null 2>&1
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[5/7]\e[0m Creando activador de HCR Server..."
+echo -e "\e[1;33m[7/9]\e[0m Creando activador de HCR Server..."
 
 cat > /etc/zumo/activar-hcr.sh <<'ZUMOHCRACT'
 #!/bin/bash
@@ -503,7 +562,7 @@ DESHCREOF
 chmod +x /etc/zumo/desactivar-hcr.sh
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[6/7]\e[0m Creando activador de BHTTP..."
+echo -e "\e[1;33m[8/9]\e[0m Creando activador de BHTTP..."
 
 cat > /etc/zumo/activar-bhttp.sh <<'ZUMOBHTTPACT'
 #!/bin/bash
@@ -667,7 +726,7 @@ DESBHTTPEOF
 chmod +x /etc/zumo/desactivar-bhttp.sh
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[7/7]\e[0m Instalando panel..."
+echo -e "\e[1;33m[9/9]\e[0m Instalando panel..."
 
 PANEL_URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/panel.sh"
 PANEL_TMP=$(mktemp)

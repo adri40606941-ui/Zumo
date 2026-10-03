@@ -229,37 +229,64 @@ echo -e "   Si sigue en 'Conectando', abrí el puerto $bp en el firewall del pro
 pausa
 }
 
-menu_websocket() {
+menu_pdirect() {
 while true; do
-banner; echo -e " \e[1;38;5;141mWEBSOCKET (PDirect + BadVPN)${N}\n"
+banner; echo -e " \e[1;38;5;141mPDIRECT (WebSocket 80)${N}\n"
 if systemctl is-active --quiet pdirect-80; then
-echo -e " \e[1;32m● PDirect WebSocket: activo (80 → SSH)${N}"
+echo -e " \e[1;32m● PDirect: activo (80 → SSH)${N}\n"
 else
-echo -e " \e[1;31m● PDirect WebSocket: inactivo${N}"
-fi
-if systemctl is-active --quiet udpgw-7300; then
-echo -e " \e[1;32m● BadVPN UDPGW: activo (7300)${N}\n"
-else
-echo -e " \e[1;31m● BadVPN UDPGW: inactivo${N}\n"
+echo -e " \e[1;31m● PDirect: inactivo${N}\n"
 fi
 op 1 "⚡" "Activar"
 op 2 "✖" "Desactivar"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
-1) if systemctl is-active --quiet pdirect-80 && systemctl is-active --quiet udpgw-7300; then
+1) if systemctl is-active --quiet pdirect-80; then
 msg_err "Ya está activo"; pausa
 else
 echo -e " \e[1;38;5;141mCompilando e instalando, aguardá...${N}"
-if bash /etc/zumo/activar-protocolos.sh; then
-msg_ok "WebSocket (80 → SSH) y BadVPN (7300) activos"
+if bash /etc/zumo/activar-pdirect.sh; then
+msg_ok "PDirect activo (80 → SSH)"
 else
-msg_err "Falló; revisá 'journalctl -u pdirect-80 -u udpgw-7300'"
+msg_err "Falló; revisá 'journalctl -u pdirect-80'"
 fi; pausa
 fi ;;
-2) echo -e " \e[1;38;5;141mLiberando puertos 80 y 7300...${N}"
-bash /etc/zumo/desactivar-protocolos.sh
-msg_ok "WebSocket y BadVPN desactivados; puertos 80 y 7300 liberados"; pausa ;;
+2) echo -e " \e[1;38;5;141mLiberando puerto 80...${N}"
+bash /etc/zumo/desactivar-pdirect.sh
+msg_ok "PDirect desactivado; puerto 80 liberado"; pausa ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
+menu_badvpn() {
+while true; do
+banner; echo -e " \e[1;38;5;141mBADVPN (UDPGW 7300)${N}\n"
+if systemctl is-active --quiet udpgw-7300; then
+echo -e " \e[1;32m● BadVPN: activo (7300)${N}\n"
+else
+echo -e " \e[1;31m● BadVPN: inactivo${N}\n"
+fi
+op 1 "⚡" "Activar"
+op 2 "✖" "Desactivar"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) if systemctl is-active --quiet udpgw-7300; then
+msg_err "Ya está activo"; pausa
+else
+echo -e " \e[1;38;5;141mCompilando e instalando, aguardá...${N}"
+if bash /etc/zumo/activar-badvpn.sh; then
+msg_ok "BadVPN activo (7300)"
+else
+msg_err "Falló; revisá 'journalctl -u udpgw-7300'"
+fi; pausa
+fi ;;
+2) echo -e " \e[1;38;5;141mLiberando puerto 7300...${N}"
+bash /etc/zumo/desactivar-badvpn.sh
+msg_ok "BadVPN desactivado; puerto 7300 liberado"; pausa ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
@@ -351,15 +378,17 @@ done
 menu_protocolos() {
 while true; do
 banner; echo -e " \e[1;38;5;141mPROTOCOLOS${N}\n"
-op 1 "⚡" "WebSocket"
-op 2 "⚡" "BHTTP"
-op 3 "⚡" "HCR Server"
+op 1 "⚡" "PDirect (WebSocket)"
+op 2 "⚡" "BadVPN"
+op 3 "⚡" "BHTTP"
+op 4 "⚡" "HCR Server"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
-1) menu_websocket ;;
-2) menu_bhttp ;;
-3) menu_hcr ;;
+1) menu_pdirect ;;
+2) menu_badvpn ;;
+3) menu_bhttp ;;
+4) menu_hcr ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
