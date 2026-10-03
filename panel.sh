@@ -52,15 +52,7 @@ read -rp " Usuario: " u
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
 read -rp " Contraseña: " p
 [ -z "$p" ] && { msg_err "Contraseña vacía"; pausa; return; }
-echo -e " Sugerencias: \e[1;38;5;213m[1]\e[0m 7 días   \e[1;38;5;213m[2]\e[0m 15 días   \e[1;38;5;213m[3]\e[0m 30 días   \e[1;38;5;213m[4]\e[0m Otro"
-read -rp " Días de duración: " dopt
-case "$dopt" in
-1) d=7 ;;
-2) d=15 ;;
-3) d=30 ;;
-4) read -rp " Cuántos días: " d ;;
-*) d="$dopt" ;;
-esac
+read -rp " Días de duración: " d
 [[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
 read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
 [[ "$lim" =~ ^[0-9]+$ ]] || { msg_err "Límite inválido"; pausa; return; }
@@ -143,15 +135,7 @@ msg_ok "Contraseña de $SEL actualizada"; sleep 1 ;;
 [[ "$nl" =~ ^[0-9]+$ ]] && [ "$nl" -ge 1 ] || { msg_err "Límite inválido"; sleep 1; continue; }
 awk -F: -v u="$SEL" -v l="$nl" 'BEGIN{OFS=":"} $1==u{$2=l} {print}' "$DB" > "$DB.tmp" && mv "$DB.tmp" "$DB"
 msg_ok "Límite de $SEL ahora es $nl"; sleep 1 ;;
-3) echo -e " Sugerencias: \e[1;38;5;213m[1]\e[0m 7 días   \e[1;38;5;213m[2]\e[0m 15 días   \e[1;38;5;213m[3]\e[0m 30 días   \e[1;38;5;213m[4]\e[0m Otro"
-read -rp " Días desde hoy: " dopt
-case "$dopt" in
-1) nd=7 ;;
-2) nd=15 ;;
-3) nd=30 ;;
-4) read -rp " Cuántos días: " nd ;;
-*) nd="$dopt" ;;
-esac
+3) read -rp " Días desde hoy: " nd
 [[ "$nd" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; sleep 1; continue; }
 nexp=$(date -d "+$nd days" +%F)
 usermod -e "$nexp" "$SEL" 2>/dev/null
