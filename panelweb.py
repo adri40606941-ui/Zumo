@@ -349,10 +349,10 @@ input:focus{outline:none;border-color:var(--violet-dim)}
 
 .empty{color:var(--text-dim);font-size:.85rem;text-align:center;padding:20px 0}
 
-.modal-overlay{position:fixed;inset:0;background:rgba(5,4,10,.7);display:flex;align-items:flex-end;justify-content:center;z-index:50;padding:0}
+.modal-overlay{position:fixed;inset:0;background:rgba(5,4,10,.7);display:flex;align-items:flex-start;justify-content:center;z-index:50;padding:16px;overflow-y:auto}
 .modal-overlay.hide{display:none}
-.modal{background:var(--surface);border:1px solid var(--line);border-bottom:none;border-radius:18px 18px 0 0;width:100%;max-width:480px;padding:20px;max-height:82vh;overflow-y:auto}
-@media (min-width:560px){.modal-overlay{align-items:center;padding:16px}.modal{border-radius:16px;border-bottom:1px solid var(--line)}}
+.modal{background:var(--surface);border:1px solid var(--line);border-radius:16px;width:100%;max-width:480px;padding:20px;max-height:none;margin-top:6vh;margin-bottom:16px}
+@media (min-width:560px){.modal-overlay{align-items:center}.modal{margin-top:0}}
 .modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px}
 .modal-title{font-weight:600;font-size:1.05rem;line-height:1.3;word-break:break-word}
 .modal-sub{margin-top:5px}
@@ -549,24 +549,36 @@ function cuerpoModal(u){
     '</div>';
 }
 
+var modalClaveRenderizada = null;
+
 function renderModal(){
   var u = usuariosActuales.find(function(x){ return x.usuario === modalUsuario; });
   if (!u){ cerrarModal(); return; }
   var estado = u.bloqueado ? 'bloqueado' : (u.online > 0 ? 'online · '+u.online : 'offline');
   document.getElementById('modal-title').textContent = u.nombre;
   document.getElementById('modal-sub').textContent = estado + ' · límite ' + u.limite + ' · ' + u.dias;
-  document.getElementById('modal-body').innerHTML = cuerpoModal(u);
-  bindModalForms();
+
+  // Solo reconstruimos el cuerpo (los formularios) cuando algo relevante
+  // cambió de verdad. Si no, el refresco automático de cada 3s borraría
+  // lo que el usuario esté escribiendo en ese momento (p. ej. el HWID nuevo).
+  var clave = modalUsuario+'|'+u.limite+'|'+u.bloqueado+'|'+u.es_hwid+'|'+(errores[u.usuario]||'');
+  if (clave !== modalClaveRenderizada){
+    document.getElementById('modal-body').innerHTML = cuerpoModal(u);
+    bindModalForms();
+    modalClaveRenderizada = clave;
+  }
 }
 
 function abrirModal(usuario){
   modalUsuario = usuario;
+  modalClaveRenderizada = null;
   renderModal();
   document.getElementById('modal-overlay').classList.remove('hide');
 }
 
 function cerrarModal(){
   modalUsuario = null;
+  modalClaveRenderizada = null;
   document.getElementById('modal-overlay').classList.add('hide');
 }
 
