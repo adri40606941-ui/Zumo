@@ -15,6 +15,18 @@ apt-get install -y --no-install-recommends procps iproute2 curl ca-certificates 
 mkdir -p /etc/zumo
 touch /etc/zumo/usuarios.db
 grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
+
+# Para que sshd note rápido cuando un cliente se cae (red cambiada, app cerrada de golpe)
+# y no quede marcado "online" en el panel durante varios minutos.
+if [ -f /etc/ssh/sshd_config ]; then
+sed -i '/^ClientAliveInterval/d; /^ClientAliveCountMax/d; /^TCPKeepAlive/d' /etc/ssh/sshd_config
+cat >> /etc/ssh/sshd_config <<'EOF'
+ClientAliveInterval 15
+ClientAliveCountMax 3
+TCPKeepAlive yes
+EOF
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+fi
 echo -e " \e[1;32m✔ listo\e[0m"
 
 echo -e "\e[1;33m[2/9]\e[0m Creando activador de PDirect (WebSocket 80)..."
