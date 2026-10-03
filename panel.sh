@@ -179,6 +179,20 @@ fi
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
 ufw status 2>/dev/null | grep -qw "$bp" || msg_err "ufw está activo y no muestra el puerto $bp abierto (ufw allow $bp/tcp)"
 fi
+echo; echo -e " \e[1;38;5;87mSSH (el tramo que sigue a 'BHTTP session connected'):${N}"
+if ss -ltnH "sport = :22" 2>/dev/null | grep -q .; then msg_ok "sshd escucha en el puerto 22"; else msg_err "Nada escucha en el 22 (BHTTP reenvía a 127.0.0.1:22)"; fi
+n22=$(ss -tnH state established "( dport = :22 )" 2>/dev/null | awk '$4=="127.0.0.1:22"' | wc -l)
+echo -e "   Conexiones de BHTTP hacia sshd ahora: \e[1;33m${n22}${N}"
+cfg=$(sshd -T 2>/dev/null | grep -Ei '^(passwordauthentication|allowtcpforwarding|maxsessions|maxstartups|usepam) ')
+if [ -n "$cfg" ]; then
+echo "$cfg" | sed 's/^/   /'
+echo "$cfg" | grep -qi '^allowtcpforwarding no' && msg_err "AllowTcpForwarding está en 'no': el túnel no puede abrirse"
+echo "$cfg" | grep -qi '^passwordauthentication no' && msg_err "PasswordAuthentication está en 'no': no deja entrar con contraseña"
+fi
+echo -e "   Últimos eventos de sshd (¿llegó el login de la app?):"
+lg=$(journalctl -u ssh -u sshd -n 8 --no-pager -o cat 2>/dev/null)
+[ -z "$lg" ] && lg=$(grep -a sshd /var/log/auth.log 2>/dev/null | tail -n 8)
+if [ -n "$lg" ]; then echo "$lg" | cut -c1-110 | sed 's/^/     /'; else echo "     (sin eventos)"; fi
 echo; echo -e " \e[1;38;5;87mÚltimos logs (solo muestra errores):${N}"
 journalctl -u bhttp-server -n 8 --no-pager -o cat 2>/dev/null | sed 's/^/   /'
 echo; echo -e " $L"
