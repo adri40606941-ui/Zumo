@@ -341,14 +341,25 @@ input:focus{outline:none;border-color:var(--violet-dim)}
 .exp.bad{background:var(--bad-bg);color:var(--bad)}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 #22c55e66}50%{box-shadow:0 0 0 4px #22c55e00}}
 
-.edit-panel{display:flex;flex-direction:column;gap:8px;padding:0 0 16px;margin-top:-2px}
-.erow{display:flex;gap:8px}
+.erow{display:flex;gap:8px;margin-bottom:10px}
 .erow form{display:flex;gap:8px;flex:1}
 .erow input{flex:1}
-.erow-actions{display:flex;gap:8px;justify-content:flex-end}
-.erow-msg{background:var(--bad-bg);color:var(--bad);padding:8px 10px;border-radius:7px;font-size:.78rem}
+.erow-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
+.erow-msg{background:var(--bad-bg);color:var(--bad);padding:8px 10px;border-radius:7px;font-size:.78rem;margin-bottom:10px}
 
 .empty{color:var(--text-dim);font-size:.85rem;text-align:center;padding:20px 0}
+
+.modal-overlay{position:fixed;inset:0;background:rgba(5,4,10,.7);display:flex;align-items:flex-end;justify-content:center;z-index:50;padding:0}
+.modal-overlay.hide{display:none}
+.modal{background:var(--surface);border:1px solid var(--line);border-bottom:none;border-radius:18px 18px 0 0;width:100%;max-width:480px;padding:20px;max-height:82vh;overflow-y:auto}
+@media (min-width:560px){.modal-overlay{align-items:center;padding:16px}.modal{border-radius:16px;border-bottom:1px solid var(--line)}}
+.modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px}
+.modal-title{font-weight:600;font-size:1.05rem;line-height:1.3;word-break:break-word}
+.modal-sub{margin-top:5px}
+.modal-close{background:transparent;border:1px solid var(--line);color:var(--text-dim);width:34px;height:34px;min-width:34px;border-radius:9px;padding:0;font-size:1rem;flex-shrink:0}
+.modal-close:active{border-color:var(--violet-dim);color:var(--text)}
+.modal-label{font-size:.75rem;color:var(--text-dim);margin:16px 0 6px}
+.modal-label:first-of-type{margin-top:0}
 
 .login-shell{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
 .login-card{width:100%;max-width:340px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:28px 24px}
@@ -430,6 +441,19 @@ BASE_HTML = """
 
 </div>
 
+<div class="modal-overlay hide" id="modal-overlay">
+<div class="modal">
+<div class="modal-head">
+<div>
+<div class="modal-title" id="modal-title"></div>
+<div class="modal-sub umeta" id="modal-sub"></div>
+</div>
+<button type="button" class="modal-close" id="modal-close">✕</button>
+</div>
+<div id="modal-body"></div>
+</div>
+</div>
+
 <script>
 function toggleModo(modo){
   var hwid = modo === 'hwid';
@@ -444,98 +468,118 @@ function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-var abiertos = {};
+var MENSAJES_ERROR = {
+  hwid: 'HWID inválido, o ya usado por otro cliente.',
+  existe: 'Ya existe un usuario con ese nombre o HWID.'
+};
+
+var usuariosActuales = [];  // última lista traída de /api/usuarios
+var modalUsuario = null;    // usuario que está abierto en el modal, o null
 var errores = {};
 
-function toggleEdit(usuario){
-  abiertos[usuario] = !abiertos[usuario];
-  if (!abiertos[usuario]) delete errores[usuario];
-  var el = document.getElementById('edit-' + usuario);
-  if (el) el.classList.toggle('hide', !abiertos[usuario]);
-}
+// ---------- fila de la lista (solo resumen; tocarla abre el modal) ----------
 
 function fila(u){
-  // u.usuario solo trae letras/números/_/- (validado en el servidor), así que es
-  // seguro meterlo directo en atributos HTML y en URLs sin escapar comillas a mano.
   var nombre = escapeHtml(u.nombre);
-  var usr = encodeURIComponent(u.usuario);
   var expClass = u.dias === 'vencido' ? 'bad' : (u.dias === 'vence hoy' ? 'warn' : '');
   var estado = u.bloqueado
     ? '<span class="status"><span class="bulb"></span>bloqueado</span>'
     : (u.online > 0
       ? '<span class="status on"><span class="bulb"></span>online · '+u.online+'</span>'
       : '<span class="status"><span class="bulb"></span>offline</span>');
-  var editId = 'edit-' + u.usuario;
-  var abierto = !!abiertos[u.usuario];
-  var error = errores[u.usuario] || '';
   return '' +
-  '<div class="urow-wrap" data-usuario="'+u.usuario+'" data-nombre="'+nombre+'">' +
-    '<div class="urow">' +
-      '<div class="uinfo" data-action="toggle">' +
+  '<div class="urow-wrap" data-usuario="'+u.usuario+'">' +
+    '<div class="urow" data-action="abrir">' +
+      '<div class="uinfo">' +
         '<div class="uname">'+nombre+'</div>' +
         '<div class="umeta">' + estado +
           '<span>límite '+u.limite+'</span>' +
           '<span class="exp '+expClass+'">'+u.dias+'</span>' +
         '</div>' +
       '</div>' +
-      '<button type="button" class="btn-edit" data-action="toggle">Editar</button>' +
-    '</div>' +
-    '<div class="edit-panel'+(abierto ? '' : ' hide')+'" id="'+editId+'">' +
-      '<div class="erow-msg'+(error ? '' : ' hide')+'" id="msg-'+editId+'">'+error+'</div>' +
-      '<div class="erow">' +
-        '<form method="post" action="/renovar/'+usr+'" class="ajax-form">' +
-          '<input type="number" name="dias" min="1" placeholder="Días a sumar" required>' +
-          '<button class="btn-mini" type="submit">Renovar</button>' +
-        '</form>' +
-      '</div>' +
-      '<div class="erow">' +
-        '<form method="post" action="/limite/'+usr+'" class="ajax-form">' +
-          '<input type="number" name="limite" min="1" value="'+u.limite+'">' +
-          '<button class="btn-mini" type="submit">Guardar límite</button>' +
-        '</form>' +
-      '</div>' +
-      (u.es_hwid ?
-        '<div class="erow">' +
-          '<form method="post" action="/hwid/'+usr+'" class="ajax-form f-hwid">' +
-            '<input type="text" name="nuevo_hwid" placeholder="HWID nuevo (app regenerada)" maxlength="32">' +
-            '<button class="btn-mini" type="submit">Cambiar HWID</button>' +
-          '</form>' +
-        '</div>' : '') +
-      '<div class="erow-actions">' +
-        '<form method="post" action="/bloquear/'+usr+'" class="ajax-form">' +
-          '<button class="btn-mini'+(u.bloqueado ? '' : ' btn-warn')+'" type="submit">'+(u.bloqueado ? 'Desbloquear' : 'Bloquear')+'</button>' +
-        '</form>' +
-        '<form method="post" action="/eliminar/'+usr+'" class="ajax-form" data-action="confirmar-borrado">' +
-          '<button class="btn-danger" type="submit">Borrar</button>' +
-        '</form>' +
-      '</div>' +
+      '<button type="button" class="btn-edit">Editar</button>' +
     '</div>' +
   '</div>';
 }
 
-var MENSAJES_ERROR = {
-  hwid: 'HWID inválido, o ya usado por otro cliente.',
-  existe: 'Ya existe un usuario con ese nombre o HWID.'
-};
-
 function bindRows(){
-  document.querySelectorAll('[data-action="toggle"]').forEach(function(el){
+  document.querySelectorAll('[data-action="abrir"]').forEach(function(el){
     el.onclick = function(){
-      toggleEdit(el.closest('.urow-wrap').dataset.usuario);
+      abrirModal(el.closest('.urow-wrap').dataset.usuario);
     };
   });
+}
 
+// ---------- modal de edición ----------
+
+function cuerpoModal(u){
+  var usr = encodeURIComponent(u.usuario);
+  var error = errores[u.usuario] || '';
+  return '' +
+    '<div class="erow-msg'+(error ? '' : ' hide')+'">'+error+'</div>' +
+    '<div class="modal-label">Renovar</div>' +
+    '<div class="erow">' +
+      '<form method="post" action="/renovar/'+usr+'" class="ajax-form">' +
+        '<input type="number" name="dias" min="1" placeholder="Días a sumar" required>' +
+        '<button class="btn-mini" type="submit">Renovar</button>' +
+      '</form>' +
+    '</div>' +
+    '<div class="modal-label">Límite de conexiones</div>' +
+    '<div class="erow">' +
+      '<form method="post" action="/limite/'+usr+'" class="ajax-form">' +
+        '<input type="number" name="limite" min="1" value="'+u.limite+'">' +
+        '<button class="btn-mini" type="submit">Guardar límite</button>' +
+      '</form>' +
+    '</div>' +
+    (u.es_hwid ?
+      '<div class="modal-label">HWID</div>' +
+      '<div class="erow">' +
+        '<form method="post" action="/hwid/'+usr+'" class="ajax-form f-hwid">' +
+          '<input type="text" name="nuevo_hwid" placeholder="HWID nuevo (app regenerada)" maxlength="32">' +
+          '<button class="btn-mini" type="submit">Cambiar HWID</button>' +
+        '</form>' +
+      '</div>' : '') +
+    '<div class="erow-actions">' +
+      '<form method="post" action="/bloquear/'+usr+'" class="ajax-form">' +
+        '<button class="btn-mini'+(u.bloqueado ? '' : ' btn-warn')+'" type="submit">'+(u.bloqueado ? 'Desbloquear' : 'Bloquear')+'</button>' +
+      '</form>' +
+      '<form method="post" action="/eliminar/'+usr+'" class="ajax-form" data-action="confirmar-borrado">' +
+        '<button class="btn-danger" type="submit">Borrar</button>' +
+      '</form>' +
+    '</div>';
+}
+
+function renderModal(){
+  var u = usuariosActuales.find(function(x){ return x.usuario === modalUsuario; });
+  if (!u){ cerrarModal(); return; }
+  var estado = u.bloqueado ? 'bloqueado' : (u.online > 0 ? 'online · '+u.online : 'offline');
+  document.getElementById('modal-title').textContent = u.nombre;
+  document.getElementById('modal-sub').textContent = estado + ' · límite ' + u.limite + ' · ' + u.dias;
+  document.getElementById('modal-body').innerHTML = cuerpoModal(u);
+  bindModalForms();
+}
+
+function abrirModal(usuario){
+  modalUsuario = usuario;
+  renderModal();
+  document.getElementById('modal-overlay').classList.remove('hide');
+}
+
+function cerrarModal(){
+  modalUsuario = null;
+  document.getElementById('modal-overlay').classList.add('hide');
+}
+
+function bindModalForms(){
   document.querySelectorAll('.ajax-form').forEach(function(f){
     f.onsubmit = function(e){
       e.preventDefault();
-      var wrap = f.closest('.urow-wrap');
-      var usuario = wrap.dataset.usuario;
-      var nombre = wrap.dataset.nombre;
+      var usuario = modalUsuario;
+      var u = usuariosActuales.find(function(x){ return x.usuario === usuario; });
 
-      if (f.dataset.action === 'confirmar-borrado' && !confirm('¿Borrar a ' + nombre + '?')) return;
+      if (f.dataset.action === 'confirmar-borrado' && !confirm('¿Borrar a ' + (u ? u.nombre : usuario) + '?')) return;
 
-      // Si es "cambiar HWID", guardamos el nuevo nombre para que el panel
-      // siga abierto después del refresh (la fila cambia de usuario).
+      // Si es "cambiar HWID", el modal tiene que seguir al usuario con su nombre nuevo.
       var nuevoHwidInput = f.querySelector('input[name="nuevo_hwid"]');
       var nuevoHwid = nuevoHwidInput ? nuevoHwidInput.value.trim() : null;
 
@@ -546,23 +590,28 @@ function bindRows(){
       fetch(f.action, { method: 'POST', body: new FormData(f) }).then(function(r){
         var url = new URL(r.url);
         var error = url.searchParams.get('error');
-        abiertos[usuario] = true;
         if (error){
           errores[usuario] = MENSAJES_ERROR[error] || 'No se pudo completar la acción.';
         } else {
           delete errores[usuario];
-          if (nuevoHwid){ abiertos[nuevoHwid] = true; delete errores[nuevoHwid]; }
+          if (nuevoHwid){ modalUsuario = nuevoHwid; delete errores[nuevoHwid]; }
+          if (f.dataset.action === 'confirmar-borrado'){ cerrarModal(); }
         }
       }).catch(function(){
-        abiertos[usuario] = true;
         errores[usuario] = 'No se pudo conectar con el panel.';
       }).finally(function(){
-        btn.disabled = false; btn.textContent = textoOriginal;
         actualizar();
       });
     };
   });
 }
+
+document.getElementById('modal-close').onclick = cerrarModal;
+document.getElementById('modal-overlay').onclick = function(e){
+  if (e.target.id === 'modal-overlay') cerrarModal();
+};
+
+// ---------- refresco periódico ----------
 
 function actualizar(){
   fetch('/api/usuarios').then(r => r.json()).then(d => {
@@ -570,13 +619,17 @@ function actualizar(){
     document.getElementById('s-cpu').textContent = d.stats.cpu + '%';
     document.getElementById('s-cuentas').textContent = d.stats.cuentas;
     document.getElementById('s-online').textContent = d.stats.online;
+    usuariosActuales = d.usuarios;
+
     var el = document.getElementById('lista-usuarios');
     if (d.usuarios.length === 0){
       el.innerHTML = '<div class="empty">Todavía no hay usuarios — creá el primero arriba.</div>';
-      return;
+    } else {
+      el.innerHTML = d.usuarios.map(fila).join('');
+      bindRows();
     }
-    el.innerHTML = d.usuarios.map(fila).join('');
-    bindRows();
+
+    if (modalUsuario) renderModal();
   }).catch(e => { console.error('Panel Zumo: fallo al actualizar', e); });
 }
 actualizar();
