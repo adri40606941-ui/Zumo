@@ -398,265 +398,71 @@ cat > /etc/zumo/activar-hcr.sh <<'ZUMOHCRACT'
 export DEBIAN_FRONTEND=noninteractive
 DIR=/opt/hcr-server
 PUERTO=8080
-RAW="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/hcr-server"
+BASE="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
 
 echo "[1/3] Dependencias..."
-command -v curl >/dev/null 2>&1 && command -v systemd-analyze >/dev/null 2>&1 || {
-apt-get update && apt-get install -y --no-install-recommends ca-certificates curl systemd util-linux
-}
+if ! command -v curl >/dev/null 2>&1 || ! command -v systemd-analyze >/dev/null 2>&1 || ! command -v flock >/dev/null 2>&1; then
+apt-get update && apt-get install -y --no-install-recommends ca-certificates curl systemd util-linux || exit 1
+fi
 
 echo "[2/3] Descargando hcr-server..."
 install -d -o root -g root -m 0755 "$DIR"
-curl -fsSL "$RAW" -o "$DIR/.hcr-server.tmp" || { echo "No se pudo descargar hcr-server"; exit 1; }
-chown root:root "$DIR/.hcr-server.tmp"; chmod 0755 "$DIR/.hcr-server.tmp"
-"$DIR/.hcr-server.tmp" -version >/dev/null 2>&1 || { rm -f "$DIR/.hcr-server.tmp"; echo "El binario descargado no es válido para esta VPS"; exit 1; }
+BIN_TMP="$DIR/.hcr-server.tmp"
+INS_TMP="$DIR/.install.tmp"
+rm -f "$BIN_TMP" "$INS_TMP"
+curl -fsSL "$BASE/hcr-server" -o "$BIN_TMP" || { rm -f "$BIN_TMP"; echo "No se pudo descargar hcr-server"; exit 1; }
+curl -fsSL "$BASE/hcr-install.sh" -o "$INS_TMP" || { rm -f "$BIN_TMP" "$INS_TMP"; echo "No se pudo descargar hcr-install.sh"; exit 1; }
+chown root:root "$BIN_TMP" "$INS_TMP"
+chmod 0755 "$BIN_TMP" "$INS_TMP"
+"$BIN_TMP" -version >/dev/null 2>&1 || { rm -f "$BIN_TMP" "$INS_TMP"; echo "El binario descargado no es válido para esta VPS"; exit 1; }
+bash -n "$INS_TMP" 2>/dev/null || { rm -f "$BIN_TMP" "$INS_TMP"; echo "hcr-install.sh está incompleto o dañado (revisá el archivo en el repo)"; exit 1; }
 systemctl stop hcr-server 2>/dev/null || true
-mv -f "$DIR/.hcr-server.tmp" "$DIR/hcr-server"
+mv -f "$BIN_TMP" "$DIR/hcr-server"
+mv -f "$INS_TMP" "$DIR/install.sh"
 
-cat > "$DIR/install.sh" <<'ZUMO_HCR_INSTALL'
-#!/usr/bin/env bash
-set -euo pipefail
+echo "[3/3] Instalando servicio en el puerto $PUERTO..."
+"$DIR/install.sh" --port "$PUERTO" --transport plain || { echo "Falló el instalador de HCR"; exit 1; }
+systemctl is-active --quiet hcr-server || { echo "hcr-server no quedó activo"; exit 1; }
+echo "hcr-server activo en el puerto $PUERTO"
+ZUMOHCRACT
 
-PATH="/usr/sbin:/usr/bin:/sbin:/bin"
-LC_ALL="C"
-LANG="C"
-export PATH LC_ALL LANG
+chmod +x /etc/zumo/activar-hcr.sh
 
-SERVICE_NAME="hcr-server"
-SYSTEMD_DIR="/etc/systemd/system"
-PORT="8080"
-PORT_SET="false"
-MAX_DOWNLOAD_FRAME="6144"
-DOWNLOAD_POLL_TIMEOUT="8s"
-TRANSPORT="auto"
-TRANSPORT_SET="false"
-ACTION="install"
+cat > /etc/zumo/desactivar-hcr.sh <<'DESHCREOF'
+#!/bin/bash
+DIR=/opt/hcr-server
+if [ -x "$DIR/install.sh" ]; then
+"$DIR/install.sh" --uninstall >/dev/null 2>&1 || true
+fi
+systemctl disable --now hcr-server 2>/dev/null
+while read -r pid; do
+[ -z "$pid" ] && continue
+[ "$(ps -o comm= -p "$pid" 2>/dev/null)" = "hcr-server" ] && kill -9 "$pid" 2>/dev/null
+done < <(ss -ltnpH "sport = :8080" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+systemctl daemon-reload
+systemctl reset-failed hcr-server 2>/dev/null
+exit 0
+DESHCREOF
 
-TEMP_UNIT=""
+chmod +x /etc/zumo/desactivar-hcr.sh
+echo -e " \e[1;32m✔ listo\e[0m"
 
-fail() {
-	echo "Error: $*" >&2
-	exit 1
-}
+echo -e "\e[1;33m[6/6]\e[0m Instalando panel..."
 
-command -v readlink >/dev/null 2>&1 || fail "readlink was not found."
-SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
-SCRIPT_DIR="$(dirname -- "${SCRIPT_PATH}")"
-BINARY_PATH="${SCRIPT_DIR}/hcr-server"
-TLS_CERT_PATH="${SCRIPT_DIR}/fullchain.pem"
-TLS_KEY_PATH="${SCRIPT_DIR}/privkey.pem"
-UNIT_SOURCE_PATH="${SCRIPT_DIR}/${SERVICE_NAME}.service"
-UNIT_LINK_PATH="${SYSTEMD_DIR}/${SERVICE_NAME}.service"
+PANEL_URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/panel.sh"
+PANEL_TMP=$(mktemp)
+if curl -fsSL "$PANEL_URL" -o "$PANEL_TMP" && bash -n "$PANEL_TMP" 2>/dev/null; then
+install -m 0755 "$PANEL_TMP" /usr/local/bin/zumo
+rm -f "$PANEL_TMP"
+else
+rm -f "$PANEL_TMP"
+echo -e " \e[1;31m✘ No se pudo descargar un panel.sh válido desde el repo.\e[0m"
+exit 1
+fi
+echo -e " \e[1;32m✔ listo\e[0m"
+echo
 
-usage() {
-	cat <<'EOF'
-Install HCR Server as a systemd service from one self-contained directory.
-
-Usage:
-  sudo ./install.sh [--port <1-65535>] [--transport <tls|plain|auto>]
-  sudo ./install.sh --uninstall
-  ./install.sh --help
-
-Options:
-  --port <number>     Listener port. Default: 8080
-  --transport <mode>  Server transport. Default: auto
-                      tls   accepts TLS only
-                      plain accepts non-TLS HCR only
-                      auto  accepts TLS and non-TLS HCR on the same port
-  --uninstall         Stop and unlink the service without deleting this directory
-  -h, --help          Show this help
-
-Required next to install.sh:
-  hcr-server          Binary for the current Linux architecture
-  fullchain.pem       Required by tls and auto
-  privkey.pem         Required by tls and auto
-
-The generated hcr-server.service also stays next to this script. Only systemd
-symlinks are created outside this directory. The installer does not create
-binary backups or rollback files.
-EOF
-}
-
-parse_args() {
-	while [ "$#" -gt 0 ]; do
-		case "$1" in
-			--port)
-				[ "$#" -ge 2 ] || fail "--port requires a value."
-				PORT="$2"
-				PORT_SET="true"
-				shift 2
-				;;
-			--transport)
-				[ "$#" -ge 2 ] || fail "--transport requires a value."
-				TRANSPORT="$2"
-				TRANSPORT_SET="true"
-				shift 2
-				;;
-			--uninstall)
-				ACTION="uninstall"
-				shift
-				;;
-			-h|--help)
-				usage
-				exit 0
-				;;
-			*) fail "Unknown option: $1" ;;
-		esac
-	done
-	case "${TRANSPORT}" in
-		tls|plain|auto) ;;
-		*) fail "--transport must be tls, plain, or auto." ;;
-	esac
-	case "${PORT}" in
-		""|*[!0-9]*) fail "--port must be a number between 1 and 65535." ;;
-	esac
-	# Basis sepuluh dipaksa: nilai berawalan nol seperti 0080 akan ditafsirkan sebagai oktal.
-	if [ "$((10#${PORT}))" -lt 1 ] || [ "$((10#${PORT}))" -gt 65535 ]; then
-		fail "--port must be a number between 1 and 65535."
-	fi
-	PORT="$((10#${PORT}))"
-	if [ "${ACTION}" = "uninstall" ]; then
-		[ "${TRANSPORT_SET}" = "false" ] || fail "--transport cannot be combined with --uninstall."
-		[ "${PORT_SET}" = "false" ] || fail "--port cannot be combined with --uninstall."
-	fi
-}
-
-require_command() {
-	command -v "$1" >/dev/null 2>&1 || fail "$1 was not found."
-}
-
-require_environment() {
-	[ "$(id -u)" -eq 0 ] || fail "Run this installer as root."
-	[ "$(uname -s)" = "Linux" ] || fail "This installer supports Linux only."
-	for command_name in stat systemctl systemd-analyze flock ln mv mktemp sleep; do
-		require_command "${command_name}"
-	done
-	if [ "${ACTION}" = "install" ] && {
-		[ "${TRANSPORT}" = "tls" ] || [ "${TRANSPORT}" = "auto" ];
-	}; then
-		require_command openssl
-	fi
-	systemctl show --property=Version --value >/dev/null 2>&1 ||
-		fail "The systemd system manager is not available."
-	if [[ ! "${SCRIPT_DIR}" =~ ^/[-A-Za-z0-9._/@+:]+$ ]]; then
-		fail "The installer directory contains unsupported characters: ${SCRIPT_DIR}"
-	fi
-}
-
-acquire_install_lock() {
-	exec 9<"${SYSTEMD_DIR}" || fail "The systemd unit directory could not be opened for locking."
-	flock -n 9 || fail "Another HCR Server installer is already running."
-}
-
-mode_is_writable_by_others() {
-	(( (8#$1 & 8#022) != 0 ))
-}
-
-validate_secure_directory() {
-	local current="${SCRIPT_DIR}"
-	local mode
-	while :; do
-		[ -d "${current}" ] && [ ! -L "${current}" ] ||
-			fail "Path component must be a real directory: ${current}"
-		[ "$(stat -c '%u' -- "${current}")" = "0" ] ||
-			fail "Path component must be owned by root: ${current}"
-		mode="$(stat -c '%a' -- "${current}")"
-		mode_is_writable_by_others "${mode}" &&
-			fail "Path component must not be group- or world-writable: ${current}"
-		[ "${current}" = "/" ] && break
-		current="$(dirname -- "${current}")"
-	done
-}
-
-validate_root_file() {
-	local executable="$1"
-	local label="$2"
-	local path="$3"
-	local mode
-	[ -f "${path}" ] && [ ! -L "${path}" ] ||
-		fail "${label} must be a regular file: ${path}"
-	[ "$(stat -c '%u' -- "${path}")" = "0" ] ||
-		fail "${label} must be owned by root: ${path}"
-	mode="$(stat -c '%a' -- "${path}")"
-	mode_is_writable_by_others "${mode}" &&
-		fail "${label} must not be group- or world-writable: ${path}"
-	if [ "${executable}" = "true" ] && [ ! -x "${path}" ]; then
-		fail "${label} must be executable: ${path}"
-	fi
-}
-
-validate_unit_link() {
-	if [ -L "${UNIT_LINK_PATH}" ]; then
-		[ "$(readlink -- "${UNIT_LINK_PATH}")" = "${UNIT_SOURCE_PATH}" ] ||
-			fail "A different ${SERVICE_NAME}.service symlink already exists."
-	elif [ -e "${UNIT_LINK_PATH}" ]; then
-		fail "A non-symlink unit already exists: ${UNIT_LINK_PATH}"
-	fi
-}
-
-loaded_fragment_path() {
-	systemctl show --property=FragmentPath --value "${SERVICE_NAME}.service" 2>/dev/null || true
-}
-
-validate_loaded_fragment() {
-	case "$1" in
-		""|"${UNIT_SOURCE_PATH}"|"${UNIT_LINK_PATH}") ;;
-		*) fail "systemd loaded ${SERVICE_NAME}.service from an unexpected unit: $1" ;;
-	esac
-}
-
-validate_binary_identity() {
-	local path="$1"
-	local output
-	output="$("${path}" -version 2>/dev/null)" ||
-		fail "The binary does not support -version."
-	[[ "${output}" =~ ^hcr-server\ version\ [0-9]+\.[0-9]+\.[0-9]+(\ -\ Patch\ [1-9][0-9]*)?$ ]] ||
-		fail "The binary returned an unexpected version string."
-}
-
-validate_tls_pair() {
-	local certificate_public_key
-	local private_public_key
-	openssl x509 -in "${TLS_CERT_PATH}" -noout >/dev/null 2>&1 ||
-		fail "The TLS certificate could not be parsed."
-	certificate_public_key="$(openssl x509 -in "${TLS_CERT_PATH}" -pubkey -noout 2>/dev/null)" ||
-		fail "The TLS certificate public key could not be read."
-	private_public_key="$(openssl pkey -in "${TLS_KEY_PATH}" -passin pass: -pubout 2>/dev/null)" ||
-		fail "The TLS private key could not be parsed without a passphrase."
-	[ "${certificate_public_key}" = "${private_public_key}" ] ||
-		fail "The TLS certificate and private key do not match."
-}
-
-validate_binary() {
-	validate_root_file true "HCR binary" "${BINARY_PATH}"
-	validate_binary_identity "${BINARY_PATH}"
-}
-
-validate_bundle() {
-	local key_mode
-	validate_secure_directory
-	validate_root_file true "Installer" "${SCRIPT_PATH}"
-	validate_binary
-	if [ -e "${UNIT_SOURCE_PATH}" ] || [ -L "${UNIT_SOURCE_PATH}" ]; then
-		validate_root_file false "Generated systemd unit" "${UNIT_SOURCE_PATH}"
-	fi
-	if [ "${TRANSPORT}" = "tls" ] || [ "${TRANSPORT}" = "auto" ]; then
-		validate_root_file false "TLS certificate" "${TLS_CERT_PATH}"
-		validate_root_file false "TLS private key" "${TLS_KEY_PATH}"
-		key_mode="$(stat -c '%a' -- "${TLS_KEY_PATH}")"
-		(( (8#${key_mode} & 8#077) == 0 )) ||
-			fail "TLS private key must not be accessible by group or other users."
-		validate_tls_pair
-	fi
-}
-
-render_unit() {
-	local tls_arguments=""
-	if [ "${TRANSPORT}" = "tls" ] || [ "${TRANSPORT}" = "auto" ]; then
-		tls_arguments=" --tls-cert ${TLS_CERT_PATH} --tls-key ${TLS_KEY_PATH}"
-	fi
-	TEMP_UNIT="$(mktemp "${SCRIPT_DIR}/.${SERVICE_NAME}.XXXXXX.service")"
-	chmod 0600 "${TEMP_UNIT}"
-	cat >"${TEMP_UNIT}" <<EOF
-[Unit]
-Descript
+echo -e "\e[1;38;5;201m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
+echo -e "\e[1;32m ✔ instalado correctamente.\e[0m"
+echo -e "\e[1;32m Escribí \e[1;38;5;87mzumo\e[1;32m para abrir el panel.\e[0m"
+echo -e "\e[1;38;5;201m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
