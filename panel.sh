@@ -36,10 +36,31 @@ local d=$(( ( $(date -d "$1" +%s) - $(date -d "$(date +%F)" +%s) ) / 86400 ))
 if [ "$d" -lt 0 ]; then echo "vencido"; elif [ "$d" -eq 1 ]; then echo "vence 1 día"; else echo "vence $d días"; fi
 }
 
+# Si el usuario fue creado en modo HWID, devuelve el nombre del cliente
+# (guardado en el campo GECOS como "hwid,<cliente>"); si no, el username tal cual.
+etiqueta_de() {
+local gecos
+gecos=$(getent passwd "$1" 2>/dev/null | awk -F: '{print $5}')
+case "$gecos" in
+hwid,*) echo "${gecos#hwid,}" ;;
+*) echo "$1" ;;
+esac
+}
+
+es_hwid() {
+case "$(getent passwd "$1" 2>/dev/null | awk -F: '{print $5}')" in hwid,*) return 0 ;; *) return 1 ;; esac
+}
+
+en_linea() { ps -u "$1" -o comm= 2>/dev/null | grep -c '^sshd$'; }
+
 elegir_usuario() {
 mapfile -t USERS < <(cut -d: -f1 "$DB" | sed '/^$/d')
 if [ ${#USERS[@]} -eq 0 ]; then msg_err "No hay usuarios registrados"; return 1; fi
-for i in "${!USERS[@]}"; do echo -e " \e[1;38;5;208m[$((i+1))]\e[0m \e[1;32m${USERS[$i]}\e[0m"; done
+for i in "${!USERS[@]}"; do
+local etiq="$(etiqueta_de "${USERS[$i]}")"
+if es_hwid "${USERS[$i]}"; then etiq="$etiq (HWID)"; fi
+echo -e " \e[1;38;5;208m[$((i+1))]\e[0m \e[1;32m${etiq}\e[0m"
+done
 echo; read -rp " Número de usuario: " n
 if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt ${#USERS[@]} ]; then msg_err "Opción inválida"; return 1; fi
 SEL="${USERS[$((n-1))]}"
@@ -47,6 +68,42 @@ SEL="${USERS[$((n-1))]}"
 
 crear_usuario() {
 banner; echo -e " \e[1;38;5;141mCREAR USUARIO${N}\n"
+op 1 "●" "Normal (elegís usuario y contraseña)"
+op 2 "🔑" "Modo HWID (el cliente pega un ID único)"
+echo; read -rp " Modo [1]: " modo; modo=${modo:-1}
+echo
+
+if [ "$modo" = "2" ]; then
+read -rp " Nombre del cliente (solo para identificarlo en el panel): " etiqueta
+[ -z "$etiqueta" ] && etiqueta="cliente"
+read -rp " Pegá el HWID del cliente (8 a 32 caracteres): " hwidraw
+hwid=$(echo "$hwidraw" | tr -cd 'A-Za-z0-9')
+if [ ${#hwid} -lt 8 ] || [ ${#hwid} -gt 32 ]; then
+msg_err "HWID inválido (8 a 32 caracteres alfanuméricos; quedaron ${#hwid})"; pausa; return
+fi
+id "$hwid" &>/dev/null && { msg_err "Ese HWID ya está registrado"; pausa; return; }
+read -rp " Días de duración: " d
+[[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
+read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
+[[ "$lim" =~ ^[0-9]+$ ]] || { msg_err "Límite inválido"; pausa; return; }
+exp=$(date -d "+$d days" +%F)
+if ! useradd --badname -M -s /bin/false -e "$exp" -c "hwid,$etiqueta" "$hwid" 2>/dev/null; then
+msg_err "No se pudo crear el usuario (probá con otro HWID)"; pausa; return
+fi
+echo "$hwid:$hwid" | chpasswd
+echo "$hwid:$lim:$exp" >> "$DB"
+echo; echo -e " $L"
+msg_ok "Usuario HWID creado"
+echo -e "   Cliente:                      \e[1;38;5;214m$etiqueta${N}"
+echo -e "   HWID (usuario y contraseña):  \e[1;38;5;214m$hwid${N}"
+echo -e "   Duración:                     \e[1;38;5;214m$(dias "$exp")${N}"
+echo -e "   Límite:                       \e[1;38;5;214m$lim conexión(es)${N}"
+echo -e " $L"
+echo -e " \e[2mEl cliente carga ese mismo ID como usuario Y como contraseña en la app.${N}"
+pausa
+return
+fi
+
 read -rp " Usuario: " u
 [[ "$u" =~ ^[a-z_][a-z0-9_-]*$ ]] || { msg_err "Nombre inválido"; pausa; return; }
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
@@ -88,9 +145,9 @@ e=$(date -d "$exp" +%s 2>/dev/null) || continue
 [ "$e" -lt "$hoy" ] && VENC+=("$u|$exp")
 done < "$DB"
 if [ ${#VENC[@]} -eq 0 ]; then msg_ok "No hay usuarios vencidos"; pausa; return; fi
-printf " \e[1;38;5;208m%-16s %s${N}\n" "USUARIO" "VENCIÓ"
+printf " \e[1;38;5;208m%-16s %s${N}\n" "USUARIO/CLIENTE" "VENCIÓ"
 for item in "${VENC[@]}"; do
-printf " \e[1;31m%-16s %s${N}\n" "${item%%|*}" "${item#*|}"
+printf " \e[1;31m%-16s %s${N}\n" "$(etiqueta_de "${item%%|*}")" "${item#*|}"
 done
 echo; echo -e " $L"
 op 1 "✖" "Borrar usuarios vencidos"
@@ -148,15 +205,21 @@ done
 }
 
 listar_usuarios() {
-banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"
-if [ ! -s "$DB" ]; then msg_err "No hay usuarios"; pausa; return; fi
-printf " \e[1;38;5;208m%-14s %-8s %-10s %s${N}\n" "USUARIO" "LÍMITE" "ONLINE" "VENCIMIENTO"
+if [ ! -s "$DB" ]; then banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"; msg_err "No hay usuarios"; pausa; return; fi
+while true; do
+banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS — EN VIVO${N}"
+echo -e " \e[2m(se actualiza solo cada 2s — tocá cualquier tecla para volver)${N}\n"
+printf " \e[1;38;5;208m%-18s %-14s %-8s %s${N}\n" "USUARIO/CLIENTE" "ESTADO" "LÍMITE" "VENCIMIENTO"
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
-on=$(ps -u "$u" -o comm= 2>/dev/null | grep -c '^sshd$')
-printf " %-14s %-8s %-10s %s\n" "$u" "$lim" "$on" "$(dias "$exp")"
+on=$(en_linea "$u")
+label=$(etiqueta_de "$u")
+if [ "$on" -gt 0 ]; then estado="● online ($on)"; else estado="○ offline"; fi
+printf " %-18s %-14s %-8s %s\n" "$label" "$estado" "$lim" "$(dias "$exp")"
 done < "$DB"
-pausa
+echo; echo -e " $L"
+read -t 2 -rsn1 _ && break
+done
 }
 
 menu_usuario() {
@@ -165,7 +228,7 @@ banner; echo -e " \e[1;38;5;141mUSUARIO${N}\n"
 op 1 "✚" "Crear usuario"
 op 2 "✖" "Eliminar usuario"
 op 3 "✎" "Editar usuario"
-op 4 "▤" "Ver usuarios"
+op 4 "▤" "Ver usuarios (en vivo)"
 op 5 "⚠" "Usuarios vencidos"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
