@@ -162,12 +162,19 @@ else
 echo -e " \e[1;31m● PDirect WebSocket: inactivo${N}"
 fi
 if systemctl is-active --quiet udpgw-7300; then
-echo -e " \e[1;32m● BadVPN UDPGW: activo (7300)${N}\n"
+echo -e " \e[1;32m● BadVPN UDPGW: activo (7300)${N}"
 else
-echo -e " \e[1;31m● BadVPN UDPGW: inactivo${N}\n"
+echo -e " \e[1;31m● BadVPN UDPGW: inactivo${N}"
+fi
+if systemctl is-active --quiet hcr-server; then
+echo -e " \e[1;32m● HCR Server: activo (8880 → SSH)${N}\n"
+else
+echo -e " \e[1;31m● HCR Server: inactivo${N}\n"
 fi
 op 1 "Activar WebSocket (80 + 7300)"
 op 2 "Desactivar WebSocket (libera 80 y 7300)"
+op 3 "Activar HCR Server (8880)"
+op 4 "Desactivar HCR Server (libera 8880)"
 op 0 "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -180,33 +187,15 @@ fi; pausa ;;
 2) echo -e " \e[1;38;5;87mLiberando puertos 80 y 7300...${N}"
 bash /etc/zumo/desactivar-protocolos.sh
 msg_ok "WebSocket y BadVPN desactivados; puertos 80 y 7300 liberados"; pausa ;;
-0) return ;;
-*) msg_err "Opción inválida"; sleep 1 ;;
-esac
-done
-}
-
-menu_hcr() {
-while true; do
-banner
-if systemctl is-active --quiet hcr-server; then
-echo -e " \e[1;32m● HCR Server: activo (8080 → SSH)${N}\n"
-else
-echo -e " \e[1;31m● HCR Server: inactivo${N}\n"
-fi
-op 1 "Activar HCR"
-op 2 "Desactivar HCR"
-op 0 "Volver"
-echo -e "\n $L"; read -rp " Opción: " o
-case $o in
-1) echo -e " \e[1;38;5;87mInstalando hcr-server, aguardá...${N}"
+3) echo -e " \e[1;38;5;87mInstalando HCR Server, aguardá...${N}"
 if bash /etc/zumo/activar-hcr.sh; then
-msg_ok "HCR Server activo en el puerto 8080 (→ SSH 22)"
+msg_ok "HCR Server activo en el puerto 8880 (→ SSH 22)"
 else
 msg_err "Falló; revisá 'journalctl -u hcr-server'"
 fi; pausa ;;
-2) bash /etc/zumo/desactivar-hcr.sh
-msg_ok "HCR Server desactivado; puerto 8080 liberado"; pausa ;;
+4) echo -e " \e[1;38;5;87mLiberando puerto 8880...${N}"
+bash /etc/zumo/desactivar-hcr.sh
+msg_ok "HCR Server desactivado; puerto 8880 liberado"; pausa ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
@@ -217,13 +206,11 @@ while true; do
 banner
 op 1 "Usuario"
 op 2 "Protocolos"
-op 3 "HCR"
 op 0 "Salir"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) menu_usuario ;;
 2) menu_protocolos ;;
-3) menu_hcr ;;
 0) clear; exit 0 ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
