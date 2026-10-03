@@ -455,10 +455,13 @@ cat > /etc/zumo/activar-bhttp.sh <<'ZUMOBHTTPACT'
 export DEBIAN_FRONTEND=noninteractive
 DIR=/opt/bhttp-server
 PUERTO="${1:-8080}"
+INTERNO=18022
 case "$PUERTO" in ''|*[!0-9]*) echo "Puerto inválido: $PUERTO"; exit 1 ;; esac
 PUERTO=$((10#$PUERTO))
 if [ "$PUERTO" -lt 1 ] || [ "$PUERTO" -gt 65535 ]; then echo "El puerto debe estar entre 1 y 65535"; exit 1; fi
+[ "$PUERTO" -eq "$INTERNO" ] && INTERNO=18023
 BASE="https://raw.githubusercontent.com/darnix0/BHTTP/main"
+ZUMO="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
 VERSION="v2.4.1-btun-compat-keepalive"
 
 case "$(uname -m)" in
@@ -467,6 +470,7 @@ aarch64|arm64) ARCH=arm64 ;;
 *) echo "Arquitectura no soportada: $(uname -m)"; exit 1 ;;
 esac
 NAME="superflash-bhttp-server-${VERSION}-linux-${ARCH}"
+SHIM="bhttp-shim-${ARCH}"
 
 echo "[1/4] Dependencias..."
 if ! command -v curl >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1 || ! command -v ss >/dev/null 2>&1; then
@@ -488,24 +492,34 @@ AYUDA=$(timeout 5 "$TMP/bhttp" -h 2>&1 || true)
 for f in -listen -port -backend-host -backend-port; do
 echo "$AYUDA" | grep -q -- "$f" || { echo "Este binario no tiene la opción $f; no se instala"; exit 1; }
 done
+ESPERA=""
+echo "$AYUDA" | grep -q -- "-read-wait-ms" && ESPERA="-read-wait-ms 30"
+
+echo "      Adaptador para DTunnel (${SHIM})..."
+curl -fsSL "$ZUMO/$SHIM" -o "$TMP/shim" || { echo "No se pudo descargar $SHIM del repositorio (subilo a la raíz del repo)"; exit 1; }
+chmod 0755 "$TMP/shim"
+timeout 5 "$TMP/shim" -h 2>&1 | grep -q -- "-backend" || { echo "El adaptador descargado no es válido para esta VPS"; exit 1; }
 
 echo "[3/4] Instalando..."
-systemctl stop bhttp-server 2>/dev/null || true
-if ss -ltnpH "sport = :$PUERTO" 2>/dev/null | grep -q .; then
-echo "El puerto $PUERTO está ocupado por otro servicio:"
-ss -ltnpH "sport = :$PUERTO"
+systemctl stop bhttp-shim bhttp-server 2>/dev/null || true
+for p in "$PUERTO" "$INTERNO"; do
+if ss -ltnpH "sport = :$p" 2>/dev/null | grep -q .; then
+echo "El puerto $p está ocupado por otro servicio:"
+ss -ltnpH "sport = :$p"
 echo "Liberalo (si es el WebSocket: Protocolos -> 2) o elegí otro puerto."
 exit 1
 fi
+done
 install -d -m 0755 "$DIR"
 install -m 0755 "$TMP/bhttp" "$DIR/bhttp-server"
+install -m 0755 "$TMP/shim" "$DIR/bhttp-shim"
 cat > /etc/systemd/system/bhttp-server.service <<BHTTPUNIT
 [Unit]
-Description=ZUMO - BHTTP SuperFlash (TCP $PUERTO -> SSH local)
+Description=ZUMO - BHTTP SuperFlash (127.0.0.1:$INTERNO -> SSH local)
 After=network.target ssh.service sshd.service
 
 [Service]
-ExecStart=$DIR/bhttp-server -listen 0.0.0.0 -port $PUERTO -backend-host 127.0.0.1 -backend-port 22
+ExecStart=$DIR/bhttp-server -listen 127.0.0.1 -port $INTERNO -backend-host 127.0.0.1 -backend-port 22 $ESPERA
 Restart=on-failure
 RestartSec=2
 DynamicUser=yes
@@ -515,19 +529,40 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 BHTTPUNIT
+cat > /etc/systemd/system/bhttp-shim.service <<SHIMUNIT
+[Unit]
+Description=ZUMO - BHTTP adaptador DTunnel (TCP $PUERTO -> 127.0.0.1:$INTERNO)
+After=bhttp-server.service
+Requires=bhttp-server.service
+
+[Service]
+ExecStart=$DIR/bhttp-shim -listen 0.0.0.0:$PUERTO -backend 127.0.0.1:$INTERNO
+Restart=on-failure
+RestartSec=2
+DynamicUser=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+SHIMUNIT
 
 echo "[4/4] Activando..."
 systemctl daemon-reload
-systemctl enable --now bhttp-server >/dev/null 2>&1
+systemctl enable --now bhttp-server bhttp-shim >/dev/null 2>&1
 sleep 2
-if ! systemctl is-active --quiet bhttp-server; then
-echo "bhttp-server no quedó activo:"
-journalctl -u bhttp-server -n 15 --no-pager 2>/dev/null
+for u in bhttp-server bhttp-shim; do
+if ! systemctl is-active --quiet "$u"; then
+echo "$u no quedó activo:"
+journalctl -u "$u" -n 15 --no-pager 2>/dev/null
 exit 1
 fi
+done
 mkdir -p /etc/zumo
 echo "$PUERTO" > /etc/zumo/bhttp.port
-echo "bhttp-server activo en el puerto $PUERTO"
+echo "$INTERNO" > /etc/zumo/bhttp.interno
+echo "BHTTP activo en el puerto $PUERTO (adaptador DTunnel -> servidor -> SSH)"
 ZUMOBHTTPACT
 
 chmod +x /etc/zumo/activar-bhttp.sh
@@ -535,15 +570,20 @@ chmod +x /etc/zumo/activar-bhttp.sh
 cat > /etc/zumo/desactivar-bhttp.sh <<'DESBHTTPEOF'
 #!/bin/bash
 PUERTO=$(cat /etc/zumo/bhttp.port 2>/dev/null)
+INTERNO=$(cat /etc/zumo/bhttp.interno 2>/dev/null)
 case "$PUERTO" in ''|*[!0-9]*) PUERTO=8080 ;; esac
-systemctl disable --now bhttp-server 2>/dev/null
+case "$INTERNO" in ''|*[!0-9]*) INTERNO=18022 ;; esac
+systemctl disable --now bhttp-shim bhttp-server 2>/dev/null
+for p in "$PUERTO" "$INTERNO"; do
 while read -r pid; do
 [ -z "$pid" ] && continue
-[ "$(ps -o comm= -p "$pid" 2>/dev/null)" = "bhttp-server" ] && kill -9 "$pid" 2>/dev/null
-done < <(ss -ltnpH "sport = :$PUERTO" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
-rm -f /etc/systemd/system/bhttp-server.service /etc/zumo/bhttp.port
+c=$(ps -o comm= -p "$pid" 2>/dev/null)
+{ [ "$c" = "bhttp-server" ] || [ "$c" = "bhttp-shim" ]; } && kill -9 "$pid" 2>/dev/null
+done < <(ss -ltnpH "sport = :$p" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+done
+rm -f /etc/systemd/system/bhttp-server.service /etc/systemd/system/bhttp-shim.service /etc/zumo/bhttp.port /etc/zumo/bhttp.interno
 systemctl daemon-reload
-systemctl reset-failed bhttp-server 2>/dev/null
+systemctl reset-failed bhttp-server bhttp-shim 2>/dev/null
 exit 0
 DESBHTTPEOF
 
