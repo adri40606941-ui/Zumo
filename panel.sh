@@ -247,12 +247,16 @@ op 2 "✖" "Desactivar"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
-1) echo -e " \e[1;38;5;141mCompilando e instalando, aguardá...${N}"
+1) if systemctl is-active --quiet pdirect-80 && systemctl is-active --quiet udpgw-7300; then
+msg_err "Ya está activo"; pausa
+else
+echo -e " \e[1;38;5;141mCompilando e instalando, aguardá...${N}"
 if bash /etc/zumo/activar-protocolos.sh; then
 msg_ok "WebSocket (80 → SSH) y BadVPN (7300) activos"
 else
 msg_err "Falló; revisá 'journalctl -u pdirect-80 -u udpgw-7300'"
-fi; pausa ;;
+fi; pausa
+fi ;;
 2) echo -e " \e[1;38;5;141mLiberando puertos 80 y 7300...${N}"
 bash /etc/zumo/desactivar-protocolos.sh
 msg_ok "WebSocket y BadVPN desactivados; puertos 80 y 7300 liberados"; pausa ;;
@@ -282,7 +286,10 @@ op 2 "✖" "Desactivar"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
-1) read -rp " Puerto para HCR [8880]: " hp; hp=${hp:-8880}
+1) if systemctl is-active --quiet hcr-server; then
+msg_err "Ya está activo"; pausa
+else
+read -rp " Puerto para HCR [8880]: " hp; hp=${hp:-8880}
 if ! [[ "$hp" =~ ^[0-9]+$ ]] || [ "$hp" -lt 1 ] || [ "$hp" -gt 65535 ]; then
 msg_err "Puerto inválido (1-65535)"
 else
@@ -292,7 +299,8 @@ msg_ok "HCR Server activo en el puerto $hp (→ SSH 22)"
 else
 msg_err "Falló; revisá 'journalctl -u hcr-server'"
 fi
-fi; pausa ;;
+fi; pausa
+fi ;;
 2) echo -e " \e[1;38;5;141mLiberando el puerto de HCR...${N}"
 bash /etc/zumo/desactivar-hcr.sh
 msg_ok "HCR Server desactivado; puerto liberado"; pausa ;;
@@ -316,7 +324,10 @@ op 3 "⚙" "Diagnóstico"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
-1) read -rp " Puerto para BHTTP [8080]: " bp; bp=${bp:-8080}
+1) if systemctl is-active --quiet bhttp-server && systemctl is-active --quiet bhttp-shim; then
+msg_err "Ya está activo"; pausa; continue
+fi
+read -rp " Puerto para BHTTP [8080]: " bp; bp=${bp:-8080}
 if ! [[ "$bp" =~ ^[0-9]+$ ]] || [ "$bp" -lt 1 ] || [ "$bp" -gt 65535 ]; then
 msg_err "Puerto inválido (1-65535)"
 else
