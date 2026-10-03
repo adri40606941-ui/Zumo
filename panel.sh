@@ -186,15 +186,44 @@ esac
 done
 }
 
+menu_hcr() {
+while true; do
+banner
+if systemctl is-active --quiet hcr-server; then
+echo -e " \e[1;32m● HCR Server: activo (8080 → SSH)${N}\n"
+else
+echo -e " \e[1;31m● HCR Server: inactivo${N}\n"
+fi
+op 1 "Activar HCR"
+op 2 "Desactivar HCR"
+op 0 "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) echo -e " \e[1;38;5;87mInstalando hcr-server, aguardá...${N}"
+if bash /etc/zumo/activar-hcr.sh; then
+msg_ok "HCR Server activo en el puerto 8080 (→ SSH 22)"
+else
+msg_err "Falló; revisá 'journalctl -u hcr-server'"
+fi; pausa ;;
+2) bash /etc/zumo/desactivar-hcr.sh
+msg_ok "HCR Server desactivado; puerto 8080 liberado"; pausa ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
 while true; do
 banner
 op 1 "Usuario"
 op 2 "Protocolos"
+op 3 "HCR"
 op 0 "Salir"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) menu_usuario ;;
 2) menu_protocolos ;;
+3) menu_hcr ;;
 0) clear; exit 0 ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
