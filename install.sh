@@ -460,16 +460,14 @@ case "$PUERTO" in ''|*[!0-9]*) echo "Puerto inválido: $PUERTO"; exit 1 ;; esac
 PUERTO=$((10#$PUERTO))
 if [ "$PUERTO" -lt 1 ] || [ "$PUERTO" -gt 65535 ]; then echo "El puerto debe estar entre 1 y 65535"; exit 1; fi
 [ "$PUERTO" -eq "$INTERNO" ] && INTERNO=18023
-BASE="https://raw.githubusercontent.com/darnix0/BHTTP/main"
 ZUMO="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
-VERSION="v2.4.1-btun-compat-keepalive"
 
 case "$(uname -m)" in
 x86_64|amd64) ARCH=amd64 ;;
 aarch64|arm64) ARCH=arm64 ;;
 *) echo "Arquitectura no soportada: $(uname -m)"; exit 1 ;;
 esac
-NAME="superflash-bhttp-server-${VERSION}-linux-${ARCH}"
+NAME="bhttp-server-${ARCH}"
 SHIM="bhttp-shim-${ARCH}"
 
 echo "[1/4] Dependencias..."
@@ -477,13 +475,13 @@ if ! command -v curl >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1 |
 apt-get update && apt-get install -y --no-install-recommends ca-certificates curl coreutils iproute2 || exit 1
 fi
 
-echo "[2/4] Descargando y verificando BHTTP ${VERSION} (${ARCH})..."
+echo "[2/4] Descargando y verificando BHTTP (${ARCH})..."
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-curl -fsSL "$BASE/$NAME" -o "$TMP/bhttp" || { echo "No se pudo descargar $NAME"; exit 1; }
-curl -fsSL "$BASE/SHA256SUMS.txt" -o "$TMP/SHA256SUMS.txt" || { echo "No se pudo descargar SHA256SUMS.txt"; exit 1; }
+curl -fsSL "$ZUMO/$NAME" -o "$TMP/bhttp" || { echo "No se pudo descargar $NAME (subilo a la raíz del repo)"; exit 1; }
+curl -fsSL "$ZUMO/bhttp-server.sha256" -o "$TMP/SHA256SUMS.txt" || { echo "No se pudo descargar bhttp-server.sha256"; exit 1; }
 ESPERADO=$(awk -v n="$NAME" '{f=$2; sub(/^\*/,"",f)} f==n{print $1; exit}' "$TMP/SHA256SUMS.txt")
-[ -n "$ESPERADO" ] || { echo "SHA256SUMS.txt no lista $NAME"; exit 1; }
+[ -n "$ESPERADO" ] || { echo "bhttp-server.sha256 no lista $NAME"; exit 1; }
 REAL=$(sha256sum "$TMP/bhttp" | awk '{print $1}')
 [ "$ESPERADO" = "$REAL" ] || { echo "El SHA256 no coincide (esperado $ESPERADO, real $REAL). No se instala."; exit 1; }
 chmod 0755 "$TMP/bhttp"
@@ -493,7 +491,7 @@ for f in -listen -port -backend-host -backend-port; do
 echo "$AYUDA" | grep -q -- "$f" || { echo "Este binario no tiene la opción $f; no se instala"; exit 1; }
 done
 
-echo "      Adaptador para DTunnel (${SHIM})..."
+echo "      Adaptador BHTTP (${SHIM})..."
 curl -fsSL "$ZUMO/$SHIM" -o "$TMP/shim" || { echo "No se pudo descargar $SHIM del repositorio (subilo a la raíz del repo)"; exit 1; }
 chmod 0755 "$TMP/shim"
 timeout 5 "$TMP/shim" -h 2>&1 | grep -q -- "-backend" || { echo "El adaptador descargado no es válido para esta VPS"; exit 1; }
@@ -513,7 +511,7 @@ install -m 0755 "$TMP/bhttp" "$DIR/bhttp-server"
 install -m 0755 "$TMP/shim" "$DIR/bhttp-shim"
 cat > /etc/systemd/system/bhttp-server.service <<BHTTPUNIT
 [Unit]
-Description=ZUMO - BHTTP SuperFlash (127.0.0.1:$INTERNO -> SSH local)
+Description=ZUMO B - BHTTP (127.0.0.1:$INTERNO -> SSH local)
 After=network.target ssh.service sshd.service
 
 [Service]
@@ -529,7 +527,7 @@ WantedBy=multi-user.target
 BHTTPUNIT
 cat > /etc/systemd/system/bhttp-shim.service <<SHIMUNIT
 [Unit]
-Description=ZUMO - BHTTP adaptador DTunnel (TCP $PUERTO -> 127.0.0.1:$INTERNO)
+Description=ZUMO B - BHTTP adaptador (TCP $PUERTO -> 127.0.0.1:$INTERNO)
 After=bhttp-server.service
 Requires=bhttp-server.service
 
@@ -560,7 +558,7 @@ done
 mkdir -p /etc/zumo
 echo "$PUERTO" > /etc/zumo/bhttp.port
 echo "$INTERNO" > /etc/zumo/bhttp.interno
-echo "BHTTP activo en el puerto $PUERTO (adaptador DTunnel -> servidor -> SSH)"
+echo "BHTTP activo en el puerto $PUERTO (ZUMO B -> servidor -> SSH)"
 ZUMOBHTTPACT
 
 chmod +x /etc/zumo/activar-bhttp.sh
