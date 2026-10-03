@@ -87,9 +87,11 @@ def scenario(name, up_seqs, down_seq, wait):
     return False
 
 
-def batch_scenario(name, up_seqs, seq0, count, wait):
-    """Descarga en lote (modo 3): cuerpo = tamano(4 bytes) + cantidad(2 bytes)."""
+def batch_scenario(name, up_seqs, count, polls, wait=6):
+    """Descarga en lote (modo 3) repetida (como hace la app): cuerpo = tamano(4) + cantidad(2).
+    El servidor responde en ~2 ms con lo que haya, asi que se consulta varias veces."""
     global SID
+    import time
     SID = os.urandom(16)
     print("\n== %s" % name)
     try:
@@ -100,25 +102,35 @@ def batch_scenario(name, up_seqs, seq0, count, wait):
         for sq in up_seqs:
             st, d = request(1, sq, b"SSH-2.0-prueba_bhttp\r\n")
             print("   subir banner seq=%d: estado %d %r" % (sq, st, d[:40]))
-        body = struct.pack(">I", DOWN) + struct.pack(">H", count)
-        s = socket.create_connection((HOST, PORT), timeout=wait)
-        s.sendall(bytes([3]) + SID + struct.pack(">Q", seq0) + struct.pack(">I", len(body))
-                  + xor(body, 3, seq0, False))
-        for k in range(count):
-            hdr = rd(s, 5)
-            st, n = hdr[0], struct.unpack(">I", hdr[1:])[0]
-            data = rd(s, n) if 0 < n <= 524288 else b""
-            print("   respuesta %d: estado %d, %d bytes" % (k, st, len(data)))
-            if st == 2 and len(data) >= 4:
-                dl = struct.unpack(">I", data[:4])[0]
-                for sq in (seq0 + k, 0, 1):
-                    p = xor(data[4:4 + dl], 3, sq, True)
-                    if p.startswith(b"SSH-"):
-                        print("   [OK] sshd respondio por el tunel: %r" % p[:40])
-                        return True
-            elif st != 2:
-                print("   mensaje del servidor: %r" % data[:80])
-        print("   [FALLA] llegaron respuestas pero sin el banner de sshd")
+        seq = 0
+        got = b""
+        for poll in range(polls):
+            body = struct.pack(">I", DOWN) + struct.pack(">H", count)
+            s = socket.create_connection((HOST, PORT), timeout=wait)
+            s.sendall(bytes([3]) + SID + struct.pack(">Q", seq) + struct.pack(">I", len(body))
+                      + xor(body, 3, seq, False))
+            sizes = []
+            for k in range(count):
+                hdr = rd(s, 5)
+                st, n = hdr[0], struct.unpack(">I", hdr[1:])[0]
+                data = rd(s, n) if 0 < n <= 524288 else b""
+                if st != 2:
+                    print("   consulta %d: estado %d, mensaje %r" % (poll, st, data[:80]))
+                    sizes.append(-1)
+                    continue
+                dl = struct.unpack(">I", data[:4])[0] if len(data) >= 4 else 0
+                sizes.append(dl)
+                if dl:
+                    got += xor(data[4:4 + dl], 3, seq + k, True)
+            s.close()
+            if poll < 3 or any(x > 0 for x in sizes):
+                print("   consulta %d (seq=%d): datos por respuesta %s" % (poll, seq, sizes))
+            seq += count
+            if got.startswith(b"SSH-"):
+                print("   [OK] sshd respondio por el tunel: %r" % got[:40])
+                return True
+            time.sleep(0.25)
+        print("   [FALLA] tras %d consultas no llego el banner (recibido: %r)" % (polls, got[:40]))
     except Exception as e:
         print("   [FALLA] %s  (conexiones hacia sshd: %d)" % (e, ssh_conns()))
     return False
@@ -133,13 +145,9 @@ if p[:4] != b"BHP1":
     sys.exit(1)
 
 good = []
-if batch_scenario("E: lote modo 3, subir seq 0, descargar seq 0 x1", [0], 0, 1, 15):
-    good.append("E (modo 3)")
-if batch_scenario("F: lote modo 3, subir seq 0, descargar seq 0 x2", [0], 0, 2, 15):
-    good.append("F (modo 3 x2)")
-combos = [
-    ("A: modo 2 simple, subir seq 0, descargar seq 0", [0], 0),
-]
-good += [n for n, u, dn in combos if scenario(n, u, dn, 8)]
-print("\n" + ("Combinaciones que funcionan: " + "; ".join(good) if good else
+if batch_scenario("E: lote modo 3, 1 respuesta por consulta", [0], 1, 20):
+    good.append("E (modo 3, x1)")
+if batch_scenario("F: lote modo 3, 2 respuestas por consulta", [0], 2, 20):
+    good.append("F (modo 3, x2)")
+print("\n" + ("Funcionan: " + "; ".join(good) if good else
       "Ninguna combinacion devolvio el banner de sshd."))
