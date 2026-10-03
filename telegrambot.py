@@ -146,17 +146,20 @@ def cmd_start(chat_id):
         teclado=menu_principal(),
     )
 
+def nombre_mostrar(usuario):
+    """Nombre del cliente para mostrar; si es un usuario HWID, agrega '(HWID)'."""
+    etiqueta, es_hwid = etiqueta_de(usuario)
+    return f"{etiqueta} (HWID)" if es_hwid else etiqueta
+
 def texto_usuarios():
     usuarios = leer_usuarios()
     if not usuarios:
         return "No hay usuarios registrados."
     lineas = ["📋 <b>Usuarios registrados</b>\n"]
     for u in usuarios:
-        etiqueta, es_hwid = etiqueta_de(u["usuario"])
         on = en_linea(u["usuario"])
         estado = f"🟢 online({on})" if on > 0 else "⚪ offline"
-        tag = f"{etiqueta} (HWID)" if es_hwid else etiqueta
-        lineas.append(f"• <code>{tag}</code> — {estado} — límite {u['limite']} — {dias_restantes(u['exp'])}")
+        lineas.append(f"• <code>{nombre_mostrar(u['usuario'])}</code> — {estado} — límite {u['limite']} — {dias_restantes(u['exp'])}")
     return "\n".join(lineas)
 
 def cmd_usuarios(chat_id):
@@ -171,8 +174,8 @@ def cmd_vencidos(chat_id):
     if not usuarios:
         enviar(chat_id, "✅ No hay usuarios vencidos.")
         return
-    botones = [[{"text": f"✖ Borrar {u['usuario']}", "callback_data": f"delv:{u['usuario']}"}] for u in usuarios]
-    nombres = "\n".join(f"• {u['usuario']} (venció {u['exp']})" for u in usuarios)
+    botones = [[{"text": f"✖ Borrar {nombre_mostrar(u['usuario'])}", "callback_data": f"delv:{u['usuario']}"}] for u in usuarios]
+    nombres = "\n".join(f"• {nombre_mostrar(u['usuario'])} (venció {u['exp']})" for u in usuarios)
     enviar(chat_id, f"⚠️ <b>Usuarios vencidos</b>\n{nombres}", reply_markup={"inline_keyboard": botones})
 
 def cmd_eliminar(chat_id):
@@ -180,7 +183,7 @@ def cmd_eliminar(chat_id):
     if not usuarios:
         enviar(chat_id, "No hay usuarios registrados.")
         return
-    botones = [[{"text": u["usuario"], "callback_data": f"del:{u['usuario']}"}] for u in usuarios]
+    botones = [[{"text": nombre_mostrar(u["usuario"]), "callback_data": f"del:{u['usuario']}"}] for u in usuarios]
     enviar(chat_id, "Elegí el usuario a eliminar:", reply_markup={"inline_keyboard": botones})
 
 def cmd_crear_iniciar(chat_id):
