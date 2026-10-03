@@ -229,36 +229,21 @@ echo -e "   Si sigue en 'Conectando', abrí el puerto $bp en el firewall del pro
 pausa
 }
 
-menu_protocolos() {
+menu_websocket() {
 while true; do
-banner
+banner; echo -e " \e[1;38;5;141mWEBSOCKET (PDirect + BadVPN)${N}\n"
 if systemctl is-active --quiet pdirect-80; then
 echo -e " \e[1;32m● PDirect WebSocket: activo (80 → SSH)${N}"
 else
 echo -e " \e[1;31m● PDirect WebSocket: inactivo${N}"
 fi
 if systemctl is-active --quiet udpgw-7300; then
-echo -e " \e[1;32m● BadVPN UDPGW: activo (7300)${N}"
+echo -e " \e[1;32m● BadVPN UDPGW: activo (7300)${N}\n"
 else
-echo -e " \e[1;31m● BadVPN UDPGW: inactivo${N}"
+echo -e " \e[1;31m● BadVPN UDPGW: inactivo${N}\n"
 fi
-if systemctl is-active --quiet hcr-server; then
-echo -e " \e[1;32m● HCR Server: activo (8880 → SSH)${N}"
-else
-echo -e " \e[1;31m● HCR Server: inactivo${N}"
-fi
-if systemctl is-active --quiet bhttp-server && systemctl is-active --quiet bhttp-shim; then
-echo -e " \e[1;32m● BHTTP: activo ($(bhttp_port) → SSH)${N}\n"
-else
-echo -e " \e[1;31m● BHTTP: inactivo${N}\n"
-fi
-op 1 "⚡" "Activar WebSocket (80 + 7300)"
-op 2 "✖" "Desactivar WebSocket (libera 80 y 7300)"
-op 3 "⚡" "Activar HCR Server (8880)"
-op 4 "✖" "Desactivar HCR Server (libera 8880)"
-op 5 "⚡" "Activar BHTTP (elegís el puerto)"
-op 6 "✖" "Desactivar BHTTP (libera su puerto)"
-op 7 "⚙" "Diagnóstico de BHTTP"
+op 1 "⚡" "Activar"
+op 2 "✖" "Desactivar"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -271,16 +256,55 @@ fi; pausa ;;
 2) echo -e " \e[1;38;5;141mLiberando puertos 80 y 7300...${N}"
 bash /etc/zumo/desactivar-protocolos.sh
 msg_ok "WebSocket y BadVPN desactivados; puertos 80 y 7300 liberados"; pausa ;;
-3) echo -e " \e[1;38;5;141mInstalando HCR Server, aguardá...${N}"
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
+menu_hcr() {
+while true; do
+banner; echo -e " \e[1;38;5;141mHCR SERVER${N}\n"
+if systemctl is-active --quiet hcr-server; then
+echo -e " \e[1;32m● HCR Server: activo (8880 → SSH)${N}\n"
+else
+echo -e " \e[1;31m● HCR Server: inactivo${N}\n"
+fi
+op 1 "⚡" "Activar"
+op 2 "✖" "Desactivar"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) echo -e " \e[1;38;5;141mInstalando HCR Server, aguardá...${N}"
 if bash /etc/zumo/activar-hcr.sh; then
 msg_ok "HCR Server activo en el puerto 8880 (→ SSH 22)"
 else
 msg_err "Falló; revisá 'journalctl -u hcr-server'"
 fi; pausa ;;
-4) echo -e " \e[1;38;5;141mLiberando puerto 8880...${N}"
+2) echo -e " \e[1;38;5;141mLiberando puerto 8880...${N}"
 bash /etc/zumo/desactivar-hcr.sh
 msg_ok "HCR Server desactivado; puerto 8880 liberado"; pausa ;;
-5) read -rp " Puerto para BHTTP [8080]: " bp; bp=${bp:-8080}
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
+menu_bhttp() {
+while true; do
+banner; echo -e " \e[1;38;5;141mBHTTP${N}\n"
+if systemctl is-active --quiet bhttp-server && systemctl is-active --quiet bhttp-shim; then
+echo -e " \e[1;32m● BHTTP: activo ($(bhttp_port) → SSH)${N}\n"
+else
+echo -e " \e[1;31m● BHTTP: inactivo${N}\n"
+fi
+op 1 "⚡" "Activar (elegís el puerto)"
+op 2 "✖" "Desactivar"
+op 3 "⚙" "Diagnóstico"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) read -rp " Puerto para BHTTP [8080]: " bp; bp=${bp:-8080}
 if ! [[ "$bp" =~ ^[0-9]+$ ]] || [ "$bp" -lt 1 ] || [ "$bp" -gt 65535 ]; then
 msg_err "Puerto inválido (1-65535)"
 else
@@ -288,13 +312,31 @@ echo -e " \e[1;38;5;141mInstalando BHTTP en el puerto ${bp}, aguardá...${N}"
 if bash /etc/zumo/activar-bhttp.sh "$bp"; then
 msg_ok "BHTTP activo en el puerto $bp (→ SSH 22)"
 else
-msg_err "Falló; usá la opción 7 (diagnóstico)"
+msg_err "Falló; usá la opción 3 (diagnóstico)"
 fi
 fi; pausa ;;
-6) echo -e " \e[1;38;5;141mLiberando el puerto de BHTTP...${N}"
+2) echo -e " \e[1;38;5;141mLiberando el puerto de BHTTP...${N}"
 bash /etc/zumo/desactivar-bhttp.sh
 msg_ok "BHTTP desactivado; puerto liberado"; pausa ;;
-7) diag_bhttp ;;
+3) diag_bhttp ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
+menu_protocolos() {
+while true; do
+banner; echo -e " \e[1;38;5;141mPROTOCOLOS${N}\n"
+op 1 "⚡" "WebSocket"
+op 2 "⚡" "BHTTP"
+op 3 "⚡" "HCR Server"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) menu_websocket ;;
+2) menu_bhttp ;;
+3) menu_hcr ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
