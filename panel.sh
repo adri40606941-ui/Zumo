@@ -167,14 +167,21 @@ else
 echo -e " \e[1;31m● BadVPN UDPGW: inactivo${N}"
 fi
 if systemctl is-active --quiet hcr-server; then
-echo -e " \e[1;32m● HCR Server: activo (8880 → SSH)${N}\n"
+echo -e " \e[1;32m● HCR Server: activo (8880 → SSH)${N}"
 else
-echo -e " \e[1;31m● HCR Server: inactivo${N}\n"
+echo -e " \e[1;31m● HCR Server: inactivo${N}"
+fi
+if systemctl is-active --quiet bhttp-server; then
+echo -e " \e[1;32m● BHTTP: activo (8080 → SSH)${N}\n"
+else
+echo -e " \e[1;31m● BHTTP: inactivo${N}\n"
 fi
 op 1 "Activar WebSocket (80 + 7300)"
 op 2 "Desactivar WebSocket (libera 80 y 7300)"
 op 3 "Activar HCR Server (8880)"
 op 4 "Desactivar HCR Server (libera 8880)"
+op 5 "Activar BHTTP (8080)"
+op 6 "Desactivar BHTTP (libera 8080)"
 op 0 "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -196,6 +203,15 @@ fi; pausa ;;
 4) echo -e " \e[1;38;5;87mLiberando puerto 8880...${N}"
 bash /etc/zumo/desactivar-hcr.sh
 msg_ok "HCR Server desactivado; puerto 8880 liberado"; pausa ;;
+5) echo -e " \e[1;38;5;87mInstalando BHTTP, aguardá...${N}"
+if bash /etc/zumo/activar-bhttp.sh; then
+msg_ok "BHTTP activo en el puerto 8080 (→ SSH 22)"
+else
+msg_err "Falló; revisá 'journalctl -u bhttp-server'"
+fi; pausa ;;
+6) echo -e " \e[1;38;5;87mLiberando puerto 8080...${N}"
+bash /etc/zumo/desactivar-bhttp.sh
+msg_ok "BHTTP desactivado; puerto 8080 liberado"; pausa ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
