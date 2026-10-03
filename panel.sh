@@ -438,6 +438,90 @@ esac
 done
 }
 
+configurar_bot() {
+banner; echo -e " \e[1;38;5;141mCONFIGURAR BOT DE TELEGRAM${N}\n"
+echo " Necesitás:"
+echo "  1) Un bot creado con @BotFather en Telegram (te da un TOKEN)."
+echo "  2) Tu ID numérico de Telegram (hablale a @userinfobot para que te lo diga)."
+echo
+read -rp " Token del bot: " BOT_TOKEN
+[ -z "$BOT_TOKEN" ] && { msg_err "Token vacío"; pausa; return; }
+read -rp " Tu ID de Telegram (admin): " ADMIN_ID
+[[ "$ADMIN_ID" =~ ^[0-9]+$ ]] || { msg_err "ID inválido"; pausa; return; }
+read -rp " ¿Otro ID admin más? (Enter para omitir): " ADMIN_ID2
+ADMIN_IDS="$ADMIN_ID"
+[[ "$ADMIN_ID2" =~ ^[0-9]+$ ]] && ADMIN_IDS="$ADMIN_ID,$ADMIN_ID2"
+
+echo; echo -e " \e[1;38;5;141mInstalando y enlazando, aguardá...${N}"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y >/dev/null 2>&1
+apt-get install -y --no-install-recommends python3 python3-requests >/dev/null 2>&1
+
+mkdir -p /etc/zumo
+cat > /etc/zumo/telegram.conf <<EOF
+BOT_TOKEN=$BOT_TOKEN
+ADMIN_IDS=$ADMIN_IDS
+EOF
+chmod 600 /etc/zumo/telegram.conf
+
+ZUMO="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+if ! curl -fsSL "$ZUMO/telegrambot.py?nocache=$(date +%s)" -o /etc/zumo/telegrambot.py; then
+msg_err "No se pudo descargar telegrambot.py"; pausa; return
+fi
+if ! python3 -m py_compile /etc/zumo/telegrambot.py 2>/dev/null; then
+msg_err "telegrambot.py tiene errores"; pausa; return
+fi
+chmod 644 /etc/zumo/telegrambot.py
+
+cat > /etc/systemd/system/zumo-bot.service <<'SVCEOF'
+[Unit]
+Description=ZUMO - Bot de Telegram
+After=network-online.target
+Wants=network-online.target
+[Service]
+ExecStart=/usr/bin/python3 /etc/zumo/telegrambot.py
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+systemctl daemon-reload
+systemctl enable --now zumo-bot >/dev/null 2>&1
+sleep 2
+if systemctl is-active --quiet zumo-bot; then
+msg_ok "Bot activo. Andá a Telegram y escribile /start a tu bot."
+else
+msg_err "El bot no quedó activo. Revisá: journalctl -u zumo-bot -n 30"
+fi
+pausa
+}
+
+menu_bot() {
+while true; do
+banner; echo -e " \e[1;38;5;141mBOT DE TELEGRAM${N}\n"
+if systemctl is-active --quiet zumo-bot 2>/dev/null; then
+echo -e " \e[1;32m● Bot: activo${N}\n"
+else
+echo -e " \e[1;31m● Bot: inactivo${N}\n"
+fi
+op 1 "⚡" "Configurar / enlazar"
+op 2 "✖" "Desactivar"
+op 3 "⟳" "Reiniciar"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) configurar_bot ;;
+2) systemctl disable --now zumo-bot >/dev/null 2>&1; msg_ok "Bot desactivado"; pausa ;;
+3) systemctl restart zumo-bot >/dev/null 2>&1; sleep 1
+if systemctl is-active --quiet zumo-bot; then msg_ok "Bot reiniciado"; else msg_err "No quedó activo; revisá journalctl -u zumo-bot"; fi
+pausa ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
 menu_protocolos() {
 while true; do
 banner; echo -e " \e[1;38;5;141mPROTOCOLOS${N}\n"
@@ -462,11 +546,13 @@ while true; do
 banner
 op 1 "●" "Usuario"
 op 2 "⚡" "Protocolos"
+op 3 "🤖" "Bot"
 op 0 "✖" "Salir"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) menu_usuario ;;
 2) menu_protocolos ;;
+3) menu_bot ;;
 0) clear; exit 0 ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
