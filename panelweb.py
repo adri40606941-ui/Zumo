@@ -321,6 +321,8 @@ input:focus{outline:none;border-color:var(--violet-dim)}
 
 .msg{padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:.85rem}
 .msg-err{background:var(--bad-bg);color:var(--bad)}
+.msg-info{background:var(--surface-2);color:var(--text-dim);border:1px solid var(--line)}
+.msg-ok{background:var(--good-bg);color:var(--good)}
 
 .hide{display:none !important}
 
@@ -360,6 +362,9 @@ input:focus{outline:none;border-color:var(--violet-dim)}
 .modal-close:active{border-color:var(--violet-dim);color:var(--text)}
 .modal-label{font-size:.75rem;color:var(--text-dim);margin:16px 0 6px}
 .modal-label:first-of-type{margin-top:0}
+
+.toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,0);background:var(--good-bg);color:var(--good);border:1px solid var(--good);padding:12px 20px;border-radius:10px;font-size:.88rem;font-weight:600;z-index:60;box-shadow:0 8px 24px rgba(0,0,0,.35);transition:opacity .25s,transform .25s}
+.toast.hide{opacity:0;transform:translate(-50%,8px);pointer-events:none}
 
 .login-shell{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
 .login-card{width:100%;max-width:340px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:28px 24px}
@@ -426,8 +431,9 @@ BASE_HTML = """
 
 <div class="field-row">
 <div class="field"><label>Días</label><input name="dias" type="number" min="1" required></div>
-<div class="field"><label>Límite de conexiones</label><input name="limite" type="number" min="1" value="1"></div>
+<div class="field" id="campo-limite"><label>Límite de conexiones</label><input name="limite" type="number" min="1" value="1"></div>
 </div>
+<div class="msg msg-info hide" id="aviso-limite-hwid">Los usuarios HWID se crean con límite de 1 conexión.</div>
 <button class="btn" type="submit">Crear usuario</button>
 </form>
 </div>
@@ -440,6 +446,8 @@ BASE_HTML = """
 </div>
 
 </div>
+
+<div class="toast hide" id="toast"></div>
 
 <div class="modal-overlay hide" id="modal-overlay">
 <div class="modal">
@@ -462,6 +470,10 @@ function toggleModo(modo){
   document.getElementById('campos-normal').classList.toggle('hide', hwid);
   document.getElementById('lbl-hwid').classList.toggle('active', hwid);
   document.getElementById('lbl-normal').classList.toggle('active', !hwid);
+  // Los HWID siempre van con límite 1: no se pregunta, se fija solo.
+  document.getElementById('campo-limite').classList.toggle('hide', hwid);
+  document.getElementById('aviso-limite-hwid').classList.toggle('hide', !hwid);
+  document.querySelector('#campo-limite input').value = hwid ? '1' : document.querySelector('#campo-limite input').value;
 }
 
 function escapeHtml(s){
@@ -606,8 +618,15 @@ function bindModalForms(){
           errores[usuario] = MENSAJES_ERROR[error] || 'No se pudo completar la acción.';
         } else {
           delete errores[usuario];
-          if (nuevoHwid){ modalUsuario = nuevoHwid; delete errores[nuevoHwid]; }
-          if (f.dataset.action === 'confirmar-borrado'){ cerrarModal(); }
+          if (nuevoHwid){
+            // Cambio de HWID exitoso: avisamos y volvemos al panel principal
+            // en vez de dejar el modal abierto bajo el nombre nuevo.
+            delete errores[nuevoHwid];
+            cerrarModal();
+            mostrarToast('HWID cambiado con éxito');
+          } else if (f.dataset.action === 'confirmar-borrado'){
+            cerrarModal();
+          }
         }
       }).catch(function(){
         errores[usuario] = 'No se pudo conectar con el panel.';
@@ -616,6 +635,15 @@ function bindModalForms(){
       });
     };
   });
+}
+
+var toastTimeout = null;
+function mostrarToast(msg){
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.remove('hide');
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(function(){ t.classList.add('hide'); }, 3000);
 }
 
 document.getElementById('modal-close').onclick = cerrarModal;
@@ -703,7 +731,7 @@ def crear():
         hwid = re.sub(r"[^A-Za-z0-9]", "", request.form.get("hwid", ""))
         if not (8 <= len(hwid) <= 32):
             return redirect(url_for("index", error="hwid"))
-        ok, _ = crear_usuario(hwid, hwid, dias, limite, etiqueta=etiqueta)
+        ok, _ = crear_usuario(hwid, hwid, dias, 1, etiqueta=etiqueta)
     else:
         usuario = (request.form.get("usuario") or "").strip()
         password = request.form.get("password") or ""
