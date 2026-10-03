@@ -164,7 +164,7 @@ diag_bhttp() {
 banner; echo -e " \e[1;38;5;87mDIAGNÓSTICO DE BHTTP${N}\n"
 local bp r n
 bp=$(bhttp_port)
-if systemctl is-active --quiet bhttp-server; then msg_ok "Servicio: activo"; else msg_err "Servicio: inactivo (activalo con la opción 5)"; fi
+if systemctl is-active --quiet bhttp-server && systemctl is-active --quiet bhttp-shim; then msg_ok "Servicio: activo (servidor + adaptador)"; else msg_err "Servicio: inactivo o incompleto (activalo con la opción 5)"; fi
 if ss -ltnH "sport = :$bp" 2>/dev/null | grep -q .; then msg_ok "Escuchando en el puerto $bp"; else msg_err "Nada escucha en el puerto $bp"; fi
 if timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/$bp" 2>/dev/null; then msg_ok "Acepta conexiones locales"; else msg_err "No acepta conexiones locales en $bp"; fi
 n=$(ss -tnH state established "( sport = :$bp )" 2>/dev/null | wc -l)
@@ -194,7 +194,7 @@ lg=$(journalctl -u ssh -u sshd -n 8 --no-pager -o cat 2>/dev/null)
 [ -z "$lg" ] && lg=$(grep -a sshd /var/log/auth.log 2>/dev/null | tail -n 8)
 if [ -n "$lg" ]; then echo "$lg" | cut -c1-110 | sed 's/^/     /'; else echo "     (sin eventos)"; fi
 echo; echo -e " \e[1;38;5;87mÚltimos logs (solo muestra errores):${N}"
-journalctl -u bhttp-server -n 8 --no-pager -o cat 2>/dev/null | sed 's/^/   /'
+journalctl -u bhttp-server -u bhttp-shim -n 8 --no-pager -o cat 2>/dev/null | sed 's/^/   /'
 echo; echo -e " $L"
 echo -e "   En la app: servidor = IP pública de la VPS, puerto = \e[1;33m${bp}${N}"
 echo -e "   Si sigue en 'Conectando', abrí el puerto $bp en el firewall del proveedor."
@@ -219,7 +219,7 @@ echo -e " \e[1;32m● HCR Server: activo (8880 → SSH)${N}"
 else
 echo -e " \e[1;31m● HCR Server: inactivo${N}"
 fi
-if systemctl is-active --quiet bhttp-server; then
+if systemctl is-active --quiet bhttp-server && systemctl is-active --quiet bhttp-shim; then
 echo -e " \e[1;32m● BHTTP: activo ($(bhttp_port) → SSH)${N}\n"
 else
 echo -e " \e[1;31m● BHTTP: inactivo${N}\n"
