@@ -9,7 +9,7 @@ echo -e "║         INSTALANDO PANEL         ║"
 echo -e "╚══════════════════════════════════╝\e[0m"
 echo
 
-echo -e "\e[1;33m[1/6]\e[0m Instalando dependencias..."
+echo -e "\e[1;33m[1/7]\e[0m Instalando dependencias..."
 apt-get update -y >/dev/null 2>&1
 apt-get install -y --no-install-recommends procps iproute2 curl ca-certificates >/dev/null 2>&1
 mkdir -p /etc/zumo
@@ -17,7 +17,7 @@ touch /etc/zumo/usuarios.db
 grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[2/6]\e[0m Creando activador de protocolos..."
+echo -e "\e[1;33m[2/7]\e[0m Creando activador de protocolos..."
 
 cat > /etc/zumo/activar-protocolos.sh <<'ZUMOACT'
 #!/bin/bash
@@ -333,7 +333,7 @@ ZUMOACT
 chmod +x /etc/zumo/activar-protocolos.sh
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[3/6]\e[0m Creando desactivador de protocolos..."
+echo -e "\e[1;33m[3/7]\e[0m Creando desactivador de protocolos..."
 
 cat > /etc/zumo/desactivar-protocolos.sh <<'DESEOF'
 #!/bin/bash
@@ -355,7 +355,7 @@ DESEOF
 chmod +x /etc/zumo/desactivar-protocolos.sh
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[4/6]\e[0m Instalando limitador de conexiones..."
+echo -e "\e[1;33m[4/7]\e[0m Instalando limitador de conexiones..."
 
 cat > /etc/zumo/limitador.sh <<'LIMEOF'
 #!/bin/bash
@@ -390,7 +390,7 @@ systemctl daemon-reload >/dev/null 2>&1
 systemctl enable --now zumo-limit >/dev/null 2>&1
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[5/6]\e[0m Creando activador de HCR Server..."
+echo -e "\e[1;33m[5/7]\e[0m Creando activador de HCR Server..."
 
 cat > /etc/zumo/activar-hcr.sh <<'ZUMOHCRACT'
 #!/bin/bash
@@ -447,7 +447,102 @@ DESHCREOF
 chmod +x /etc/zumo/desactivar-hcr.sh
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[6/6]\e[0m Instalando panel..."
+echo -e "\e[1;33m[6/7]\e[0m Creando activador de BHTTP..."
+
+cat > /etc/zumo/activar-bhttp.sh <<'ZUMOBHTTPACT'
+#!/bin/bash
+[ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+export DEBIAN_FRONTEND=noninteractive
+DIR=/opt/bhttp-server
+PUERTO=8080
+BASE="https://raw.githubusercontent.com/darnix0/BHTTP/main"
+VERSION="v2.4.1-btun-compat-keepalive"
+
+case "$(uname -m)" in
+x86_64|amd64) ARCH=amd64 ;;
+aarch64|arm64) ARCH=arm64 ;;
+*) echo "Arquitectura no soportada: $(uname -m)"; exit 1 ;;
+esac
+NAME="superflash-bhttp-server-${VERSION}-linux-${ARCH}"
+
+echo "[1/4] Dependencias..."
+if ! command -v curl >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1 || ! command -v ss >/dev/null 2>&1; then
+apt-get update && apt-get install -y --no-install-recommends ca-certificates curl coreutils iproute2 || exit 1
+fi
+
+echo "[2/4] Descargando y verificando BHTTP ${VERSION} (${ARCH})..."
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+curl -fsSL "$BASE/$NAME" -o "$TMP/bhttp" || { echo "No se pudo descargar $NAME"; exit 1; }
+curl -fsSL "$BASE/SHA256SUMS.txt" -o "$TMP/SHA256SUMS.txt" || { echo "No se pudo descargar SHA256SUMS.txt"; exit 1; }
+ESPERADO=$(awk -v n="$NAME" '{f=$2; sub(/^\*/,"",f)} f==n{print $1; exit}' "$TMP/SHA256SUMS.txt")
+[ -n "$ESPERADO" ] || { echo "SHA256SUMS.txt no lista $NAME"; exit 1; }
+REAL=$(sha256sum "$TMP/bhttp" | awk '{print $1}')
+[ "$ESPERADO" = "$REAL" ] || { echo "El SHA256 no coincide (esperado $ESPERADO, real $REAL). No se instala."; exit 1; }
+chmod 0755 "$TMP/bhttp"
+timeout 5 "$TMP/bhttp" -version 2>&1 | grep -qi "bhttp" || { echo "El binario descargado no es válido para esta VPS"; exit 1; }
+AYUDA=$(timeout 5 "$TMP/bhttp" -h 2>&1 || true)
+for f in -listen -port -backend-host -backend-port; do
+echo "$AYUDA" | grep -q -- "$f" || { echo "Este binario no tiene la opción $f; no se instala"; exit 1; }
+done
+
+echo "[3/4] Instalando..."
+systemctl stop bhttp-server 2>/dev/null || true
+if ss -ltnpH "sport = :$PUERTO" 2>/dev/null | grep -q .; then
+echo "El puerto $PUERTO está ocupado por otro servicio:"
+ss -ltnpH "sport = :$PUERTO"
+exit 1
+fi
+install -d -m 0755 "$DIR"
+install -m 0755 "$TMP/bhttp" "$DIR/bhttp-server"
+cat > /etc/systemd/system/bhttp-server.service <<BHTTPUNIT
+[Unit]
+Description=ZUMO - BHTTP SuperFlash (TCP $PUERTO -> SSH local)
+After=network.target ssh.service sshd.service
+
+[Service]
+ExecStart=$DIR/bhttp-server -listen 0.0.0.0 -port $PUERTO -backend-host 127.0.0.1 -backend-port 22
+Restart=on-failure
+RestartSec=2
+DynamicUser=yes
+NoNewPrivileges=true
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+BHTTPUNIT
+
+echo "[4/4] Activando..."
+systemctl daemon-reload
+systemctl enable --now bhttp-server >/dev/null 2>&1
+sleep 2
+if ! systemctl is-active --quiet bhttp-server; then
+echo "bhttp-server no quedó activo:"
+journalctl -u bhttp-server -n 15 --no-pager 2>/dev/null
+exit 1
+fi
+echo "bhttp-server activo en el puerto $PUERTO"
+ZUMOBHTTPACT
+
+chmod +x /etc/zumo/activar-bhttp.sh
+
+cat > /etc/zumo/desactivar-bhttp.sh <<'DESBHTTPEOF'
+#!/bin/bash
+systemctl disable --now bhttp-server 2>/dev/null
+while read -r pid; do
+[ -z "$pid" ] && continue
+[ "$(ps -o comm= -p "$pid" 2>/dev/null)" = "bhttp-server" ] && kill -9 "$pid" 2>/dev/null
+done < <(ss -ltnpH "sport = :8080" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+rm -f /etc/systemd/system/bhttp-server.service
+systemctl daemon-reload
+systemctl reset-failed bhttp-server 2>/dev/null
+exit 0
+DESBHTTPEOF
+
+chmod +x /etc/zumo/desactivar-bhttp.sh
+echo -e " \e[1;32m✔ listo\e[0m"
+
+echo -e "\e[1;33m[7/7]\e[0m Instalando panel..."
 
 PANEL_URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/panel.sh"
 PANEL_TMP=$(mktemp)
