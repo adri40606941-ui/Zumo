@@ -191,7 +191,7 @@ def cmd_crear_iniciar(chat_id):
         reply_markup={
             "inline_keyboard": [
                 [{"text": "● Normal", "callback_data": "modo:normal"}],
-                [{"text": "🔑 HWID (ID único = usuario y contraseña)", "callback_data": "modo:hwid"}],
+                [{"text": "🔑 HWID", "callback_data": "modo:hwid"}],
             ]
         },
     )

@@ -68,8 +68,8 @@ SEL="${USERS[$((n-1))]}"
 
 crear_usuario() {
 banner; echo -e " \e[1;38;5;141mCREAR USUARIO${N}\n"
-op 1 "●" "Normal (elegís usuario y contraseña)"
-op 2 "🔑" "Modo HWID (el cliente pega un ID único)"
+op 1 "●" "Normal"
+op 2 "🔑" "HWID"
 echo; read -rp " Modo [1]: " modo; modo=${modo:-1}
 echo
 
