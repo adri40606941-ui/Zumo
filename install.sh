@@ -25,11 +25,32 @@ cat > /etc/zumo/activar-protocolos.sh <<'ZUMOACT'
 export DEBIAN_FRONTEND=noninteractive
 WORK=$(mktemp -d)
 
-echo "[1/4] Dependencias..."
-apt-get update
-apt-get install -y --no-install-recommends ca-certificates git cmake make gcc libc6-dev libevent-dev
+__oculto() {
+local msg="$1"; shift
+local log; log=$(mktemp)
+"$@" >"$log" 2>&1 &
+local pid=$!
+local p=0
+while kill -0 "$pid" 2>/dev/null; do
+p=$(( p + (RANDOM % 4 + 1) ))
+[ "$p" -gt 96 ] && p=96
+printf "\r \e[1;38;5;141m%s...\e[0m \e[1;33m%3d%%\e[0m" "$msg" "$p"
+sleep 0.3
+done
+wait "$pid"; local rc=$?
+if [ "$rc" -eq 0 ]; then
+printf "\r \e[1;38;5;141m%s...\e[0m \e[1;32m100%%\e[0m \e[1;32m✔\e[0m          \n" "$msg"
+else
+printf "\r \e[1;38;5;141m%s...\e[0m \e[1;31mFalló\e[0m          \n" "$msg"
+tail -n 15 "$log" | sed 's/^/   /'
+fi
+rm -f "$log"
+return $rc
+}
 
-echo "[2/4] Escribiendo y compilando PDirect-C..."
+_deps_protocolos() { apt-get update && apt-get install -y --no-install-recommends ca-certificates git cmake make gcc libc6-dev libevent-dev; }
+__oculto "[1/4] Dependencias" _deps_protocolos || exit 1
+
 cat > "$WORK/pdirect.c" <<'ZUMO_PDIRECT_C'
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -276,13 +297,16 @@ return 0;
 }
 ZUMO_PDIRECT_C
 
-gcc -O2 -o "$WORK/pdirect-c" "$WORK/pdirect.c" -levent_core || exit 1
+_pdirect_build() { gcc -O2 -o "$WORK/pdirect-c" "$WORK/pdirect.c" -levent_core; }
+__oculto "[2/4] Compilando PDirect-C" _pdirect_build || exit 1
 
-echo "[3/4] Compilando BadVPN UDPGW..."
-git clone --depth 1 https://github.com/ambrop72/badvpn.git "$WORK/badvpn"
-cmake -S "$WORK/badvpn" -B "$WORK/badvpn/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1
+_badvpn_build() {
+git clone --depth 1 https://github.com/ambrop72/badvpn.git "$WORK/badvpn" &&
+cmake -S "$WORK/badvpn" -B "$WORK/badvpn/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 &&
 cmake --build "$WORK/badvpn/build" --parallel 2
-[ -x "$WORK/badvpn/build/udpgw/badvpn-udpgw" ] || { echo "No se compiló UDPGW"; exit 1; }
+}
+__oculto "[3/4] Compilando BadVPN UDPGW" _badvpn_build || exit 1
+[ -x "$WORK/badvpn/build/udpgw/badvpn-udpgw" ] || { echo " No se compiló UDPGW"; exit 1; }
 
 echo "[4/4] Instalando y activando..."
 systemctl stop pdirect-80 udpgw-7300 2>/dev/null || true
@@ -400,9 +424,34 @@ DIR=/opt/hcr-server
 PUERTO=8880
 BASE="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
 
-echo "[1/3] Dependencias..."
+__oculto() {
+local msg="$1"; shift
+local log; log=$(mktemp)
+"$@" >"$log" 2>&1 &
+local pid=$!
+local p=0
+while kill -0 "$pid" 2>/dev/null; do
+p=$(( p + (RANDOM % 4 + 1) ))
+[ "$p" -gt 96 ] && p=96
+printf "\r \e[1;38;5;141m%s...\e[0m \e[1;33m%3d%%\e[0m" "$msg" "$p"
+sleep 0.3
+done
+wait "$pid"; local rc=$?
+if [ "$rc" -eq 0 ]; then
+printf "\r \e[1;38;5;141m%s...\e[0m \e[1;32m100%%\e[0m \e[1;32m✔\e[0m          \n" "$msg"
+else
+printf "\r \e[1;38;5;141m%s...\e[0m \e[1;31mFalló\e[0m          \n" "$msg"
+tail -n 15 "$log" | sed 's/^/   /'
+fi
+rm -f "$log"
+return $rc
+}
+
 if ! command -v curl >/dev/null 2>&1 || ! command -v systemd-analyze >/dev/null 2>&1 || ! command -v flock >/dev/null 2>&1; then
-apt-get update && apt-get install -y --no-install-recommends ca-certificates curl systemd util-linux || exit 1
+_deps_hcr() { apt-get update && apt-get install -y --no-install-recommends ca-certificates curl systemd util-linux; }
+__oculto "[1/3] Dependencias" _deps_hcr || exit 1
+else
+echo -e " \e[1;38;5;141m[1/3] Dependencias...\e[0m \e[1;32m✔\e[0m"
 fi
 
 echo "[2/3] Descargando hcr-server..."
@@ -420,8 +469,8 @@ systemctl stop hcr-server 2>/dev/null || true
 mv -f "$BIN_TMP" "$DIR/hcr-server"
 mv -f "$INS_TMP" "$DIR/install.sh"
 
-echo "[3/3] Instalando servicio en el puerto $PUERTO..."
-"$DIR/install.sh" --port "$PUERTO" --transport plain || { echo "Falló el instalador de HCR"; exit 1; }
+_hcr_install() { "$DIR/install.sh" --port "$PUERTO" --transport plain; }
+__oculto "[3/3] Instalando servicio en el puerto $PUERTO" _hcr_install || { echo "Falló el instalador de HCR"; exit 1; }
 systemctl is-active --quiet hcr-server || { echo "hcr-server no quedó activo"; exit 1; }
 echo "hcr-server activo en el puerto $PUERTO"
 ZUMOHCRACT
@@ -470,9 +519,34 @@ esac
 NAME="bhttp-server-${ARCH}"
 SHIM="bhttp-shim-${ARCH}"
 
-echo "[1/4] Dependencias..."
+__oculto() {
+local msg="$1"; shift
+local log; log=$(mktemp)
+"$@" >"$log" 2>&1 &
+local pid=$!
+local p=0
+while kill -0 "$pid" 2>/dev/null; do
+p=$(( p + (RANDOM % 4 + 1) ))
+[ "$p" -gt 96 ] && p=96
+printf "\r \e[1;38;5;141m%s...\e[0m \e[1;33m%3d%%\e[0m" "$msg" "$p"
+sleep 0.3
+done
+wait "$pid"; local rc=$?
+if [ "$rc" -eq 0 ]; then
+printf "\r \e[1;38;5;141m%s...\e[0m \e[1;32m100%%\e[0m \e[1;32m✔\e[0m          \n" "$msg"
+else
+printf "\r \e[1;38;5;141m%s...\e[0m \e[1;31mFalló\e[0m          \n" "$msg"
+tail -n 15 "$log" | sed 's/^/   /'
+fi
+rm -f "$log"
+return $rc
+}
+
 if ! command -v curl >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1 || ! command -v ss >/dev/null 2>&1; then
-apt-get update && apt-get install -y --no-install-recommends ca-certificates curl coreutils iproute2 || exit 1
+_deps_bhttp() { apt-get update && apt-get install -y --no-install-recommends ca-certificates curl coreutils iproute2; }
+__oculto "[1/4] Dependencias" _deps_bhttp || exit 1
+else
+echo -e " \e[1;38;5;141m[1/4] Dependencias...\e[0m \e[1;32m✔\e[0m"
 fi
 
 echo "[2/4] Descargando y verificando BHTTP (${ARCH})..."
