@@ -454,7 +454,10 @@ cat > /etc/zumo/activar-bhttp.sh <<'ZUMOBHTTPACT'
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
 DIR=/opt/bhttp-server
-PUERTO=8080
+PUERTO="${1:-8080}"
+case "$PUERTO" in ''|*[!0-9]*) echo "Puerto inválido: $PUERTO"; exit 1 ;; esac
+PUERTO=$((10#$PUERTO))
+if [ "$PUERTO" -lt 1 ] || [ "$PUERTO" -gt 65535 ]; then echo "El puerto debe estar entre 1 y 65535"; exit 1; fi
 BASE="https://raw.githubusercontent.com/darnix0/BHTTP/main"
 VERSION="v2.4.1-btun-compat-keepalive"
 
@@ -491,6 +494,7 @@ systemctl stop bhttp-server 2>/dev/null || true
 if ss -ltnpH "sport = :$PUERTO" 2>/dev/null | grep -q .; then
 echo "El puerto $PUERTO está ocupado por otro servicio:"
 ss -ltnpH "sport = :$PUERTO"
+echo "Liberalo (si es el WebSocket: Protocolos -> 2) o elegí otro puerto."
 exit 1
 fi
 install -d -m 0755 "$DIR"
@@ -521,6 +525,8 @@ echo "bhttp-server no quedó activo:"
 journalctl -u bhttp-server -n 15 --no-pager 2>/dev/null
 exit 1
 fi
+mkdir -p /etc/zumo
+echo "$PUERTO" > /etc/zumo/bhttp.port
 echo "bhttp-server activo en el puerto $PUERTO"
 ZUMOBHTTPACT
 
@@ -528,12 +534,14 @@ chmod +x /etc/zumo/activar-bhttp.sh
 
 cat > /etc/zumo/desactivar-bhttp.sh <<'DESBHTTPEOF'
 #!/bin/bash
+PUERTO=$(cat /etc/zumo/bhttp.port 2>/dev/null)
+case "$PUERTO" in ''|*[!0-9]*) PUERTO=8080 ;; esac
 systemctl disable --now bhttp-server 2>/dev/null
 while read -r pid; do
 [ -z "$pid" ] && continue
 [ "$(ps -o comm= -p "$pid" 2>/dev/null)" = "bhttp-server" ] && kill -9 "$pid" 2>/dev/null
-done < <(ss -ltnpH "sport = :8080" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
-rm -f /etc/systemd/system/bhttp-server.service
+done < <(ss -ltnpH "sport = :$PUERTO" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+rm -f /etc/systemd/system/bhttp-server.service /etc/zumo/bhttp.port
 systemctl daemon-reload
 systemctl reset-failed bhttp-server 2>/dev/null
 exit 0
