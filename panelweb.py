@@ -185,137 +185,216 @@ def login_requerido(f):
 
 
 BASE_CSS = """
-:root{--bg:#0d0b14;--panel:#171320;--line:#3a2a55;--purple:#a78bfa;--orange:#f59e0b;--green:#34d399;--red:#f87171;--grey:#8b8699;--text:#e8e6f0}
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+:root{
+  --bg:#0a0912; --surface:#141220; --surface-2:#1b1830; --line:#2a2540;
+  --violet:#8b5cf6; --violet-dim:#5b4b8a;
+  --good:#22c55e; --good-bg:#132a1d;
+  --warn:#f5a524; --warn-bg:#2e2410;
+  --bad:#f0506e; --bad-bg:#2e1420;
+  --idle:#6e6886;
+  --text:#eeecf7; --text-dim:#9791ab;
+}
 *{box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:ui-monospace,Menlo,Consolas,monospace;margin:0;padding:16px}
-h1{color:var(--purple);font-size:1.1rem;letter-spacing:.15em;text-transform:uppercase;margin:0 0 12px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
-.stats{display:flex;flex-wrap:wrap;gap:16px;font-size:.85rem}
-.stats b{color:var(--orange)}
-table{width:100%;border-collapse:collapse;font-size:.85rem}
-th{color:var(--orange);text-align:left;padding:6px 4px;border-bottom:1px solid var(--line)}
-td{padding:6px 4px;border-bottom:1px solid #241c35}
-.on{color:var(--green)} .off{color:var(--grey)}
-.pill{padding:2px 8px;border-radius:999px;font-size:.75rem}
-.pill.on{background:#0f3d2e;color:var(--green)} .pill.off{background:#241c35;color:var(--grey)}
-input,select,button{font-family:inherit;background:#0d0b14;border:1px solid var(--line);color:var(--text);padding:8px;border-radius:6px;font-size:.85rem}
-button{cursor:pointer;background:var(--purple);color:#0d0b14;font-weight:bold;border:none}
-button.danger{background:var(--red)}
-button.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
-form.inline{display:inline}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
-a{color:var(--purple)}
-.msg{padding:8px 12px;border-radius:6px;margin-bottom:12px;font-size:.85rem}
-.msg.err{background:#3d1414;color:var(--red)} .msg.ok{background:#0f3d2e;color:var(--green)}
-.modo{display:flex;gap:8px;margin-bottom:8px}
-.modo label{display:flex;gap:4px;align-items:center;font-size:.8rem}
-.hide{display:none}
+html,body{overflow-x:hidden}
+body{
+  background:
+    radial-gradient(1200px 500px at 50% -10%, #1c1733 0%, transparent 60%),
+    var(--bg);
+  color:var(--text); font-family:'Space Grotesk',system-ui,sans-serif;
+  margin:0; padding:0 0 32px; min-height:100vh;
+}
+.wrap{max-width:720px;margin:0 auto;padding:0 16px}
+.mono{font-family:'JetBrains Mono',ui-monospace,Menlo,monospace}
+
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:20px 16px 18px;max-width:720px;margin:0 auto}
+.brand{display:flex;align-items:center;gap:10px}
+.brand .dot{width:10px;height:10px;border-radius:3px;background:var(--violet);box-shadow:0 0 14px #8b5cf699}
+.brand span{font-weight:700;font-size:1.15rem;letter-spacing:.01em}
+.exit{color:var(--text-dim);text-decoration:none;font-size:.85rem;border:1px solid var(--line);padding:7px 12px;border-radius:8px;transition:border-color .15s}
+.exit:hover{border-color:var(--violet-dim);color:var(--text)}
+
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 20px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.stat .label{color:var(--text-dim);font-size:.72rem;letter-spacing:.02em}
+.stat .value{font-family:'JetBrains Mono';font-size:1.3rem;font-weight:600;margin-top:4px}
+.stat.accent .value{color:var(--violet)}
+.stat.live .value{color:var(--good)}
+
+.section{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+.section h2{font-size:.95rem;font-weight:500;margin:0 0 14px;color:var(--text)}
+
+.seg{display:flex;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:3px;margin-bottom:14px}
+.seg label{flex:1;text-align:center;padding:8px 0;border-radius:7px;font-size:.85rem;color:var(--text-dim);cursor:pointer;transition:background .15s,color .15s}
+.seg input{display:none}
+.seg label.active{background:var(--surface-2);color:var(--text)}
+
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+.field label{font-size:.75rem;color:var(--text-dim)}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+input{
+  font-family:inherit;background:var(--bg);border:1px solid var(--line);color:var(--text);
+  padding:10px 12px;border-radius:8px;font-size:.9rem;width:100%
+}
+input:focus{outline:none;border-color:var(--violet-dim)}
+.btn{
+  cursor:pointer;background:var(--violet);color:#fff;font-weight:600;border:none;
+  padding:11px 16px;border-radius:9px;font-size:.9rem;width:100%;font-family:inherit
+}
+.btn:active{background:#7c4deb}
+.btn-danger{background:transparent;border:1px solid #4a2230;color:var(--bad);font-weight:500;padding:6px 12px;font-size:.8rem;width:auto;border-radius:7px}
+.btn-danger:active{background:var(--bad-bg)}
+
+.msg{padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:.85rem}
+.msg-err{background:var(--bad-bg);color:var(--bad)}
+
+.hide{display:none !important}
+
+.userlist{display:flex;flex-direction:column}
+.urow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 0;border-bottom:1px solid var(--line)}
+.urow:last-child{border-bottom:none}
+.uinfo{min-width:0}
+.uname{font-family:'JetBrains Mono';font-size:.92rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.utag{color:var(--text-dim);font-weight:400;font-size:.78rem}
+.umeta{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:.78rem;color:var(--text-dim)}
+.status{display:flex;align-items:center;gap:5px}
+.status .bulb{width:7px;height:7px;border-radius:50%;background:var(--idle);flex-shrink:0}
+.status.on .bulb{background:var(--good);animation:pulse 1.8s ease-in-out infinite}
+.status.on{color:var(--good)}
+.exp{padding:1px 7px;border-radius:5px;background:var(--surface-2)}
+.exp.warn{background:var(--warn-bg);color:var(--warn)}
+.exp.bad{background:var(--bad-bg);color:var(--bad)}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 #22c55e66}50%{box-shadow:0 0 0 4px #22c55e00}}
+
+.empty{color:var(--text-dim);font-size:.85rem;text-align:center;padding:20px 0}
+
+.login-shell{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+.login-card{width:100%;max-width:340px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:28px 24px}
+.login-card .brand{justify-content:center;margin-bottom:22px}
+.login-card .btn{margin-top:6px}
 """
 
 LOGIN_HTML = """
-<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Panel ZUMO</title><style>{{css}}</style></head>
+<!doctype html><html lang="es"><head><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8"><title>Panel Zumo</title><style>{{css}}</style></head>
 <body>
-<div class="card" style="max-width:360px;margin:60px auto">
-<h1>═ Panel ZUMO ═</h1>
-{% if error %}<div class="msg err">{{error}}</div>{% endif %}
+<div class="login-shell">
+<div class="login-card">
+<div class="brand"><span class="dot"></span><span>Panel Zumo</span></div>
+{% if error %}<div class="msg msg-err">{{error}}</div>{% endif %}
 <form method="post">
-<div class="row" style="flex-direction:column;align-items:stretch">
-<input name="usuario" placeholder="Usuario" autofocus required>
-<input name="password" type="password" placeholder="Contraseña" required>
-<button type="submit">Entrar</button>
-</div>
+<div class="field"><label>Usuario</label><input name="usuario" autofocus required autocomplete="username"></div>
+<div class="field"><label>Contraseña</label><input name="password" type="password" required autocomplete="current-password"></div>
+<button class="btn" type="submit">Entrar</button>
 </form>
+</div>
 </div>
 </body></html>
 """
 
 BASE_HTML = """
-<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta charset="utf-8"><title>Panel ZUMO</title><style>{{css}}</style></head>
+<!doctype html><html lang="es"><head><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8"><title>Panel Zumo</title><style>{{css}}</style></head>
 <body>
-<div class="row" style="justify-content:space-between">
-<h1>═ Panel ZUMO ═</h1>
-<a href="{{ url_for('logout') }}">Salir</a>
+<div class="topbar">
+<div class="brand"><span class="dot"></span><span>Panel Zumo</span></div>
+<a class="exit" href="{{ url_for('logout') }}">Salir</a>
 </div>
 
-<div class="card">
-<div class="stats">
-<span>RAM: <b id="s-ram">-</b></span>
-<span>CPU: <b id="s-cpu">-</b></span>
-<span>Cuentas: <b id="s-cuentas">-</b></span>
-<span>En línea: <b id="s-online">-</b></span>
-</div>
+<div class="wrap">
+
+<div class="stat-grid">
+<div class="stat"><div class="label">Memoria</div><div class="value mono" id="s-ram">—</div></div>
+<div class="stat"><div class="label">Procesador</div><div class="value mono" id="s-cpu">—</div></div>
+<div class="stat accent"><div class="label">Cuentas</div><div class="value mono" id="s-cuentas">—</div></div>
+<div class="stat live"><div class="label">Conectados ahora</div><div class="value mono" id="s-online">—</div></div>
 </div>
 
-<div class="card">
-<h3 style="margin-top:0">Crear usuario</h3>
-{% if error == 'hwid' %}<div class="msg err">HWID inválido (8 a 32 caracteres alfanuméricos)</div>{% endif %}
-{% if error == 'existe' %}<div class="msg err">Ese usuario ya existe</div>{% endif %}
-<div class="modo">
-<label><input type="radio" name="modo_sel" value="normal" checked onclick="toggleModo()"> Normal</label>
-<label><input type="radio" name="modo_sel" value="hwid" onclick="toggleModo()"> HWID</label>
+<div class="section">
+<h2>Crear usuario</h2>
+{% if error == 'hwid' %}<div class="msg msg-err">Ese HWID no es válido: tiene que tener de 8 a 32 caracteres alfanuméricos.</div>{% endif %}
+{% if error == 'existe' %}<div class="msg msg-err">Ya existe un usuario con ese nombre o HWID.</div>{% endif %}
+<div class="seg">
+<label class="active" id="lbl-normal"><input type="radio" name="modo_sel" value="normal" checked onclick="toggleModo('normal')"><span>Normal</span></label>
+<label id="lbl-hwid"><input type="radio" name="modo_sel" value="hwid" onclick="toggleModo('hwid')"><span>HWID</span></label>
 </div>
 <form method="post" action="{{ url_for('crear') }}" id="form-crear">
 <input type="hidden" name="modo" id="modo-input" value="normal">
-<div class="row" id="campos-normal">
-<input name="usuario" placeholder="Usuario">
-<input name="password" placeholder="Contraseña">
+
+<div id="campos-normal">
+<div class="field"><label>Usuario</label><input name="usuario"></div>
+<div class="field"><label>Contraseña</label><input name="password"></div>
 </div>
-<div class="row hide" id="campos-hwid">
-<input name="etiqueta" placeholder="Nombre del cliente">
-<input name="hwid" placeholder="HWID (8 a 32 caracteres)">
+
+<div id="campos-hwid" class="hide">
+<div class="field"><label>Nombre del cliente</label><input name="etiqueta" placeholder="Para identificarlo en el panel"></div>
+<div class="field"><label>HWID</label><input name="hwid" placeholder="8 a 32 caracteres"></div>
 </div>
-<div class="row">
-<input name="dias" type="number" placeholder="Días" min="1" required style="width:90px">
-<input name="limite" type="number" placeholder="Límite" min="1" value="1" style="width:90px">
-<button type="submit">Crear</button>
+
+<div class="field-row">
+<div class="field"><label>Días</label><input name="dias" type="number" min="1" required></div>
+<div class="field"><label>Límite de conexiones</label><input name="limite" type="number" min="1" value="1"></div>
 </div>
+<button class="btn" type="submit">Crear usuario</button>
 </form>
 </div>
 
-<div class="card">
-<h3 style="margin-top:0">Usuarios (en vivo)</h3>
-<table id="tabla-usuarios">
-<thead><tr><th>Usuario/Cliente</th><th>Estado</th><th>Límite</th><th>Vence</th><th></th></tr></thead>
-<tbody id="tbody-usuarios"><tr><td colspan="5">Cargando…</td></tr></tbody>
-</table>
+<div class="section">
+<h2>Usuarios</h2>
+<div class="userlist" id="lista-usuarios">
+<div class="empty">Cargando…</div>
+</div>
+</div>
+
 </div>
 
 <script>
-function toggleModo(){
-  var hwid = document.querySelector('input[name=modo_sel]:checked').value === 'hwid';
+function toggleModo(modo){
+  var hwid = modo === 'hwid';
   document.getElementById('modo-input').value = hwid ? 'hwid' : 'normal';
   document.getElementById('campos-hwid').classList.toggle('hide', !hwid);
   document.getElementById('campos-normal').classList.toggle('hide', hwid);
+  document.getElementById('lbl-hwid').classList.toggle('active', hwid);
+  document.getElementById('lbl-normal').classList.toggle('active', !hwid);
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 function fila(u){
+  var nombre = escapeHtml(u.nombre);
+  var expClass = u.dias === 'vencido' ? 'bad' : (u.dias === 'vence hoy' ? 'warn' : '');
   var estado = u.online > 0
-    ? '<span class="pill on">● online ('+u.online+')</span>'
-    : '<span class="pill off">○ offline</span>';
-  return '<tr>' +
-    '<td>'+u.nombre+'</td>' +
-    '<td>'+estado+'</td>' +
-    '<td>'+u.limite+'</td>' +
-    '<td>'+u.dias+'</td>' +
-    '<td>' +
-      '<form class="inline" method="post" action="/eliminar/'+encodeURIComponent(u.usuario)+'" onsubmit="return confirm(\\'¿Borrar '+u.nombre+'?\\')">' +
-        '<button class="danger" type="submit">Borrar</button>' +
-      '</form>' +
-    '</td>' +
-  '</tr>';
+    ? '<span class="status on"><span class="bulb"></span>online · '+u.online+'</span>'
+    : '<span class="status"><span class="bulb"></span>offline</span>';
+  return '' +
+  '<div class="urow">' +
+    '<div class="uinfo">' +
+      '<div class="uname">'+nombre+'</div>' +
+      '<div class="umeta">' + estado +
+        '<span>límite '+u.limite+'</span>' +
+        '<span class="exp '+expClass+'">'+u.dias+'</span>' +
+      '</div>' +
+    '</div>' +
+    '<form method="post" action="/eliminar/'+encodeURIComponent(u.usuario)+'" onsubmit="return confirm(\\'Borrar a '+nombre.replace(/'/g, "\\\\'")+'?\\')">' +
+      '<button class="btn-danger" type="submit">Borrar</button>' +
+    '</form>' +
+  '</div>';
 }
 
 function actualizar(){
   fetch('/api/usuarios').then(r => r.json()).then(d => {
-    document.getElementById('s-ram').textContent = d.stats.mu + '/' + d.stats.mt + 'MB';
+    document.getElementById('s-ram').textContent = d.stats.mu + ' / ' + d.stats.mt + ' MB';
     document.getElementById('s-cpu').textContent = d.stats.cpu + '%';
     document.getElementById('s-cuentas').textContent = d.stats.cuentas;
     document.getElementById('s-online').textContent = d.stats.online;
-    var tb = document.getElementById('tbody-usuarios');
-    if (d.usuarios.length === 0){ tb.innerHTML = '<tr><td colspan="5">No hay usuarios</td></tr>'; return; }
-    tb.innerHTML = d.usuarios.map(fila).join('');
+    var el = document.getElementById('lista-usuarios');
+    if (d.usuarios.length === 0){
+      el.innerHTML = '<div class="empty">Todavía no hay usuarios — creá el primero arriba.</div>';
+      return;
+    }
+    el.innerHTML = d.usuarios.map(fila).join('');
   }).catch(() => {});
 }
 actualizar();
