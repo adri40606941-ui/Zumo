@@ -11,7 +11,7 @@ echo
 
 echo -e "\e[1;33m[1/9]\e[0m Instalando dependencias..."
 apt-get update -y >/dev/null 2>&1
-apt-get install -y --no-install-recommends procps iproute2 curl ca-certificates >/dev/null 2>&1
+apt-get install -y --no-install-recommends procps iproute2 curl ca-certificates gcc libc6-dev >/dev/null 2>&1
 mkdir -p /etc/zumo
 touch /etc/zumo/usuarios.db
 grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
@@ -438,32 +438,153 @@ DESBVEOF
 chmod +x /etc/zumo/desactivar-badvpn.sh
 echo -e " \e[1;32m✔ listo\e[0m"
 
-echo -e "\e[1;33m[6/9]\e[0m Instalando limitador de conexiones..."
+echo -e "\e[1;33m[6/9]\e[0m Compilando limitador de conexiones..."
 
-cat > /etc/zumo/limitador.sh <<'LIMEOF'
-#!/bin/bash
-DB=/etc/zumo/usuarios.db
-while true; do
-while IFS=: read -r u lim exp; do
-[ -z "$u" ] && continue
-mapfile -t pids < <(ps -u "$u" -o pid=,comm= --sort=start_time 2>/dev/null | awk '$2=="sshd"{print $1}')
-n=${#pids[@]}
-if [ "$n" -gt "$lim" ]; then
-for ((i=0; i<n-lim; i++)); do kill -9 "${pids[$i]}" 2>/dev/null; done
+LIMWORK=$(mktemp -d)
+cat > "$LIMWORK/zumo-limit.c" <<'ZUMO_LIMIT_C'
+/* zumo-limit: limitador de conexiones SSH por usuario.
+ * Lee /etc/zumo/usuarios.db (usuario:limite:vencimiento) y, cada 3s,
+ * escanea /proc directamente (sin invocar "ps") para contar procesos
+ * sshd por usuario y matar los mas nuevos que excedan el limite. */
+#define _GNU_SOURCE
+#include <dirent.h>
+#include <pwd.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#define DB_PATH "/etc/zumo/usuarios.db"
+#define MAX_USERS 4096
+#define MAX_PROCS 16384
+
+typedef struct { char name[64]; int limit; uid_t uid; } UserLim;
+typedef struct { pid_t pid; uid_t uid; unsigned long long start; } ProcInfo;
+
+static int load_users(UserLim *users) {
+    FILE *f = fopen(DB_PATH, "r");
+    if (!f) return 0;
+    char line[256];
+    int n = 0;
+    while (fgets(line, sizeof(line), f) && n < MAX_USERS) {
+        char *c1 = strchr(line, ':');
+        if (!c1) continue;
+        *c1 = 0;
+        char *c2 = strchr(c1 + 1, ':');
+        if (!c2) continue;
+        *c2 = 0;
+        if (line[0] == '\0' || strlen(line) >= sizeof(users[0].name)) continue;
+        int limit = atoi(c1 + 1);
+        if (limit < 1) continue;
+        struct passwd *pw = getpwnam(line);
+        if (!pw) continue;
+        strncpy(users[n].name, line, sizeof(users[n].name) - 1);
+        users[n].name[sizeof(users[n].name) - 1] = '\0';
+        users[n].limit = limit;
+        users[n].uid = pw->pw_uid;
+        n++;
+    }
+    fclose(f);
+    return n;
+}
+
+static unsigned long long starttime_of(pid_t pid) {
+    char path[64], buf[1024];
+    snprintf(path, sizeof(path), "/proc/%d/stat", pid);
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    if (!fgets(buf, sizeof(buf), f)) { fclose(f); return 0; }
+    fclose(f);
+    char *p = strrchr(buf, ')');
+    if (!p) return 0;
+    p += 2; /* salta ") " -> campo 3 (state) */
+    int skip = 19; /* de campo 3 a campo 22 (starttime) */
+    while (skip-- > 0 && p) { p = strchr(p, ' '); if (p) p++; }
+    return p ? strtoull(p, NULL, 10) : 0;
+}
+
+static int cmp_start(const void *a, const void *b) {
+    unsigned long long sa = ((const ProcInfo *)a)->start;
+    unsigned long long sb = ((const ProcInfo *)b)->start;
+    return (sa > sb) - (sa < sb);
+}
+
+static int scan_sshd(ProcInfo *procs) {
+    int n = 0;
+    DIR *d = opendir("/proc");
+    if (!d) return 0;
+    struct dirent *de;
+    while ((de = readdir(d)) != NULL && n < MAX_PROCS) {
+        if (de->d_type != DT_DIR) continue;
+        pid_t pid = atoi(de->d_name);
+        if (pid <= 0) continue;
+        char path[64], l[256];
+        snprintf(path, sizeof(path), "/proc/%d/status", pid);
+        FILE *sf = fopen(path, "r");
+        if (!sf) continue;
+        int is_sshd = 0;
+        long uid = -1;
+        while (fgets(l, sizeof(l), sf)) {
+            if (!strncmp(l, "Name:", 5)) {
+                if (strstr(l, "sshd")) is_sshd = 1;
+            } else if (!strncmp(l, "Uid:", 4)) {
+                sscanf(l + 4, "%ld", &uid);
+                break;
+            }
+        }
+        fclose(sf);
+        if (!is_sshd || uid < 0) continue;
+        procs[n].pid = pid;
+        procs[n].uid = (uid_t)uid;
+        procs[n].start = starttime_of(pid);
+        n++;
+    }
+    closedir(d);
+    return n;
+}
+
+int main(void) {
+    for (;;) {
+        UserLim users[MAX_USERS];
+        int nusers = load_users(users);
+        if (nusers > 0) {
+            static ProcInfo procs[MAX_PROCS];
+            int nprocs = scan_sshd(procs);
+            for (int i = 0; i < nusers; i++) {
+                ProcInfo mine[MAX_PROCS];
+                int nm = 0;
+                for (int j = 0; j < nprocs; j++)
+                    if (procs[j].uid == users[i].uid && nm < MAX_PROCS) mine[nm++] = procs[j];
+                if (nm > users[i].limit) {
+                    qsort(mine, nm, sizeof(ProcInfo), cmp_start);
+                    for (int k = 0; k < nm - users[i].limit; k++) kill(mine[k].pid, SIGKILL);
+                }
+            }
+        }
+        sleep(3);
+    }
+    return 0;
+}
+ZUMO_LIMIT_C
+
+if gcc -O2 -o "$LIMWORK/zumo-limit" "$LIMWORK/zumo-limit.c" 2>"$LIMWORK/err.log"; then
+install -m 0755 "$LIMWORK/zumo-limit" /usr/local/bin/zumo-limit
+rm -f /etc/zumo/limitador.sh
+else
+echo -e " \e[1;31m✘ No se pudo compilar el limitador:\e[0m"
+sed 's/^/   /' "$LIMWORK/err.log"
+rm -rf "$LIMWORK"
+exit 1
 fi
-done < "$DB"
-sleep 3
-done
-LIMEOF
-
-chmod +x /etc/zumo/limitador.sh
+rm -rf "$LIMWORK"
 
 cat > /etc/systemd/system/zumo-limit.service <<'SVCEOF'
 [Unit]
 Description=ZUMO limitador de conexiones
 After=network.target
 [Service]
-ExecStart=/etc/zumo/limitador.sh
+ExecStart=/usr/local/bin/zumo-limit
 Restart=always
 [Install]
 WantedBy=multi-user.target
