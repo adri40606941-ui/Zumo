@@ -140,6 +140,71 @@ def cambiar_dias(usuario, dias):
     return nexp
 
 
+def renovar_usuario(usuario, dias_extra):
+    """Suma días al vencimiento. Si ya venció, cuenta desde hoy; si no, desde la
+    fecha de vencimiento actual (para no 'perder' los días que le quedaban)."""
+    base = datetime.now()
+    actual = next((u for u in leer_usuarios() if u["usuario"] == usuario), None)
+    if actual:
+        try:
+            exp_actual = datetime.strptime(actual["exp"], "%Y-%m-%d")
+            if exp_actual > base:
+                base = exp_actual
+        except ValueError:
+            pass
+    nexp = (base + timedelta(days=dias_extra)).strftime("%Y-%m-%d")
+    subprocess.run(["usermod", "-e", nexp, usuario], capture_output=True)
+    _reescribir_db(usuario, 2, nexp)
+    return nexp
+
+
+def esta_bloqueado(usuario):
+    try:
+        r = subprocess.run(["passwd", "-S", usuario], capture_output=True, text=True, timeout=5)
+    except Exception:
+        return False
+    partes = r.stdout.split()
+    return r.returncode == 0 and len(partes) > 1 and partes[1] == "L"
+
+
+def bloquear_usuario(usuario):
+    subprocess.run(["usermod", "-L", usuario], capture_output=True)
+    subprocess.run(["pkill", "-9", "-u", usuario], capture_output=True)
+
+
+def desbloquear_usuario(usuario):
+    subprocess.run(["usermod", "-U", usuario], capture_output=True)
+
+
+def cambiar_hwid(usuario_actual, nuevo_hwid):
+    """Renombra un usuario HWID (login Linux + contraseña) conservando etiqueta,
+    límite y vencimiento. Para cuando la app del cliente regenera su HWID."""
+    nuevo_hwid = re.sub(r"[^A-Za-z0-9]", "", nuevo_hwid)
+    if not (8 <= len(nuevo_hwid) <= 32):
+        return False, "HWID inválido (8 a 32 caracteres alfanuméricos)."
+    _, es_hwid = etiqueta_de(usuario_actual)
+    if not es_hwid:
+        return False, "Ese usuario no es de modo HWID."
+    r = subprocess.run(["id", nuevo_hwid], capture_output=True)
+    if r.returncode == 0:
+        return False, "Ya existe un usuario con ese HWID."
+    subprocess.run(["pkill", "-9", "-u", usuario_actual], capture_output=True)
+    try:
+        subprocess.run(["usermod", "--badname", "-l", nuevo_hwid, usuario_actual], check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        return False, f"Falló el cambio: {e.stderr.decode(errors='ignore')[:200]}"
+    subprocess.run(["chpasswd"], input=f"{nuevo_hwid}:{nuevo_hwid}\n".encode(), capture_output=True)
+    if Path(DB_PATH).exists():
+        out = []
+        for l in Path(DB_PATH).read_text().splitlines():
+            p = l.split(":")
+            if len(p) == 3 and p[0] == usuario_actual:
+                p[0] = nuevo_hwid
+            out.append(":".join(p))
+        Path(DB_PATH).write_text("\n".join(out) + ("\n" if out else ""))
+    return True, nuevo_hwid
+
+
 def stats():
     mt = mf = 0
     for line in Path("/proc/meminfo").read_text().splitlines():
@@ -162,6 +227,7 @@ def stats():
 def usuarios_para_api():
     out = []
     for u in leer_usuarios():
+        _, es_hwid = etiqueta_de(u["usuario"])
         out.append({
             "usuario": u["usuario"],
             "nombre": nombre_mostrar(u["usuario"]),
@@ -169,6 +235,8 @@ def usuarios_para_api():
             "exp": u["exp"],
             "dias": dias_restantes(u["exp"]),
             "online": en_linea(u["usuario"]),
+            "bloqueado": esta_bloqueado(u["usuario"]),
+            "es_hwid": es_hwid,
         })
     return out
 
@@ -244,6 +312,12 @@ input:focus{outline:none;border-color:var(--violet-dim)}
 .btn:active{background:#7c4deb}
 .btn-danger{background:transparent;border:1px solid #4a2230;color:var(--bad);font-weight:500;padding:6px 12px;font-size:.8rem;width:auto;border-radius:7px}
 .btn-danger:active{background:var(--bad-bg)}
+.btn-edit{background:transparent;border:1px solid var(--line);color:var(--text-dim);font-weight:500;padding:6px 12px;font-size:.8rem;width:auto;border-radius:7px;flex-shrink:0}
+.btn-edit:active{border-color:var(--violet-dim);color:var(--text)}
+.btn-mini{background:var(--violet-dim);color:#fff;font-weight:600;border:none;padding:8px 12px;border-radius:7px;font-size:.8rem;width:auto;font-family:inherit}
+.btn-mini:active{background:var(--violet)}
+.btn-warn{background:transparent;border:1px solid #4a3a16;color:var(--warn)}
+.btn-warn:active{background:var(--warn-bg)}
 
 .msg{padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:.85rem}
 .msg-err{background:var(--bad-bg);color:var(--bad)}
@@ -251,9 +325,10 @@ input:focus{outline:none;border-color:var(--violet-dim)}
 .hide{display:none !important}
 
 .userlist{display:flex;flex-direction:column}
-.urow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 0;border-bottom:1px solid var(--line)}
-.urow:last-child{border-bottom:none}
-.uinfo{min-width:0}
+.urow-wrap{border-bottom:1px solid var(--line)}
+.urow-wrap:last-child{border-bottom:none}
+.urow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px 0}
+.uinfo{min-width:0;flex:1;cursor:pointer}
 .uname{font-family:'JetBrains Mono';font-size:.92rem;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .utag{color:var(--text-dim);font-weight:400;font-size:.78rem}
 .umeta{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:.78rem;color:var(--text-dim)}
@@ -265,6 +340,12 @@ input:focus{outline:none;border-color:var(--violet-dim)}
 .exp.warn{background:var(--warn-bg);color:var(--warn)}
 .exp.bad{background:var(--bad-bg);color:var(--bad)}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 #22c55e66}50%{box-shadow:0 0 0 4px #22c55e00}}
+
+.edit-panel{display:flex;flex-direction:column;gap:8px;padding:0 0 16px;margin-top:-2px}
+.erow{display:flex;gap:8px}
+.erow form{display:flex;gap:8px;flex:1}
+.erow input{flex:1}
+.erow-actions{display:flex;gap:8px;justify-content:flex-end}
 
 .empty{color:var(--text-dim);font-size:.85rem;text-align:center;padding:20px 0}
 
@@ -362,24 +443,67 @@ function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+var abiertos = {};
+
+function toggleEdit(usuario){
+  abiertos[usuario] = !abiertos[usuario];
+  var el = document.getElementById('edit-' + usuario);
+  if (el) el.classList.toggle('hide', !abiertos[usuario]);
+}
+
 function fila(u){
   var nombre = escapeHtml(u.nombre);
+  var nombreJs = nombre.replace(/'/g, "\\'");
+  var usr = encodeURIComponent(u.usuario);
   var expClass = u.dias === 'vencido' ? 'bad' : (u.dias === 'vence hoy' ? 'warn' : '');
-  var estado = u.online > 0
-    ? '<span class="status on"><span class="bulb"></span>online · '+u.online+'</span>'
-    : '<span class="status"><span class="bulb"></span>offline</span>';
+  var estado = u.bloqueado
+    ? '<span class="status"><span class="bulb"></span>bloqueado</span>'
+    : (u.online > 0
+      ? '<span class="status on"><span class="bulb"></span>online · '+u.online+'</span>'
+      : '<span class="status"><span class="bulb"></span>offline</span>');
+  var editId = 'edit-' + u.usuario;
+  var abierto = !!abiertos[u.usuario];
   return '' +
-  '<div class="urow">' +
-    '<div class="uinfo">' +
-      '<div class="uname">'+nombre+'</div>' +
-      '<div class="umeta">' + estado +
-        '<span>límite '+u.limite+'</span>' +
-        '<span class="exp '+expClass+'">'+u.dias+'</span>' +
+  '<div class="urow-wrap">' +
+    '<div class="urow">' +
+      '<div class="uinfo" onclick="toggleEdit(\''+u.usuario+'\')">' +
+        '<div class="uname">'+nombre+'</div>' +
+        '<div class="umeta">' + estado +
+          '<span>límite '+u.limite+'</span>' +
+          '<span class="exp '+expClass+'">'+u.dias+'</span>' +
+        '</div>' +
+      '</div>' +
+      '<button type="button" class="btn-edit" onclick="toggleEdit(\''+u.usuario+'\')">Editar</button>' +
+    '</div>' +
+    '<div class="edit-panel'+(abierto ? '' : ' hide')+'" id="'+editId+'">' +
+      '<div class="erow">' +
+        '<form method="post" action="/renovar/'+usr+'">' +
+          '<input type="number" name="dias" min="1" placeholder="Días a sumar" required>' +
+          '<button class="btn-mini" type="submit">Renovar</button>' +
+        '</form>' +
+      '</div>' +
+      '<div class="erow">' +
+        '<form method="post" action="/limite/'+usr+'">' +
+          '<input type="number" name="limite" min="1" value="'+u.limite+'">' +
+          '<button class="btn-mini" type="submit">Guardar límite</button>' +
+        '</form>' +
+      '</div>' +
+      (u.es_hwid ?
+        '<div class="erow">' +
+          '<form method="post" action="/hwid/'+usr+'">' +
+            '<input type="text" name="nuevo_hwid" placeholder="HWID nuevo (app regenerada)" maxlength="32">' +
+            '<button class="btn-mini" type="submit">Cambiar HWID</button>' +
+          '</form>' +
+        '</div>' : '') +
+      '<div class="erow-actions">' +
+        '<form method="post" action="/bloquear/'+usr+'">' +
+          '<button class="btn-mini'+(u.bloqueado ? '' : ' btn-warn')+'" type="submit">'+(u.bloqueado ? 'Desbloquear' : 'Bloquear')+'</button>' +
+        '</form>' +
+        '<form method="post" action="/eliminar/'+usr+'" onsubmit="return confirm(\\'Borrar a '+nombreJs+'?\\')">' +
+          '<button class="btn-danger" type="submit">Borrar</button>' +
+        '</form>' +
       '</div>' +
     '</div>' +
-    '<form method="post" action="/eliminar/'+encodeURIComponent(u.usuario)+'" onsubmit="return confirm(\\'Borrar a '+nombre.replace(/'/g, "\\\\'")+'?\\')">' +
-      '<button class="btn-danger" type="submit">Borrar</button>' +
-    '</form>' +
   '</div>';
 }
 
@@ -472,6 +596,50 @@ def crear():
 @login_requerido
 def eliminar(usuario):
     eliminar_usuario(usuario)
+    return redirect(url_for("index"))
+
+
+@app.route("/renovar/<usuario>", methods=["POST"])
+@login_requerido
+def renovar(usuario):
+    try:
+        dias = int(request.form.get("dias", "0") or 0)
+    except ValueError:
+        dias = 0
+    if dias > 0:
+        renovar_usuario(usuario, dias)
+    return redirect(url_for("index"))
+
+
+@app.route("/limite/<usuario>", methods=["POST"])
+@login_requerido
+def limite(usuario):
+    try:
+        nl = int(request.form.get("limite", "0") or 0)
+    except ValueError:
+        nl = 0
+    if nl > 0:
+        cambiar_limite(usuario, nl)
+    return redirect(url_for("index"))
+
+
+@app.route("/bloquear/<usuario>", methods=["POST"])
+@login_requerido
+def bloquear(usuario):
+    if esta_bloqueado(usuario):
+        desbloquear_usuario(usuario)
+    else:
+        bloquear_usuario(usuario)
+    return redirect(url_for("index"))
+
+
+@app.route("/hwid/<usuario>", methods=["POST"])
+@login_requerido
+def hwid_cambiar(usuario):
+    nuevo = request.form.get("nuevo_hwid", "")
+    ok, _ = cambiar_hwid(usuario, nuevo)
+    if not ok:
+        return redirect(url_for("index", error="hwid"))
     return redirect(url_for("index"))
 
 
