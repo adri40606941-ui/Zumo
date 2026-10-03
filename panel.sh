@@ -153,6 +153,40 @@ esac
 done
 }
 
+bhttp_port() {
+local p
+p=$(cat /etc/zumo/bhttp.port 2>/dev/null)
+[[ "$p" =~ ^[0-9]+$ ]] || p=8080
+echo "$p"
+}
+
+diag_bhttp() {
+banner; echo -e " \e[1;38;5;87mDIAGNÓSTICO DE BHTTP${N}\n"
+local bp r n
+bp=$(bhttp_port)
+if systemctl is-active --quiet bhttp-server; then msg_ok "Servicio: activo"; else msg_err "Servicio: inactivo (activalo con la opción 5)"; fi
+if ss -ltnH "sport = :$bp" 2>/dev/null | grep -q .; then msg_ok "Escuchando en el puerto $bp"; else msg_err "Nada escucha en el puerto $bp"; fi
+if timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/$bp" 2>/dev/null; then msg_ok "Acepta conexiones locales"; else msg_err "No acepta conexiones locales en $bp"; fi
+n=$(ss -tnH state established "( sport = :$bp )" 2>/dev/null | wc -l)
+echo -e "   Conexiones establecidas ahora: \e[1;33m${n}${N}"
+if [ -x /opt/bhttp-server/bhttp-server ]; then
+r=$(timeout 15 /opt/bhttp-server/bhttp-server -self-test 2>&1 | head -n1)
+case "$r" in BHTTP_SELF_TEST_PASS*) msg_ok "Prueba interna del binario: OK" ;; *) msg_err "Prueba interna: ${r:-sin respuesta}" ;; esac
+fi
+if systemctl is-active --quiet pdirect-80 && [ "$bp" != "80" ]; then
+echo -e "   \e[1;33m⚠ El puerto 80 lo usa PDirect: si la app apunta al 80 se queda en 'Conectando'.${N}"
+fi
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+ufw status 2>/dev/null | grep -qw "$bp" || msg_err "ufw está activo y no muestra el puerto $bp abierto (ufw allow $bp/tcp)"
+fi
+echo; echo -e " \e[1;38;5;87mÚltimos logs (solo muestra errores):${N}"
+journalctl -u bhttp-server -n 8 --no-pager -o cat 2>/dev/null | sed 's/^/   /'
+echo; echo -e " $L"
+echo -e "   En la app: servidor = IP pública de la VPS, puerto = \e[1;33m${bp}${N}"
+echo -e "   Si sigue en 'Conectando', abrí el puerto $bp en el firewall del proveedor."
+pausa
+}
+
 menu_protocolos() {
 while true; do
 banner
@@ -172,7 +206,7 @@ else
 echo -e " \e[1;31m● HCR Server: inactivo${N}"
 fi
 if systemctl is-active --quiet bhttp-server; then
-echo -e " \e[1;32m● BHTTP: activo (8080 → SSH)${N}\n"
+echo -e " \e[1;32m● BHTTP: activo ($(bhttp_port) → SSH)${N}\n"
 else
 echo -e " \e[1;31m● BHTTP: inactivo${N}\n"
 fi
@@ -180,8 +214,9 @@ op 1 "Activar WebSocket (80 + 7300)"
 op 2 "Desactivar WebSocket (libera 80 y 7300)"
 op 3 "Activar HCR Server (8880)"
 op 4 "Desactivar HCR Server (libera 8880)"
-op 5 "Activar BHTTP (8080)"
-op 6 "Desactivar BHTTP (libera 8080)"
+op 5 "Activar BHTTP (elegís el puerto)"
+op 6 "Desactivar BHTTP (libera su puerto)"
+op 7 "Diagnóstico de BHTTP"
 op 0 "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -203,15 +238,21 @@ fi; pausa ;;
 4) echo -e " \e[1;38;5;87mLiberando puerto 8880...${N}"
 bash /etc/zumo/desactivar-hcr.sh
 msg_ok "HCR Server desactivado; puerto 8880 liberado"; pausa ;;
-5) echo -e " \e[1;38;5;87mInstalando BHTTP, aguardá...${N}"
-if bash /etc/zumo/activar-bhttp.sh; then
-msg_ok "BHTTP activo en el puerto 8080 (→ SSH 22)"
+5) read -rp " Puerto para BHTTP [8080]: " bp; bp=${bp:-8080}
+if ! [[ "$bp" =~ ^[0-9]+$ ]] || [ "$bp" -lt 1 ] || [ "$bp" -gt 65535 ]; then
+msg_err "Puerto inválido (1-65535)"
 else
-msg_err "Falló; revisá 'journalctl -u bhttp-server'"
+echo -e " \e[1;38;5;87mInstalando BHTTP en el puerto ${bp}, aguardá...${N}"
+if bash /etc/zumo/activar-bhttp.sh "$bp"; then
+msg_ok "BHTTP activo en el puerto $bp (→ SSH 22)"
+else
+msg_err "Falló; usá la opción 7 (diagnóstico)"
+fi
 fi; pausa ;;
-6) echo -e " \e[1;38;5;87mLiberando puerto 8080...${N}"
+6) echo -e " \e[1;38;5;87mLiberando el puerto de BHTTP...${N}"
 bash /etc/zumo/desactivar-bhttp.sh
-msg_ok "BHTTP desactivado; puerto 8080 liberado"; pausa ;;
+msg_ok "BHTTP desactivado; puerto liberado"; pausa ;;
+7) diag_bhttp ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
