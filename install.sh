@@ -593,8 +593,12 @@ int main(void) {
                 for (int j = 0; j < nprocs; j++)
                     if (procs[j].uid == users[i].uid && nm < MAX_PROCS) mine[nm++] = procs[j];
                 if (nm > users[i].limit) {
+                    /* Orden ascendente por starttime: los mas viejos primero.
+                     * Se conservan los primeros 'limit' (las conexiones que ya
+                     * estaban) y se matan las mas nuevas que exceden, para no
+                     * cortar al que ya estaba conectado. */
                     qsort(mine, nm, sizeof(ProcInfo), cmp_start);
-                    for (int k = 0; k < nm - users[i].limit; k++) kill(mine[k].pid, SIGKILL);
+                    for (int k = users[i].limit; k < nm; k++) kill(mine[k].pid, SIGKILL);
                 }
             }
         }
