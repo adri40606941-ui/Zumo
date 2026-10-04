@@ -210,11 +210,14 @@ echo
 if [ "$modo" = "2" ]; then
 read -rp " Nombre del cliente: " etiqueta
 etiqueta=$(zumo_limpiar_etiqueta "$etiqueta")
+read -rp " Pegá el HWID del cliente (8 a 32 caracteres): " hwidraw
+hwid=$(echo "$hwidraw" | tr -cd 'A-Za-z0-9')
+if [ ${#hwid} -lt 8 ] || [ ${#hwid} -gt 32 ]; then
+msg_err "HWID inválido (8 a 32 caracteres alfanuméricos; quedaron ${#hwid})"; pausa; return
+fi
+id "$hwid" &>/dev/null && { msg_err "Ese HWID ya está registrado"; pausa; return; }
 read -rp " Minutos de duración: " min
 [[ "$min" =~ ^[0-9]+$ ]] && [ "$min" -ge 1 ] || { msg_err "Minutos inválidos"; pausa; return; }
-# HWID temporal: se genera un ID aleatorio que sirve de usuario y contraseña.
-hwid=$(tr -dc 'A-Z0-9' </dev/urandom | head -c 12)
-id "$hwid" &>/dev/null && { msg_err "Colisión de ID, reintentá"; pausa; return; }
 exp=$(date -d "+2 days" +%F)
 if ! useradd --badname -M -s /bin/false -e "$exp" -c "hwid,$etiqueta" "$hwid" 2>/dev/null; then
 msg_err "No se pudo crear el usuario temporal"; pausa; return
