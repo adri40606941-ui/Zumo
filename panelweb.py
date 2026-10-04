@@ -454,13 +454,6 @@ input:focus{outline:none;border-color:var(--violet-dim)}
 
 .empty{color:var(--text-dim);font-size:.85rem;text-align:center;padding:20px 0}
 
-.tool-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-.tool-name{font-size:.92rem;font-weight:500}
-.tool-desc{font-size:.8rem;color:var(--text-dim);margin-top:3px}
-.tool-hint{font-size:.74rem;color:var(--text-dim);margin-top:6px;opacity:.85;max-width:380px}
-.tool-actions{display:flex;flex-direction:column;gap:8px;flex-shrink:0}
-.tool-actions form{margin:0}
-
 .modal-overlay{position:fixed;inset:0;background:rgba(5,4,10,.7);display:flex;align-items:flex-start;justify-content:center;z-index:50;padding:16px;overflow-y:auto}
 .modal-overlay.hide{display:none}
 .modal{background:var(--surface);border:1px solid var(--line);border-radius:16px;width:100%;max-width:480px;padding:20px;max-height:none;margin-top:6vh;margin-bottom:16px}
@@ -552,21 +545,6 @@ BASE_HTML = """
 <h2>Usuarios</h2>
 <div class="userlist" id="lista-usuarios">
 <div class="empty">Cargando…</div>
-</div>
-</div>
-
-<div class="section">
-<h2>Herramientas</h2>
-<div class="tool-row">
-<div class="tool-info">
-<div class="tool-name">Optimización de red (BBR)</div>
-<div class="tool-desc" id="bbr-estado">—</div>
-<div class="tool-hint">Mejora la estabilidad y baja el jitter bajo carga. No reduce el ping base (eso lo fija la distancia a la VPS).</div>
-</div>
-<div class="tool-actions">
-<form method="post" action="/bbr/activar" class="ajax-tool"><button class="btn-mini" type="submit">Activar</button></form>
-<form method="post" action="/bbr/desactivar" class="ajax-tool"><button class="btn-mini btn-warn" type="submit">Desactivar</button></form>
-</div>
 </div>
 </div>
 
@@ -799,33 +777,6 @@ function actualizar(){
 }
 actualizar();
 setInterval(actualizar, 3000);
-
-// ---------- herramientas (BBR) ----------
-function cargarHerramientas(){
-  fetch('/api/herramientas').then(r => r.json()).then(d => {
-    var el = document.getElementById('bbr-estado');
-    if (!el) return;
-    if (d.bbr.activo){
-      el.innerHTML = '<span style="color:var(--good)">● Activo</span> · control: '+escapeHtml(d.bbr.cc)+', qdisc: '+escapeHtml(d.bbr.qdisc);
-    } else {
-      el.innerHTML = '<span style="color:var(--bad)">● Inactivo</span> · actual: '+escapeHtml(d.bbr.cc||'?')+', qdisc: '+escapeHtml(d.bbr.qdisc||'?');
-    }
-  }).catch(function(){});
-}
-document.querySelectorAll('.ajax-tool').forEach(function(f){
-  f.onsubmit = function(e){
-    e.preventDefault();
-    var btn = f.querySelector('button'); var txt = btn.textContent;
-    btn.disabled = true; btn.textContent = '…';
-    fetch(f.action, { method:'POST', body:new FormData(f) }).then(function(r){
-      var err = new URL(r.url).searchParams.get('error');
-      mostrarToast(err === 'bbr' ? 'No se pudo activar BBR (¿kernel sin BBR?)' : 'Listo');
-    }).catch(function(){ mostrarToast('No se pudo conectar'); })
-    .finally(function(){ btn.disabled = false; btn.textContent = txt; cargarHerramientas(); });
-  };
-});
-cargarHerramientas();
-setInterval(cargarHerramientas, 10000);
 </script>
 </body></html>
 """
@@ -951,82 +902,6 @@ def hwid_cambiar(usuario):
     ok, _ = cambiar_hwid(usuario, nuevo)
     if not ok:
         return redirect(url_for("index", error="hwid"))
-    return redirect(url_for("index"))
-
-
-# ---------- Herramientas: optimización de red (BBR) ----------
-
-SYSCTL_BBR = "/etc/sysctl.d/99-zumo-bbr.conf"
-MODLOAD_BBR = "/etc/modules-load.d/zumo-bbr.conf"
-_BBR_CONF = (
-    "# ZUMO - optimización de red (BBR + fair queue)\n"
-    "net.core.default_qdisc = fq\n"
-    "net.ipv4.tcp_congestion_control = bbr\n"
-    "net.ipv4.tcp_fastopen = 3\n"
-    "net.core.netdev_max_backlog = 16384\n"
-    "net.ipv4.tcp_notsent_lowat = 16384\n"
-)
-
-
-def _sysctl_get(key):
-    try:
-        r = subprocess.run(["sysctl", "-n", key], capture_output=True, text=True, timeout=5)
-        return r.stdout.strip() if r.returncode == 0 else ""
-    except Exception:
-        return ""
-
-
-def bbr_estado():
-    cc = _sysctl_get("net.ipv4.tcp_congestion_control")
-    qd = _sysctl_get("net.core.default_qdisc")
-    return {"activo": cc == "bbr", "cc": cc, "qdisc": qd}
-
-
-def bbr_activar():
-    subprocess.run(["modprobe", "tcp_bbr"], capture_output=True)
-    try:
-        disp = Path("/proc/sys/net/ipv4/tcp_available_congestion_control").read_text()
-    except Exception:
-        disp = ""
-    if "bbr" not in disp:
-        return False, "Tu kernel no trae BBR (necesitás kernel 4.9+)."
-    try:
-        Path(SYSCTL_BBR).write_text(_BBR_CONF)
-        Path(MODLOAD_BBR).write_text("tcp_bbr\n")
-        subprocess.run(["sysctl", "--system"], capture_output=True)
-    except Exception as e:
-        return False, f"No se pudo aplicar: {e}"
-    return bbr_estado()["activo"], ""
-
-
-def bbr_desactivar():
-    for p in (SYSCTL_BBR, MODLOAD_BBR):
-        try:
-            Path(p).unlink()
-        except OSError:
-            pass
-    subprocess.run(["sysctl", "-w", "net.ipv4.tcp_congestion_control=cubic"], capture_output=True)
-    subprocess.run(["sysctl", "-w", "net.core.default_qdisc=fq_codel"], capture_output=True)
-    subprocess.run(["sysctl", "--system"], capture_output=True)
-
-
-@app.route("/api/herramientas")
-@login_requerido
-def api_herramientas():
-    return jsonify({"bbr": bbr_estado()})
-
-
-@app.route("/bbr/activar", methods=["POST"])
-@login_requerido
-def bbr_activar_route():
-    ok, _ = bbr_activar()
-    return redirect(url_for("index", error=None if ok else "bbr"))
-
-
-@app.route("/bbr/desactivar", methods=["POST"])
-@login_requerido
-def bbr_desactivar_route():
-    bbr_desactivar()
     return redirect(url_for("index"))
 
 
