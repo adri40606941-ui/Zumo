@@ -1014,6 +1014,7 @@ uso_datos() {
 banner; echo -e " \e[1;38;5;141mUSO DE DATOS${N}\n"
 local DATOS="${ZUMO_DATOS:-/etc/zumo/datos.db}" u b total=0 n=0
 if [ ! -s "$DB" ]; then msg_err "No hay usuarios registrados"; pausa; return; fi
+[ -x /usr/local/bin/zumo-datos ] && /usr/local/bin/zumo-datos --once 2>/dev/null
 if ! systemctl is-active --quiet zumo-datos 2>/dev/null; then
 echo -e " \e[1;31m● El contador no está activo (actualizá con actualizar.sh)${N}\n"
 fi
@@ -1028,7 +1029,6 @@ printf " \e[1;32m%-18s${N} \e[1;38;5;51m%s${N}\n" "$(etiqueta_de "$u")" "$(_fmt_
 done < "$DB"
 echo; echo -e " $L"
 echo -e " \e[1;38;5;214mTotal ($n usuarios): \e[1;38;5;51m$(_fmt_bytes "$total")${N}"
-echo -e " \e[2mSuma lo que bajó y subió cada usuario desde que se creó.${N}"
 pausa
 }
 
