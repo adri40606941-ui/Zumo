@@ -1,6 +1,5 @@
 name: Compilar APK
 
-# Se ejecuta a mano desde la pestaña Actions (botón "Run workflow").
 on:
   workflow_dispatch:
 
@@ -24,7 +23,23 @@ jobs:
         working-directory: android-app
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
+
+      - name: Mostrar SOLO el error (si falló)
+        if: failure()
+        run: |
+          echo "================ ERRORES ================"
+          grep -nE "error:|> Task .* FAILED|FAILURE:|What went wrong|Caused by:|Execution failed" /tmp/build.log | head -60 || true
+          echo "========================================="
+          echo "(log completo en el artefacto build-log)"
+
+      - name: Subir log completo (si falló)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: /tmp/build.log
 
       - name: Renombrar APK
         run: cp android-app/app/build/outputs/apk/debug/app-debug.apk zumo.apk
