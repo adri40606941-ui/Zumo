@@ -842,30 +842,53 @@ done
 }
 
 # Test de velocidad con curl contra el servidor de Cloudflare (no instala nada).
-# Usa hasta ~200 MB de bajada y ~25 MB de subida. ZUMO_SPEED_URL solo se usa en pruebas.
+# Mide con 4 conexiones en paralelo de pedidos chicos (25 MB de bajada y 10 MB
+# de subida cada una): evita el tope de tamaño por pedido del servidor y mide
+# mejor en conexiones rápidas. ZUMO_SPEED_URL solo se usa en pruebas.
+_medir_velocidad() {
+local modo="$1" base="$2" tmp i t0 t1 total
+local -a pids=()
+tmp=$(mktemp -d)
+t0=$(date +%s.%N)
+for i in 1 2 3 4; do
+if [ "$modo" = "bajada" ]; then
+curl -s -o /dev/null -w '%{http_code} %{size_download}\n' --max-time 20 \
+"$base/__down?bytes=25000000" > "$tmp/$i" 2>/dev/null &
+else
+head -c 10000000 /dev/zero | curl -s -o /dev/null -w '%{http_code} %{size_upload}\n' --max-time 20 \
+-X POST -H 'Content-Type: application/octet-stream' --data-binary @- "$base/__up" > "$tmp/$i" 2>/dev/null &
+fi
+pids+=($!)
+done
+wait "${pids[@]}" 2>/dev/null
+t1=$(date +%s.%N)
+total=$(cat "$tmp"/* 2>/dev/null | awk '$1==200{s+=$2} END{printf "%d", s}')
+rm -rf "$tmp"
+LC_ALL=C awk -v b="${total:-0}" -v a="$t0" -v z="$t1" \
+'BEGIN{d=z-a; if(d<=0||b<=0){print "0.0"} else printf "%.1f", b*8/d/1000000}'
+}
+
 test_velocidad() {
-local base="${ZUMO_SPEED_URL:-https://speed.cloudflare.com}" lat dl ul
+local base="${ZUMO_SPEED_URL:-https://speed.cloudflare.com}" lat lat_ms dl_m ul_m
 banner; echo -e " \e[1;38;5;141mTEST DE VELOCIDAD${N}\n"
 command -v curl >/dev/null 2>&1 || { msg_err "Falta curl"; pausa; return; }
-echo -e " \e[2mUsa hasta 200 MB de bajada y 25 MB de subida.${N}\n"
+echo -e " \e[2mUsa hasta 100 MB de bajada y 40 MB de subida.${N}\n"
 echo " Midiendo latencia..."
 lat=$(curl -s -o /dev/null -w '%{time_connect}' --max-time 10 "$base/__down?bytes=0" 2>/dev/null)
 echo " Midiendo bajada..."
-dl=$(curl -s -o /dev/null -w '%{speed_download}' --max-time 15 "$base/__down?bytes=200000000" 2>/dev/null)
+dl_m=$(_medir_velocidad bajada "$base")
 echo " Midiendo subida..."
-ul=$(head -c 25000000 /dev/zero | curl -s -o /dev/null -w '%{speed_upload}' --max-time 15 -X POST \
--H 'Content-Type: application/octet-stream' --data-binary @- "$base/__up" 2>/dev/null)
+ul_m=$(_medir_velocidad subida "$base")
 echo
-local lat_ms dl_m ul_m
 lat_ms=$(LC_ALL=C awk -v t="${lat:-0}" 'BEGIN{printf "%.0f", t*1000}')
-dl_m=$(LC_ALL=C awk -v b="${dl:-0}" 'BEGIN{printf "%.1f", b*8/1000000}')
-ul_m=$(LC_ALL=C awk -v b="${ul:-0}" 'BEGIN{printf "%.1f", b*8/1000000}')
 if [ "$dl_m" = "0.0" ] && [ "$ul_m" = "0.0" ]; then
 msg_err "No se pudo medir (¿sin internet o bloqueado?)"
 else
 echo -e " \e[1;38;5;208mLatencia:\e[0m \e[1;32m${lat_ms} ms\e[0m"
-echo -e " \e[1;38;5;208mBajada:\e[0m   \e[1;32m${dl_m} Mbps\e[0m"
-echo -e " \e[1;38;5;208mSubida:\e[0m   \e[1;32m${ul_m} Mbps\e[0m"
+if [ "$dl_m" = "0.0" ]; then echo -e " \e[1;38;5;208mBajada:\e[0m   \e[1;31mno se pudo medir\e[0m"
+else echo -e " \e[1;38;5;208mBajada:\e[0m   \e[1;32m${dl_m} Mbps\e[0m"; fi
+if [ "$ul_m" = "0.0" ]; then echo -e " \e[1;38;5;208mSubida:\e[0m   \e[1;31mno se pudo medir\e[0m"
+else echo -e " \e[1;38;5;208mSubida:\e[0m   \e[1;32m${ul_m} Mbps\e[0m"; fi
 fi
 pausa
 }

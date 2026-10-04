@@ -14,7 +14,7 @@ trap limpiar EXIT
 
 N='\e[0m'; L='---'
 extraer() { sed -n "/^$1() {/,/^}/p" "$AQUI/panel.sh"; }
-for f in msg_ok msg_err test_velocidad liberar_ram procesos_top; do
+for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram procesos_top; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
 	eval "$src"
@@ -27,15 +27,21 @@ chequear() { if [ "$2" = "$3" ]; then echo "  ok   $1 ($3)"; else echo "  FALLA 
 # Servidor de mentira: /__down?bytes=N devuelve hasta 4 MB; /__up lee el cuerpo.
 cat > "$T/srv.py" <<'PY'
 import http.server, sys
+DENY = len(sys.argv) > 2 and sys.argv[2] == "deny"
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
         n = 0
         if "bytes=" in self.path:
-            n = min(int(self.path.split("bytes=")[1] or 0), 4_000_000)
+            n = int(self.path.split("bytes=")[1] or 0)
+        if DENY and n > 0 or n > 100_000_000:   # como el real: tope por pedido
+            self.send_response(403); self.send_header("Content-Length", "0"); self.end_headers(); return
+        n = min(n, 4_000_000)
         self.send_response(200); self.send_header("Content-Length", str(n)); self.end_headers()
         self.wfile.write(b"\0" * n)
     def do_POST(self):
+        if DENY:
+            self.send_response(403); self.send_header("Content-Length", "0"); self.end_headers(); return
         n = int(self.headers.get("Content-Length", 0)); left = n
         while left > 0:
             chunk = self.rfile.read(min(65536, left))
@@ -61,6 +67,15 @@ export ZUMO_SPEED_URL="http://127.0.0.1:1"
 SAL=$(test_velocidad </dev/null | limpio)
 chequear "avisa que no se pudo medir" "si" "$(grep -q 'No se pudo medir' <<<"$SAL" && echo si || echo no)"
 unset ZUMO_SPEED_URL
+
+echo "2b) Servidor que rechaza todo (403): avisa en vez de mostrar ceros"
+PORT2=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+python3 "$T/srv.py" "$PORT2" deny >/dev/null 2>&1 &
+SRV2=$!; sleep 1
+export ZUMO_SPEED_URL="http://127.0.0.1:$PORT2"
+SAL=$(test_velocidad </dev/null | limpio)
+kill "$SRV2" 2>/dev/null; unset ZUMO_SPEED_URL
+chequear "avisa que no se pudo medir" "si" "$(grep -q 'No se pudo medir' <<<"$SAL" && echo si || echo no)"
 
 echo "3) Liberar RAM y limpiar"
 SAL=$(liberar_ram </dev/null 2>&1 | limpio)
