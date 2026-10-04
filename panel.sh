@@ -636,33 +636,54 @@ sysctl -w net.core.default_qdisc=fq_codel >/dev/null 2>&1
 sysctl --system >/dev/null 2>&1
 }
 
-menu_herramientas() {
+menu_bbr() {
 while true; do
-banner; echo -e " \e[1;38;5;141mHERRAMIENTAS${N}\n"
+banner; echo -e " \e[1;38;5;141mBBR — OPTIMIZACIÓN DE RED${N}\n"
 local cc qd
 cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
 qd=$(sysctl -n net.core.default_qdisc 2>/dev/null)
 if bbr_activo; then
-echo -e " \e[1;32m● BBR: activo${N} \e[2m(control de congestión: ${cc}, qdisc: ${qd})${N}"
+echo -e " \e[1;32m● BBR: activo${N} \e[2m(control de congestión: ${cc}, qdisc: ${qd})${N}\n"
 else
-echo -e " \e[1;31m● BBR: inactivo${N} \e[2m(actual: ${cc:-?}, qdisc: ${qd:-?})${N}"
+echo -e " \e[1;31m● BBR: inactivo${N} \e[2m(actual: ${cc:-?}, qdisc: ${qd:-?})${N}\n"
 fi
+echo -e " \e[2mBBR + fq mejora la estabilidad y baja el jitter bajo carga.${N}"
+echo -e " \e[2mNo reduce el ping base (eso lo fija la distancia a la VPS).${N}\n"
+op 1 "⚡" "Activar"
+op 2 "✖" "Desactivar"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) echo -e " \e[1;38;5;141mAplicando BBR...${N}"
+if activar_bbr; then msg_ok "BBR activado (se mantiene tras reiniciar)"; else msg_err "No se pudo activar BBR"; fi
+pausa ;;
+2) desactivar_bbr; msg_ok "BBR desactivado (se volvió a cubic)"; pausa ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
+menu_herramientas() {
+while true; do
+banner; echo -e " \e[1;38;5;141mHERRAMIENTAS${N}\n"
 if systemctl is-active --quiet zumo-web 2>/dev/null; then
-echo -e " \e[1;32m● Panel web: activo${N}\n"
+echo -e " \e[1;32m● Panel web: activo${N}"
 else
-echo -e " \e[1;31m● Panel web: inactivo${N}\n"
+echo -e " \e[1;31m● Panel web: inactivo${N}"
+fi
+if bbr_activo; then
+echo -e " \e[1;32m● BBR: activo${N}\n"
+else
+echo -e " \e[1;31m● BBR: inactivo${N}\n"
 fi
 op 1 "🌐" "Panel Web"
-op 2 "⚡" "Activar optimización de red (BBR)"
-op 3 "✖" "Desactivar BBR (volver a cubic)"
+op 2 "⚡" "BBR"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) menu_panelweb ;;
-2) echo -e " \e[1;38;5;141mAplicando BBR...${N}"
-if activar_bbr; then msg_ok "BBR activado (se mantiene tras reiniciar)"; else msg_err "No se pudo activar BBR"; fi
-pausa ;;
-3) desactivar_bbr; msg_ok "BBR desactivado (se volvió a cubic)"; pausa ;;
+2) menu_bbr ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
