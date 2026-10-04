@@ -349,9 +349,32 @@ case $o in
 1) if systemctl is-active --quiet pdirect-80; then
 msg_err "Ya está activo"; pausa
 else
+BAN=""; COL=""
+read -rp " ¿Personalizar el banner? [s/N]: " pb
+if [[ "$pb" =~ ^[sS]$ ]]; then
+read -rp " Texto del banner [ZUMO]: " BAN; BAN=${BAN:-ZUMO}
+echo; echo -e " \e[1;38;5;141mColor:${N}"
+op 1 "●" "Amarillo"; op 2 "●" "Rojo"; op 3 "●" "Verde"
+op 4 "●" "Celeste"; op 5 "●" "Blanco"; op 6 "●" "Naranja"
+op 7 "●" "Rosa"; op 8 "✎" "Otro (nombre o #hex)"
+read -rp " Color [1]: " cc; cc=${cc:-1}
+case "$cc" in
+1) COL="yellow" ;; 2) COL="red" ;; 3) COL="lime" ;;
+4) COL="cyan" ;; 5) COL="white" ;; 6) COL="orange" ;;
+7) COL="#ff33cc" ;;
+8) read -rp " Color (ej: lime o #00ff88): " COL; COL=$(echo "$COL" | tr -cd 'A-Za-z0-9#') ;;
+*) COL="yellow" ;;
+esac
+fi
 echo -e " \e[1;38;5;141mCompilando e instalando, aguardá...${N}"
-if bash /etc/zumo/activar-pdirect.sh; then
+if [ -n "$BAN" ]; then
+RESULTADO=0; bash /etc/zumo/activar-pdirect.sh "$BAN" "$COL" "101" || RESULTADO=1
+else
+RESULTADO=0; bash /etc/zumo/activar-pdirect.sh || RESULTADO=1
+fi
+if [ "$RESULTADO" -eq 0 ]; then
 msg_ok "PDirect activo (80 → SSH)"
+[ -n "$BAN" ] && echo -e "   Banner: \e[1;38;5;214m$BAN${N}  Color: \e[1;38;5;214m${COL:-yellow}${N}"
 else
 msg_err "Falló; revisá 'journalctl -u pdirect-80'"
 fi; pausa

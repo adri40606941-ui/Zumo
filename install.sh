@@ -61,6 +61,22 @@ cat > /etc/zumo/activar-pdirect.sh <<'ZUMOPDIRECTACT'
 export DEBIAN_FRONTEND=noninteractive
 WORK=$(mktemp -d)
 
+# Banner/color/modo opcionales (los pasa el panel). Si se reciben, se guardan
+# en /etc/zumo/pdirect.env, que el servicio lee. Si no se pasa nada, se respeta
+# el env existente (reactivar no borra el banner elegido antes).
+BANNER="${1:-}"
+COLOR="${2:-}"
+MODO="${3:-}"
+if [ -n "$BANNER" ] || [ -n "$COLOR" ] || [ -n "$MODO" ]; then
+mkdir -p /etc/zumo
+{
+[ -n "$BANNER" ] && echo "PDIRECT_BANNER=$BANNER"
+[ -n "$COLOR" ] && echo "PDIRECT_COLOR=$COLOR"
+[ -n "$MODO" ] && echo "PDIRECT_MODE=$MODO"
+} > /etc/zumo/pdirect.env
+chmod 644 /etc/zumo/pdirect.env
+fi
+
 __oculto() {
 local msg="$1"; shift
 local log; log=$(mktemp)
@@ -489,6 +505,48 @@ static evutil_socket_t make_listen_fd(void)
 	return fd;
 }
 
+/* Arma la respuesta HTTP (el "banner" que ve la app). Prioridad:
+ *   1) PDIRECT_RESPONSE  -> respuesta cruda completa (uso avanzado)
+ *   2) PDIRECT_BANNER    -> se arma el 101/200 con ese texto y color
+ *   3) por defecto       -> banner ZUMO amarillo
+ * El color va como <font color="..."> (así lo pintan HTTP Injector/Custom). */
+static char resp_buf[1024];
+static void build_response(int code)
+{
+	const char *raw = getenv("PDIRECT_RESPONSE");
+	if (raw && *raw) { g_response = raw; return; }
+	const char *banner = getenv("PDIRECT_BANNER");
+	if (!banner || !*banner) {
+		g_response = (code == 200) ? RESP_200 : RESP_101;
+		return;
+	}
+	/* Sanitizar: banner sin control chars (evita inyección de cabeceras);
+	 * color solo alfanumérico o '#'. */
+	char b[80] = {0}, co[32] = {0};
+	size_t j = 0;
+	for (const char *p = banner; *p && j < sizeof(b) - 1; p++) {
+		unsigned char ch = (unsigned char)*p;
+		if (ch >= 32 && ch != 127) b[j++] = (char)ch;
+	}
+	const char *color = getenv("PDIRECT_COLOR");
+	if (color) {
+		size_t k = 0;
+		for (const char *p = color; *p && k < sizeof(co) - 1; p++)
+			if (isalnum((unsigned char)*p) || *p == '#') co[k++] = *p;
+	}
+	if (!co[0]) snprintf(co, sizeof(co), "yellow");
+	if (code == 200)
+		snprintf(resp_buf, sizeof(resp_buf),
+			"HTTP/1.1 200 <font color=\"%s\"><b>%s</b></font>\r\n"
+			"Content-Length: 0\r\n\r\n"
+			"HTTP/1.1 200 Conexion Exitosa\r\n\r\n", co, b);
+	else
+		snprintf(resp_buf, sizeof(resp_buf),
+			"HTTP/1.1 101 <font color=\"%s\"><b>%s</b></font>\r\n\r\n"
+			"HTTP/1.1 101 Conexion Exitosa\r\n\r\n", co, b);
+	g_response = resp_buf;
+}
+
 static int parse_port(const char *s, int def)
 {
 	if (!s || !*s) return def;
@@ -509,10 +567,9 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Uso: %s [SSH_PORT] [LISTEN_PORT] [101|200]\n", argv[0]);
 		return 2;
 	}
-	const char *modo = argc > 3 ? argv[3] : "101";
-	g_response = (strcmp(modo, "200") == 0) ? RESP_200 : RESP_101;
-	const char *env = getenv("PDIRECT_RESPONSE");
-	if (env && *env) g_response = env;
+	const char *modo = argc > 3 ? argv[3] : getenv("PDIRECT_MODE");
+	if (!modo || !*modo) modo = "101";
+	build_response(strcmp(modo, "200") == 0 ? 200 : 101);
 
 	snprintf(allowed_ip, sizeof(allowed_ip), "%s:%d", SSH_HOST, ssh_port);
 	snprintf(allowed_name, sizeof(allowed_name), "localhost:%d", ssh_port);
@@ -558,6 +615,7 @@ cat > /etc/systemd/system/pdirect-80.service <<'U1'
 Description=ZUMO - PDirect-C (TCP 80 -> SSH local)
 After=network.target
 [Service]
+EnvironmentFile=-/etc/zumo/pdirect.env
 ExecStart=/usr/local/bin/pdirect-c 22
 Restart=on-failure
 RestartSec=2
