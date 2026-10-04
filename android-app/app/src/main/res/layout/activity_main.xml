@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:background="#0E1116">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/app_name"
+            android:textColor="#4FD1C5"
+            android:textSize="28sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="2dp" />
+
+        <TextView
+            android:id="@+id/tvState"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="○ Desconectado"
+            android:textColor="#A0AEC0"
+            android:layout_marginBottom="18dp" />
+
+        <!-- Payload -->
+        <TextView style="@style/Label" android:text="Payload" />
+        <EditText
+            android:id="@+id/etPayload"
+            style="@style/Field"
+            android:minLines="4"
+            android:gravity="top|start"
+            android:inputType="textMultiLine|textNoSuggestions"
+            android:hint="GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]" />
+
+        <!-- SSH -->
+        <TextView style="@style/Label" android:text="SSH Host" />
+        <EditText
+            android:id="@+id/etHost"
+            style="@style/Field"
+            android:inputType="textNoSuggestions"
+            android:hint="ej: mi.servidor.com" />
+
+        <TextView style="@style/Label" android:text="SSH Puerto" />
+        <EditText
+            android:id="@+id/etPort"
+            style="@style/Field"
+            android:inputType="number"
+            android:text="22" />
+
+        <TextView style="@style/Label" android:text="SSH Usuario" />
+        <EditText
+            android:id="@+id/etUser"
+            style="@style/Field"
+            android:inputType="textNoSuggestions"
+            android:hint="usuario" />
+
+        <TextView style="@style/Label" android:text="SSH Contraseña" />
+        <EditText
+            android:id="@+id/etPass"
+            style="@style/Field"
+            android:inputType="textPassword"
+            android:hint="contraseña" />
+
+        <Button
+            android:id="@+id/btnConnect"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="20dp"
+            android:text="Conectar"
+            android:textStyle="bold"
+            android:textColor="#0E1116"
+            android:backgroundTint="#4FD1C5" />
+
+        <TextView style="@style/Label" android:text="Registro" android:layout_marginTop="18dp" />
+        <TextView
+            android:id="@+id/tvLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minLines="6"
+            android:padding="12dp"
+            android:background="#161B22"
+            android:fontFamily="monospace"
+            android:textColor="#8B949E"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+</ScrollView>

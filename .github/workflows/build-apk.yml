@@ -1,0 +1,48 @@
+name: Compilar APK
+
+# Se ejecuta a mano desde la pestaña Actions (botón "Run workflow").
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Traer el código
+        uses: actions/checkout@v4
+
+      - name: Instalar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Preparar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Compilar APK de debug
+        working-directory: android-app
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Renombrar APK
+        run: cp android-app/app/build/outputs/apk/debug/app-debug.apk zumo.apk
+
+      - name: Subir como artefacto (descarga desde Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: zumo-apk
+          path: zumo.apk
+
+      - name: Publicar en Releases (descarga directa .apk)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create apk-latest zumo.apk \
+            --title "Zumo APK" \
+            --notes "APK compilado automáticamente (debug, instalable)." \
+            || gh release upload apk-latest zumo.apk --clobber
