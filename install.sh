@@ -882,8 +882,7 @@ systemctl enable zumo-limit >/dev/null 2>&1
 systemctl restart zumo-limit >/dev/null 2>&1
 echo -e " \e[1;32m✔ listo\e[0m"
 
-# Contador de datos por usuario (iptables owner + datos.db)
-command -v iptables >/dev/null 2>&1 || { export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends iptables >/dev/null 2>&1; }
+# Contador de datos por usuario
 if curl -fsSL "$ZUMO_RAW/zumo-datos.sh" -o /tmp/zumo-datos.sh && bash -n /tmp/zumo-datos.sh; then
 install -m 0755 /tmp/zumo-datos.sh /usr/local/bin/zumo-datos
 cat > /etc/systemd/system/zumo-datos.service <<'DATEOF'

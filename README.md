@@ -81,7 +81,7 @@ Ver qué cortó: `journalctl -u zumo-limit -f`. Probar sin cortar nada:
 | `zumo-limit.c` | Fuente del limitador (el instalador lo baja y lo compila). |
 | `limit.conf` | Configuración de ejemplo del limitador. |
 | `quitar-panelweb.sh` | Quita de una VPS el panel web de versiones anteriores. |
-| `zumo-datos.sh` | Contador de datos por usuario (iptables); alimenta Herramientas → Uso de datos. |
+| `zumo-datos.sh` | Contador de datos por usuario (mide lo que mueve cada sesión SSH); alimenta Herramientas → Uso de datos. |
 | `tests/` | Pruebas del limitador, de "Eliminar usuario" y de las herramientas (`sudo bash tests/prueba-limitador.sh`, `prueba-borrar.sh`, `prueba-herramientas.sh`, `prueba-datos.sh`). |
 | `hcr-install.sh` / `hcr-server` | Instalador y binario de HCR. |
 | `bhttp-server-*` / `bhttp-shim-*` | Binarios de BHTTP por arquitectura. |

@@ -1,59 +1,80 @@
 #!/bin/bash
 # Contador de datos por usuario (se instala como /usr/local/bin/zumo-datos).
-# Cuenta con iptables (módulo owner) lo que mueven las sesiones SSH de cada
-# usuario de usuarios.db y lo va sumando en /etc/zumo/datos.db (usuario:bytes).
-# Mide lo que sale de las sesiones del usuario: hacia su celular (bajada) y hacia
-# internet (subida), o sea el tráfico total del usuario. Cuenta desde que se
-# crea el usuario (o desde que se instaló esto, si el usuario ya existía).
+# Mide cuántos bytes mueve cada sesión SSH (proceso sshd del usuario, leyendo
+# /proc/PID/io) y los suma en /etc/zumo/datos.db (usuario:bytes). Cada byte del
+# túnel se lee y se escribe dos veces dentro de sshd (celular↔sshd y sshd↔internet),
+# por eso el total se divide por 2: queda bajada + subida del usuario.
+# Cuenta desde que se crea el usuario (o desde que se instaló esto, si ya existía).
 DB="${ZUMO_DB:-/etc/zumo/usuarios.db}"
 DATOS="${ZUMO_DATOS:-/etc/zumo/datos.db}"
 LOCK="${ZUMO_DATOS_LOCK:-/etc/zumo/datos.lock}"
-CH=ZUMO_DATOS
-INT="${INTERVAL:-10}"
-ipt() { iptables -w "$@"; }
+PASSWD="${ZUMO_PASSWD:-/etc/passwd}"
+INT="${INTERVAL:-2}"
 
-preparar() {
-	ipt -N "$CH" 2>/dev/null
-	ipt -C OUTPUT -j "$CH" 2>/dev/null || ipt -I OUTPUT 1 -j "$CH"
+# Migración: la versión anterior (iptables) medía mal; se borra su cuenta y sus reglas.
+if [ ! -e "$DATOS.v2" ]; then
+	rm -f "$DATOS"; : > "$DATOS.v2"
+	if command -v iptables >/dev/null 2>&1; then
+		iptables -w -D OUTPUT -j ZUMO_DATOS 2>/dev/null
+		iptables -w -F ZUMO_DATOS 2>/dev/null; iptables -w -X ZUMO_DATOS 2>/dev/null
+	fi
+fi
+
+declare -A UIDNAME LAST
+primera=1; n=0
+
+mapa() {
+	local -A en=(); local u nom uid
+	UIDNAME=()
+	while IFS=: read -r u _; do [ -n "$u" ] && en[$u]=1; done < "$DB"
+	while IFS=: read -r nom _ uid _; do [ -n "${en[$nom]:-}" ] && UIDNAME[$uid]=$nom; done < "$PASSWD"
 }
 
-# Un ciclo: crea las reglas que falten, borra las de usuarios que ya no están,
-# lee y pone a cero los contadores, y suma lo leído a datos.db.
-ciclo() {
-	preparar
-	local u uid want have key
-	want=$(while IFS=: read -r u _; do
-		[ -n "$u" ] || continue
-		uid=$(id -u "$u" 2>/dev/null) || continue
-		echo "$u:$uid"
-	done < "$DB")
-	have=$(ipt -S "$CH" 2>/dev/null | sed -n 's/.*--comment "\?zumo:\([^" ]*\)"\? .*/\1/p')
-	# sobran
-	while IFS=: read -r u uid; do
-		[ -n "$u" ] || continue
-		grep -qxF "$u:$uid" <<<"$want" || ipt -D "$CH" -m owner --uid-owner "$uid" -m comment --comment "zumo:$u:$uid" -j RETURN 2>/dev/null
-	done <<<"$have"
-	# faltan
-	while IFS=: read -r u uid; do
-		[ -n "$u" ] || continue
-		grep -qxF "$u:$uid" <<<"$have" || ipt -A "$CH" -m owner --uid-owner "$uid" -m comment --comment "zumo:$u:$uid" -j RETURN
-	done <<<"$want"
-	# leer y poner a cero (atómico) y acumular
-	local lectura
-	lectura=$(ipt -L "$CH" -Z -n -v -x 2>/dev/null | awk '
-		/zumo:/ { n=$0; sub(/.*zumo:/,"",n); sub(/ .*/,"",n); sub(/:[0-9]+$/,"",n); if ($2>0) print n, $2 }')
+guardar() { # $1 = líneas "usuario bytes_a_sumar" (puede ir vacío)
 	(
 		flock -w 5 9 || exit 0
 		touch "$DATOS"
 		awk -v db="$DB" '
 			BEGIN { while ((getline l < db) > 0) { split(l, f, ":"); ok[f[1]]=1 } }
-			NR==FNR { add[$1]+=$2; next }
-			{ split($0, f, ":"); if (!(f[1] in ok)) next; tot[f[1]]=f[2]; vis[f[1]]=1; ord[++n]=f[1] }
+			NR==FNR { if ($1!="") add[$1]+=$2; next }
+			{ split($0, f, ":"); if (!(f[1] in ok)) next; tot[f[1]]=f[2]; vis[f[1]]=1; ord[++c]=f[1] }
 			END {
-				for (u in add) if (u in ok && !(u in vis)) { ord[++n]=u; tot[u]=0 }
-				for (i=1;i<=n;i++) { u=ord[i]; printf "%s:%.0f\n", u, tot[u]+add[u] }
-			}' <(echo "$lectura") "$DATOS" > "$DATOS.tmp" && mv -f "$DATOS.tmp" "$DATOS"
+				for (u in add) if (u in ok && !(u in vis)) { ord[++c]=u; tot[u]=0 }
+				for (i=1;i<=c;i++) { u=ord[i]; printf "%s:%.0f\n", u, tot[u]+add[u] }
+			}' <(printf '%s\n' "$1") "$DATOS" > "$DATOS.tmp" && mv -f "$DATOS.tmp" "$DATOS"
 	) 9>"$LOCK"
+}
+
+ciclo() {
+	local c p nombre uid u rc wc k v linea resto ini cur d lista
+	local -A ADD=() VISTO=()
+	mapa
+	for c in /proc/[0-9]*/comm; do
+		p=${c#/proc/}; p=${p%/comm}
+		read -r nombre 2>/dev/null < "$c" || continue
+		case $nombre in sshd*) ;; *) continue ;; esac
+		uid=""
+		while read -r k v _; do [ "$k" = "Uid:" ] && { uid=$v; break; }; done 2>/dev/null < "/proc/$p/status"
+		u=${UIDNAME[$uid]:-}; [ -n "$u" ] || continue
+		rc=""; wc=""
+		while read -r k v; do case $k in rchar:) rc=$v ;; wchar:) wc=$v ;; esac; done 2>/dev/null < "/proc/$p/io"
+		[ -n "$rc" ] && [ -n "$wc" ] || continue
+		read -r linea 2>/dev/null < "/proc/$p/stat" || continue
+		resto=${linea##*) }; set -- $resto; ini=${20:-0}
+		k="$p:$ini"; cur=$((rc + wc)); VISTO[$k]=1
+		if [ -n "${LAST[$k]:-}" ]; then d=$((cur - LAST[$k]))
+		elif [ "$primera" = 1 ]; then d=0
+		else d=$cur; fi
+		LAST[$k]=$cur
+		[ "$d" -gt 0 ] && ADD[$u]=$(( ${ADD[$u]:-0} + d ))
+	done
+	for k in "${!LAST[@]}"; do [ -n "${VISTO[$k]:-}" ] || unset 'LAST[$k]'; done
+	primera=0
+	lista=""
+	for u in "${!ADD[@]}"; do lista+="$u $(( ADD[$u] / 2 ))"$'\n'; done
+	n=$((n + 1))
+	# Se escribe si hubo tráfico, y de vez en cuando para limpiar usuarios borrados.
+	if [ -n "$lista" ] || [ $((n % 15)) -eq 0 ]; then guardar "$lista"; fi
 }
 
 if [ "${1:-}" = "--once" ]; then ciclo; exit 0; fi
