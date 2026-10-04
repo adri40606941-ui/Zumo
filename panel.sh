@@ -250,14 +250,36 @@ if [ ! -s "$DB" ]; then banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}
 while true; do
 banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS — EN VIVO${N}"
 echo -e " \e[2m(se actualiza solo cada 2s — tocá cualquier tecla para volver)${N}\n"
-printf " \e[1;38;5;208m%-18s %-14s %-8s %s${N}\n" "USUARIO/CLIENTE" "ESTADO" "LÍMITE" "VENCIMIENTO"
+
+local hay_comun=0 hay_hwid=0
+
+# ---------- Sección COMÚN ----------
+echo -e " \e[1;38;5;141m━━━ COMÚN ━━━${N}"
+printf " \e[1;38;5;208m%-18s %-14s %-8s %s${N}\n" "USUARIO" "ESTADO" "LÍMITE" "VENCIMIENTO"
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
+es_hwid "$u" && continue
+hay_comun=1
 on=$(en_linea "$u")
-label=$(etiqueta_de "$u")
-if [ "$on" -gt 0 ]; then estado="● online ($on)"; else estado="○ offline"; fi
-printf " %-18s %-14s %-8s %s\n" "$label" "$estado" "$lim" "$(dias "$exp")"
+if [ "$on" -gt 0 ]; then est_txt="● online ($on)"; est_col="\e[1;32m"; else est_txt="○ offline"; est_col="\e[2m"; fi
+printf " %-18s ${est_col}%-14s${N} %-8s %s\n" "$u" "$est_txt" "$lim" "$(dias "$exp")"
 done < "$DB"
+[ "$hay_comun" -eq 0 ] && echo -e " \e[2m(sin usuarios comunes)${N}"
+
+# ---------- Sección HWID ----------
+echo; echo -e " \e[1;38;5;141m━━━ HWID ━━━${N}"
+printf " \e[1;38;5;208m%-18s %-14s %-8s %s${N}\n" "CLIENTE" "ESTADO" "LÍMITE" "VENCIMIENTO"
+while IFS=: read -r u lim exp; do
+[ -z "$u" ] && continue
+es_hwid "$u" || continue
+hay_hwid=1
+on=$(en_linea "$u")
+if [ "$on" -gt 0 ]; then est_txt="● online ($on)"; est_col="\e[1;32m"; else est_txt="○ offline"; est_col="\e[2m"; fi
+printf " %-18s ${est_col}%-14s${N} %-8s %s\n" "$(etiqueta_de "$u")" "$est_txt" "$lim" "$(dias "$exp")"
+echo -e "    \e[2mHWID:\e[0m \e[1;38;5;214m$u${N}"
+done < "$DB"
+[ "$hay_hwid" -eq 0 ] && echo -e " \e[2m(sin usuarios HWID)${N}"
+
 echo; echo -e " $L"
 read -t 2 -rsn1 _ && break
 done
