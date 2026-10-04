@@ -113,7 +113,7 @@ op 2 "🔑" "HWID"
 echo; read -rp " Modo [1]: " modo; modo=${modo:-1}
 case "$modo" in
 1|2) ;;
-*) msg_err "Opción inválida: elegí 1 (Normal) o 2 (HWID)"; sleep 1; return ;;
+*) msg_err "Opción inválida"; sleep 1; return ;;
 esac
 echo
 
@@ -203,7 +203,7 @@ op 2 "🔑" "HWID"
 echo; read -rp " Modo [1]: " modo; modo=${modo:-1}
 case "$modo" in
 1|2) ;;
-*) msg_err "Opción inválida: elegí 1 (Común) o 2 (HWID)"; sleep 1; return ;;
+*) msg_err "Opción inválida"; sleep 1; return ;;
 esac
 echo
 
