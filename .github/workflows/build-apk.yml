@@ -20,9 +20,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Preparar Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Compilar APK de debug
         working-directory: android-app
         run: |
