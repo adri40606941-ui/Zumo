@@ -503,6 +503,9 @@ static void accept_cb(struct evconnlistener *listener, evutil_socket_t fd,
 	struct event_base *base = arg;
 	char ip[46] = "?";
 	getnameinfo(addr, socklen, ip, sizeof(ip), NULL, 0, NI_NUMERICHOST);
+	/* Normalizar IPv4 mapeado en IPv6 ("::ffff:1.2.3.4" -> "1.2.3.4"). */
+	if (strncmp(ip, "::ffff:", 7) == 0 && strchr(ip + 7, '.'))
+		memmove(ip, ip + 7, strlen(ip + 7) + 1);
 
 	/* límites anti-abuso */
 	if (g_conns >= MAX_CONNS || ip_count_get(ip) >= PERIP_MAX) {
