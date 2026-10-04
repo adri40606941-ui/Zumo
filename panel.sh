@@ -477,7 +477,7 @@ listar_usuarios() {
 if [ ! -s "$DB" ]; then banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"; msg_err "No hay usuarios"; pausa; return; fi
 while true; do
 banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS — EN VIVO${N}"
-echo -e " \e[2m(se actualiza solo cada 2s — tocá cualquier tecla para volver)${N}\n"
+echo
 
 local hay_comun=0 hay_hwid=0
 
