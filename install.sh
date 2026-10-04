@@ -95,6 +95,7 @@ cat > "$WORK/pdirect.c" <<'ZUMO_PDIRECT_C'
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
 #include <event2/listener.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <signal.h>
@@ -102,280 +103,446 @@ cat > "$WORK/pdirect.c" <<'ZUMO_PDIRECT_C'
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #define MAX_HEADER 16384
 #define SSH_HOST "127.0.0.1"
 
-static int ssh_port;
-static char allowed_ip[32];
-static char allowed_name[32];
+/* Timeouts separados: corto para recibir las cabeceras (anti-slowloris),
+ * largo para el túnel ya establecido (el keepalive mantiene vivo el ocioso). */
+#define HEADER_TIMEOUT 10
+#define RELAY_TIMEOUT 120
 
-static const char RESPONSE[] =
+/* Control de flujo: si la salida de un lado supera HIGH, se pausa la lectura
+ * del otro; se reanuda cuando baja de LOW. Evita que un peer lento infle RAM. */
+#define RELAY_HIGH (1 << 20)
+#define RELAY_LOW (256 * 1024)
+
+/* Límites anti-abuso para un puerto público. */
+#define MAX_CONNS 2000
+#define PERIP_MAX 24
+
+static int ssh_port;
+static int listen_port = 80;
+static char allowed_ip[64];
+static char allowed_name[64];
+static const char *g_response;
+static int g_conns;
+
+static const char RESP_101[] =
 "HTTP/1.1 101 <font color=\"yellow\"><b>ZUMO</b></font>\r\n\r\n"
 "HTTP/1.1 101 Conexion Exitosa\r\n\r\n";
+static const char RESP_200[] =
+"HTTP/1.1 200 <font color=\"yellow\"><b>ZUMO</b></font>\r\nContent-Length: 0\r\n\r\n"
+"HTTP/1.1 200 Conexion Exitosa\r\n\r\n";
+
+/* ---- tabla de conexiones por IP (chaining; loop de un solo hilo) ---- */
+#define IP_BUCKETS 1024
+typedef struct ipnode { char ip[46]; int count; struct ipnode *next; } ipnode;
+static ipnode *ip_tab[IP_BUCKETS];
+
+static unsigned ip_hash(const char *s)
+{
+	unsigned h = 5381;
+	for (; *s; s++) h = ((h << 5) + h) ^ (unsigned char)*s;
+	return h & (IP_BUCKETS - 1);
+}
+static int ip_count_get(const char *ip)
+{
+	for (ipnode *n = ip_tab[ip_hash(ip)]; n; n = n->next)
+		if (!strcmp(n->ip, ip)) return n->count;
+	return 0;
+}
+static void ip_inc(const char *ip)
+{
+	unsigned b = ip_hash(ip);
+	for (ipnode *n = ip_tab[b]; n; n = n->next)
+		if (!strcmp(n->ip, ip)) { n->count++; return; }
+	ipnode *n = calloc(1, sizeof(*n));
+	if (!n) return;
+	strncpy(n->ip, ip, sizeof(n->ip) - 1);
+	n->count = 1;
+	n->next = ip_tab[b];
+	ip_tab[b] = n;
+}
+static void ip_dec(const char *ip)
+{
+	unsigned b = ip_hash(ip);
+	ipnode **pp = &ip_tab[b];
+	while (*pp) {
+		ipnode *n = *pp;
+		if (!strcmp(n->ip, ip)) {
+			if (--n->count <= 0) { *pp = n->next; free(n); }
+			return;
+		}
+		pp = &n->next;
+	}
+}
 
 typedef struct {
-struct bufferevent *client;
-struct bufferevent *upstream;
-int relaying;
-int closing;
-int closed;
-int await_split; /* 1 = vimos X-Split y esperamos el segmento partido */
+	struct bufferevent *client;
+	struct bufferevent *upstream;
+	int relaying;
+	int closing;
+	int closed;
+	int await_split;  /* 1 = vimos X-Split y esperamos el segmento partido */
+	int counted;      /* 1 = esta conexión suma en los contadores */
+	char ip[46];
 } Conn;
 
 static void read_cb(struct bufferevent *bev, void *arg);
+static void write_cb(struct bufferevent *bev, void *arg);
 void upstream_event_cb(struct bufferevent *bev, short events, void *arg);
 static void start_upstream(Conn *c);
+
+/* Activa TCP keepalive para detectar peers muertos (redes móviles). */
+static void set_keepalive(evutil_socket_t fd)
+{
+	int on = 1;
+	setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
+#ifdef TCP_KEEPIDLE
+	int idle = 30, intvl = 10, cnt = 3;
+	setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+	setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+	setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+#endif
+}
 
 /* Busca (sin distinguir mayúsculas) si una cabecera está presente. */
 static int header_present(const char *h, const char *name)
 {
-size_t nl = strlen(name);
-for (const char *p = h; *p; p++)
-if (strncasecmp(p, name, nl) == 0) return 1;
-return 0;
+	size_t nl = strlen(name);
+	for (const char *p = h; *p; p++)
+		if (strncasecmp(p, name, nl) == 0) return 1;
+	return 0;
 }
 
 static void close_conn(Conn *c)
 {
-if (!c || c->closed) return;
-c->closed = 1;
-struct bufferevent *a = c->client;
-struct bufferevent *b = c->upstream;
-c->client = NULL;
-c->upstream = NULL;
-if (a) bufferevent_free(a);
-if (b) bufferevent_free(b);
-free(c);
+	if (!c || c->closed) return;
+	c->closed = 1;
+	if (c->counted) { g_conns--; ip_dec(c->ip); }
+	struct bufferevent *a = c->client;
+	struct bufferevent *b = c->upstream;
+	c->client = NULL;
+	c->upstream = NULL;
+	if (a) bufferevent_free(a);
+	if (b) bufferevent_free(b);
+	free(c);
 }
 
 static void reject_conn(Conn *c, const char *status)
 {
-if (!c || c->closed || !c->client) return;
-c->closing = 1;
-bufferevent_disable(c->client, EV_READ);
-if (c->upstream) {
-bufferevent_free(c->upstream);
-c->upstream = NULL;
-}
-bufferevent_write(c->client, status, strlen(status));
+	if (!c || c->closed || !c->client) return;
+	c->closing = 1;
+	bufferevent_disable(c->client, EV_READ);
+	if (c->upstream) {
+		bufferevent_free(c->upstream);
+		c->upstream = NULL;
+	}
+	bufferevent_write(c->client, status, strlen(status));
 }
 
 static int valid_host(char *headers)
 {
-char *save = NULL;
-char *line = strtok_r(headers, "\r\n", &save);
-while (line) {
-char *colon = strchr(line, ':');
-if (colon) {
-*colon = '\0';
-if (strcasecmp(line, "X-Real-Host") == 0) {
-char *v = colon + 1;
-while (*v && isspace((unsigned char)*v)) v++;
-char *end = v + strlen(v);
-while (end > v && isspace((unsigned char)end[-1]))
-*--end = '\0';
-return !strcasecmp(v, allowed_ip) ||
-!strcasecmp(v, allowed_name);
-}
-}
-line = strtok_r(NULL, "\r\n", &save);
-}
-return 1;
+	char *save = NULL;
+	char *line = strtok_r(headers, "\r\n", &save);
+	while (line) {
+		char *colon = strchr(line, ':');
+		if (colon) {
+			*colon = '\0';
+			if (strcasecmp(line, "X-Real-Host") == 0) {
+				char *v = colon + 1;
+				while (*v && isspace((unsigned char)*v)) v++;
+				char *end = v + strlen(v);
+				while (end > v && isspace((unsigned char)end[-1]))
+					*--end = '\0';
+				return !strcasecmp(v, allowed_ip) ||
+				       !strcasecmp(v, allowed_name);
+			}
+		}
+		line = strtok_r(NULL, "\r\n", &save);
+	}
+	return 1;
 }
 
-/* Abre la conexión al SSH local y empieza el relay (igual que antes). */
+/* Abre la conexión al SSH local y empieza el relay con control de flujo. */
 static void start_upstream(Conn *c)
 {
-bufferevent_disable(c->client, EV_READ);
-struct event_base *base = bufferevent_get_base(c->client);
-c->upstream = bufferevent_socket_new(
-base, -1, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
-if (!c->upstream) { close_conn(c); return; }
-bufferevent_setcb(c->upstream, read_cb, NULL, upstream_event_cb, c);
-struct timeval tv = {60, 0};
-bufferevent_set_timeouts(c->upstream, &tv, NULL);
-bufferevent_setwatermark(c->upstream, EV_READ, 0, 262144);
-bufferevent_enable(c->upstream, EV_READ | EV_WRITE);
-if (bufferevent_socket_connect_hostname(
-c->upstream, NULL, AF_INET, SSH_HOST, ssh_port) < 0) {
-close_conn(c);
-}
+	bufferevent_disable(c->client, EV_READ);
+	struct event_base *base = bufferevent_get_base(c->client);
+	c->upstream = bufferevent_socket_new(
+		base, -1, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
+	if (!c->upstream) { close_conn(c); return; }
+	bufferevent_setcb(c->upstream, read_cb, write_cb, upstream_event_cb, c);
+	struct timeval tv = {RELAY_TIMEOUT, 0};
+	bufferevent_set_timeouts(c->upstream, &tv, NULL);
+	bufferevent_setwatermark(c->upstream, EV_READ, 0, 262144);
+	bufferevent_enable(c->upstream, EV_READ | EV_WRITE);
+	if (bufferevent_socket_connect_hostname(
+		c->upstream, NULL, AF_INET, SSH_HOST, ssh_port) < 0) {
+		close_conn(c);
+	}
 }
 
 static void read_cb(struct bufferevent *bev, void *arg)
 {
-Conn *c = arg;
-if (!c || c->closed) return;
-struct evbuffer *in = bufferevent_get_input(bev);
-if (c->relaying) {
-struct bufferevent *dst =
-(bev == c->client) ? c->upstream : c->client;
-if (dst)
-evbuffer_add_buffer(bufferevent_get_output(dst), in);
-return;
-}
-/* Esperando el segmento "partido" del payload (modo X-Split de las apps):
- * se descarta y recién ahí se conecta al backend. */
-if (c->await_split) {
-size_t sn = evbuffer_get_length(in);
-if (sn == 0) return;
-evbuffer_drain(in, sn);
-c->await_split = 0;
-start_upstream(c);
-return;
-}
-size_t n = evbuffer_get_length(in);
-if (n >= MAX_HEADER) {
-reject_conn(c,
-"HTTP/1.1 431 Request Header Fields Too Large\r\n"
-"Connection: close\r\n\r\n");
-return;
-}
-unsigned char *data = evbuffer_pullup(in, -1);
-if (!data) return;
-unsigned char *eoh = memmem(data, n, "\r\n\r\n", 4);
-if (!eoh) return;
-size_t hlen = (size_t)(eoh - data) + 4;
-char *headers = malloc(hlen + 1);
-if (!headers) { close_conn(c); return; }
-memcpy(headers, data, hlen);
-headers[hlen] = '\0';
-int split = header_present(headers, "X-Split");
-int allowed = valid_host(headers);
-free(headers);
-if (!allowed) {
-evbuffer_drain(in, n);
-reject_conn(c,
-"HTTP/1.1 403 Forbidden\r\n"
-"Connection: close\r\n\r\n");
-return;
-}
-if (split) {
-/* Consumir solo las cabeceras; el segmento partido se descarta ya
- * (si vino pegado) o en el próximo read (await_split). */
-evbuffer_drain(in, hlen);
-size_t rest = evbuffer_get_length(in);
-if (rest > 0) {
-evbuffer_drain(in, rest);
-start_upstream(c);
-} else {
-c->await_split = 1;
-}
-return;
-}
-/* Sin X-Split: comportamiento de siempre (se descarta todo y se conecta). */
-evbuffer_drain(in, n);
-start_upstream(c);
+	Conn *c = arg;
+	if (!c || c->closed) return;
+	struct evbuffer *in = bufferevent_get_input(bev);
+	if (c->relaying) {
+		struct bufferevent *dst =
+			(bev == c->client) ? c->upstream : c->client;
+		if (!dst) return;
+		evbuffer_add_buffer(bufferevent_get_output(dst), in);
+		/* backpressure: si el destino se atrasa, pausar esta fuente */
+		if (evbuffer_get_length(bufferevent_get_output(dst)) >= RELAY_HIGH)
+			bufferevent_disable(bev, EV_READ);
+		return;
+	}
+	/* Esperando el segmento "partido" del payload (modo X-Split): se
+	 * descarta y recién ahí se conecta al backend. */
+	if (c->await_split) {
+		size_t sn = evbuffer_get_length(in);
+		if (sn == 0) return;
+		evbuffer_drain(in, sn);
+		c->await_split = 0;
+		start_upstream(c);
+		return;
+	}
+	size_t n = evbuffer_get_length(in);
+	if (n >= MAX_HEADER) {
+		reject_conn(c,
+			"HTTP/1.1 431 Request Header Fields Too Large\r\n"
+			"Connection: close\r\n\r\n");
+		return;
+	}
+	unsigned char *data = evbuffer_pullup(in, -1);
+	if (!data) return;
+	unsigned char *eoh = memmem(data, n, "\r\n\r\n", 4);
+	if (!eoh) return;
+	size_t hlen = (size_t)(eoh - data) + 4;
+	char *headers = malloc(hlen + 1);
+	if (!headers) { close_conn(c); return; }
+	memcpy(headers, data, hlen);
+	headers[hlen] = '\0';
+	int split = header_present(headers, "X-Split");
+	int allowed = valid_host(headers);
+	free(headers);
+	if (!allowed) {
+		evbuffer_drain(in, n);
+		reject_conn(c,
+			"HTTP/1.1 403 Forbidden\r\n"
+			"Connection: close\r\n\r\n");
+		return;
+	}
+	if (split) {
+		evbuffer_drain(in, hlen);
+		size_t rest = evbuffer_get_length(in);
+		if (rest > 0) {
+			evbuffer_drain(in, rest);
+			start_upstream(c);
+		} else {
+			c->await_split = 1;
+		}
+		return;
+	}
+	evbuffer_drain(in, n);
+	start_upstream(c);
 }
 
 static void write_cb(struct bufferevent *bev, void *arg)
 {
-Conn *c = arg;
-if (!c || c->closed) return;
-if (c->closing &&
-evbuffer_get_length(bufferevent_get_output(bev)) == 0) {
-close_conn(c);
-}
+	Conn *c = arg;
+	if (!c || c->closed) return;
+	if (c->relaying) {
+		/* esta salida se vació: reanudar la lectura de quien la alimenta */
+		if (evbuffer_get_length(bufferevent_get_output(bev)) <= RELAY_LOW) {
+			struct bufferevent *src =
+				(bev == c->client) ? c->upstream : c->client;
+			if (src) bufferevent_enable(src, EV_READ);
+		}
+	}
+	if (c->closing &&
+	    evbuffer_get_length(bufferevent_get_output(bev)) == 0) {
+		close_conn(c);
+	}
 }
 
 void upstream_event_cb(struct bufferevent *bev, short events, void *arg)
 {
-(void)bev;
-Conn *c = arg;
-if (!c || c->closed) return;
-if (events & BEV_EVENT_CONNECTED) {
-c->relaying = 1;
-bufferevent_setcb(c->client, read_cb, write_cb, NULL, c);
-bufferevent_setcb(c->upstream, read_cb, write_cb, upstream_event_cb, c);
-bufferevent_write(c->client, RESPONSE, sizeof(RESPONSE) - 1);
-struct timeval tv = {60, 0};
-bufferevent_set_timeouts(c->client, &tv, NULL);
-bufferevent_set_timeouts(c->upstream, &tv, NULL);
-bufferevent_setwatermark(c->client, EV_READ, 0, 262144);
-bufferevent_setwatermark(c->upstream, EV_READ, 0, 262144);
-bufferevent_enable(c->client, EV_READ | EV_WRITE);
-bufferevent_enable(c->upstream, EV_READ | EV_WRITE);
-return;
+	(void)bev;
+	Conn *c = arg;
+	if (!c || c->closed) return;
+	if (events & BEV_EVENT_CONNECTED) {
+		c->relaying = 1;
+		evutil_socket_t ufd = bufferevent_getfd(c->upstream);
+		if (ufd >= 0) set_keepalive(ufd);
+		bufferevent_setcb(c->client, read_cb, write_cb, NULL, c);
+		bufferevent_setcb(c->upstream, read_cb, write_cb, upstream_event_cb, c);
+		bufferevent_write(c->client, g_response, strlen(g_response));
+		struct timeval tv = {RELAY_TIMEOUT, 0};
+		bufferevent_set_timeouts(c->client, &tv, NULL);
+		bufferevent_set_timeouts(c->upstream, &tv, NULL);
+		bufferevent_setwatermark(c->client, EV_READ, 0, 262144);
+		bufferevent_setwatermark(c->upstream, EV_READ, 0, 262144);
+		/* el write_cb se dispara al bajar la salida de RELAY_LOW */
+		bufferevent_setwatermark(c->client, EV_WRITE, RELAY_LOW, 0);
+		bufferevent_setwatermark(c->upstream, EV_WRITE, RELAY_LOW, 0);
+		bufferevent_enable(c->client, EV_READ | EV_WRITE);
+		bufferevent_enable(c->upstream, EV_READ | EV_WRITE);
+		return;
+	}
+	if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR | BEV_EVENT_TIMEOUT))
+		close_conn(c);
 }
-if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR | BEV_EVENT_TIMEOUT))
-close_conn(c);
+
+static void client_event_cb(struct bufferevent *bev, short events, void *arg)
+{
+	(void)bev;
+	Conn *c = arg;
+	if (!c || c->closed) return;
+	if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR | BEV_EVENT_TIMEOUT))
+		close_conn(c);
 }
 
 static void accept_cb(struct evconnlistener *listener, evutil_socket_t fd,
-struct sockaddr *addr, int socklen, void *arg)
+		      struct sockaddr *addr, int socklen, void *arg)
 {
-(void)listener; (void)addr; (void)socklen;
-struct event_base *base = arg;
-evutil_make_socket_nonblocking(fd);
-int one = 1;
-setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-Conn *c = calloc(1, sizeof(*c));
-if (!c) { close(fd); return; }
-c->client = bufferevent_socket_new(
-base, fd, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
-if (!c->client) { close(fd); free(c); return; }
-extern void client_event_cb(struct bufferevent *, short, void *);
-bufferevent_setcb(c->client, read_cb, write_cb, client_event_cb, c);
-struct timeval tv = {60, 0};
-bufferevent_set_timeouts(c->client, &tv, NULL);
-bufferevent_setwatermark(c->client, EV_READ, 0, MAX_HEADER);
-bufferevent_enable(c->client, EV_READ | EV_WRITE);
-}
+	(void)listener;
+	struct event_base *base = arg;
+	char ip[46] = "?";
+	getnameinfo(addr, socklen, ip, sizeof(ip), NULL, 0, NI_NUMERICHOST);
 
-void client_event_cb(struct bufferevent *bev, short events, void *arg)
-{
-(void)bev;
-Conn *c = arg;
-if (!c || c->closed) return;
-if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR | BEV_EVENT_TIMEOUT))
-close_conn(c);
+	/* límites anti-abuso */
+	if (g_conns >= MAX_CONNS || ip_count_get(ip) >= PERIP_MAX) {
+		close(fd);
+		return;
+	}
+
+	evutil_make_socket_nonblocking(fd);
+	int one = 1;
+	setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+	set_keepalive(fd);
+
+	Conn *c = calloc(1, sizeof(*c));
+	if (!c) { close(fd); return; }
+	c->client = bufferevent_socket_new(
+		base, fd, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
+	if (!c->client) { close(fd); free(c); return; }
+	strncpy(c->ip, ip, sizeof(c->ip) - 1);
+	c->counted = 1;
+	g_conns++;
+	ip_inc(ip);
+
+	bufferevent_setcb(c->client, read_cb, write_cb, client_event_cb, c);
+	struct timeval tv = {HEADER_TIMEOUT, 0};  /* corto para las cabeceras */
+	bufferevent_set_timeouts(c->client, &tv, NULL);
+	bufferevent_setwatermark(c->client, EV_READ, 0, MAX_HEADER);
+	bufferevent_enable(c->client, EV_READ | EV_WRITE);
 }
 
 static void listener_error_cb(struct evconnlistener *listener, void *arg)
 {
-(void)listener;
-struct event_base *base = arg;
-perror("PDirect: error del listener");
-event_base_loopexit(base, NULL);
+	(void)listener;
+	struct event_base *base = arg;
+	perror("PDirect: error del listener");
+	event_base_loopexit(base, NULL);
+}
+
+/* Crea un socket de escucha dual-stack (IPv6 + IPv4). Si IPv6 no está
+ * disponible, cae a IPv4 puro. Devuelve el fd o -1. */
+static evutil_socket_t make_listen_fd(void)
+{
+	evutil_socket_t fd = socket(AF_INET6, SOCK_STREAM, 0);
+	if (fd >= 0) {
+		int off = 0, on = 1;
+		setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &off, sizeof(off));
+		setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+		struct sockaddr_in6 a6;
+		memset(&a6, 0, sizeof(a6));
+		a6.sin6_family = AF_INET6;
+		a6.sin6_addr = in6addr_any;
+		a6.sin6_port = htons((unsigned short)listen_port);
+		if (bind(fd, (struct sockaddr *)&a6, sizeof(a6)) == 0) {
+			evutil_make_socket_nonblocking(fd);
+			return fd;
+		}
+		close(fd);
+	}
+	/* Fallback IPv4 */
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd < 0) return -1;
+	int on = 1;
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+	struct sockaddr_in a4;
+	memset(&a4, 0, sizeof(a4));
+	a4.sin_family = AF_INET;
+	a4.sin_addr.s_addr = htonl(INADDR_ANY);
+	a4.sin_port = htons((unsigned short)listen_port);
+	if (bind(fd, (struct sockaddr *)&a4, sizeof(a4)) != 0) {
+		close(fd);
+		return -1;
+	}
+	evutil_make_socket_nonblocking(fd);
+	return fd;
+}
+
+static int parse_port(const char *s, int def)
+{
+	if (!s || !*s) return def;
+	char *end = NULL;
+	long v = strtol(s, &end, 10);
+	if (end == s || *end != '\0' || v < 1 || v > 65535) return -1;
+	return (int)v;
 }
 
 int main(int argc, char **argv)
 {
-char *end = NULL;
-long port = argc == 2 ? strtol(argv[1], &end, 10) : 0;
-if (argc != 2 || end == argv[1] || *end != '\0' ||
-port < 1 || port > 65535) {
-fprintf(stderr, "Uso: %s PUERTO_SSH (1-65535)\n", argv[0]);
-return 2;
-}
-ssh_port = (int)port;
-snprintf(allowed_ip, sizeof(allowed_ip), "%s:%d", SSH_HOST, ssh_port);
-snprintf(allowed_name, sizeof(allowed_name), "localhost:%d", ssh_port);
-signal(SIGPIPE, SIG_IGN);
-struct event_base *base = event_base_new();
-if (!base) { fprintf(stderr, "No se pudo crear event_base\n"); return 1; }
-struct sockaddr_in addr;
-memset(&addr, 0, sizeof(addr));
-addr.sin_family = AF_INET;
-addr.sin_addr.s_addr = htonl(INADDR_ANY);
-addr.sin_port = htons(80);
-struct evconnlistener *listener = evconnlistener_new_bind(
-base, accept_cb, base,
-LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE,
-1024, (struct sockaddr *)&addr, sizeof(addr));
-if (!listener) {
-perror("No se pudo abrir el puerto 80");
-event_base_free(base);
-return 1;
-}
-evconnlistener_set_error_cb(listener, listener_error_cb);
-fprintf(stderr, "PDirect-C en 0.0.0.0:80; SSH local %s:%d\n", SSH_HOST, ssh_port);
-event_base_dispatch(base);
-evconnlistener_free(listener);
-event_base_free(base);
-return 0;
+	/* Uso (todo opcional, compatible con la llamada previa 'pdirect-c 22'):
+	 *   pdirect-c [SSH_PORT=22] [LISTEN_PORT=80] [MODO=101|200]
+	 * El banner también se puede sobreescribir con PDIRECT_RESPONSE. */
+	ssh_port = parse_port(argc > 1 ? argv[1] : NULL, 22);
+	listen_port = parse_port(argc > 2 ? argv[2] : NULL, 80);
+	if (ssh_port < 0 || listen_port < 0) {
+		fprintf(stderr, "Uso: %s [SSH_PORT] [LISTEN_PORT] [101|200]\n", argv[0]);
+		return 2;
+	}
+	const char *modo = argc > 3 ? argv[3] : "101";
+	g_response = (strcmp(modo, "200") == 0) ? RESP_200 : RESP_101;
+	const char *env = getenv("PDIRECT_RESPONSE");
+	if (env && *env) g_response = env;
+
+	snprintf(allowed_ip, sizeof(allowed_ip), "%s:%d", SSH_HOST, ssh_port);
+	snprintf(allowed_name, sizeof(allowed_name), "localhost:%d", ssh_port);
+	signal(SIGPIPE, SIG_IGN);
+
+	struct event_base *base = event_base_new();
+	if (!base) { fprintf(stderr, "No se pudo crear event_base\n"); return 1; }
+
+	evutil_socket_t lfd = make_listen_fd();
+	if (lfd < 0) {
+		perror("No se pudo abrir el puerto de escucha");
+		event_base_free(base);
+		return 1;
+	}
+	struct evconnlistener *listener = evconnlistener_new(
+		base, accept_cb, base,
+		LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE, 1024, lfd);
+	if (!listener) {
+		perror("No se pudo crear el listener");
+		close(lfd);
+		event_base_free(base);
+		return 1;
+	}
+	evconnlistener_set_error_cb(listener, listener_error_cb);
+	fprintf(stderr, "PDirect-C en 0.0.0.0/[::]:%d; SSH local %s:%d\n",
+		listen_port, SSH_HOST, ssh_port);
+	event_base_dispatch(base);
+	evconnlistener_free(listener);
+	event_base_free(base);
+	return 0;
 }
 ZUMO_PDIRECT_C
 
@@ -398,7 +565,22 @@ DynamicUser=yes
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+MemoryDenyWriteExecute=true
+LockPersonality=true
+SystemCallArchitectures=native
+LimitCORE=0
 LimitNOFILE=65536
+TasksMax=1024
+MemoryMax=256M
 [Install]
 WantedBy=multi-user.target
 U1
