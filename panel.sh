@@ -300,7 +300,8 @@ userdel "$u" 2>/dev/null
 zumo_db_del "$u"
 done
 msg_ok "${#VENC[@]} usuario(s) vencido(s) eliminado(s)"; pausa ;;
-*) return ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
 esac
 }
 
