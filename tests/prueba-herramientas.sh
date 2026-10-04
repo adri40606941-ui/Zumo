@@ -13,8 +13,8 @@ limpiar() { [ -n "$SRV_PID" ] && kill "$SRV_PID" 2>/dev/null; rm -rf "$T"; }
 trap limpiar EXIT
 
 N='\e[0m'; L='---'
-extraer() { sed -n "/^$1() {/,/^}/p" "$AQUI/panel.sh"; }
-for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram procesos_top; do
+extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
+for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
 	eval "$src"
@@ -84,10 +84,22 @@ chequear "muestra caché liberada (número, no negativo)" "si" "$(grep -qE 'Cach
 chequear "muestra disco libre" "si" "$(grep -qE 'Disco libre: +[0-9]+ → [0-9]+ MB' <<<"$SAL" && echo si || echo no)"
 
 echo "4) Procesos que más consumen"
+chequear "sshd se describe como SSH" "si" "$(desc_proceso sshd | grep -q SSH && echo si || echo no)"
+chequear "badvpn-udpgw se describe como BadVPN" "si" "$(desc_proceso badvpn-udpgw | grep -q BadVPN && echo si || echo no)"
+chequear "zumo-limit se describe como Limitador" "si" "$(desc_proceso zumo-limit | grep -q Limitador && echo si || echo no)"
+chequear "un proceso desconocido muestra -" "-" "$(desc_proceso algo-raro)"
+# un proceso que gasta CPU de verdad tiene que salir con % > 0 y subir el total
+( timeout 6 sh -c 'while :; do :; done' ) >/dev/null 2>&1 &
+BURN=$!
 SAL=$(procesos_top </dev/null | limpio)
+kill "$BURN" 2>/dev/null
 chequear "lista por RAM" "si" "$(grep -q 'Más RAM' <<<"$SAL" && echo si || echo no)"
 chequear "lista por CPU" "si" "$(grep -q 'Más CPU' <<<"$SAL" && echo si || echo no)"
-chequear "trae 6 líneas de cada una (cabecera + 5)" "12" "$(grep -cE '^ +(PID|[0-9]+) ' <<<"$SAL")"
+chequear "tiene la columna DE QUÉ ES" "2" "$(grep -c 'DE QUÉ ES' <<<"$SAL")"
+chequear "muestra el uso real de RAM en %" "si" "$(grep -qE 'RAM: +[0-9]+\.[0-9]+%' <<<"$SAL" && echo si || echo no)"
+chequear "muestra el uso real de CPU en %" "si" "$(grep -qE 'CPU: +[0-9]+\.[0-9]+%' <<<"$SAL" && echo si || echo no)"
+chequear "el uso real de CPU es mayor que 0 con un proceso trabajando" "si" "$(grep -E 'CPU: +[0-9.]+%' <<<"$SAL" | tail -1 | awk '{gsub("%","",$2); print ($2>0)?"si":"no"}')"
+chequear "el proceso que gasta CPU sale arriba en la lista de CPU" "si" "$(sed -n '/Más CPU/,$p' <<<"$SAL" | grep -qE '^ +[0-9]+ sh +[0-9.]+' && echo si || echo no)"
 
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi

@@ -919,13 +919,89 @@ echo -e "\n \e[2mLimpia caché, logs viejos y paquetes. La RAM de los programas 
 pausa
 }
 
-# Los 5 procesos que más RAM y más CPU usan en este momento.
+# Descripción corta de qué es un proceso, según su nombre.
+desc_proceso() {
+case "$1" in
+sshd|sshd-session) echo "SSH (conexiones)" ;;
+badvpn-udpgw) echo "BadVPN (UDP)" ;;
+pdirect-c) echo "PDirect (WebSocket)" ;;
+bhttp-server|bhttp-shim) echo "BHTTP" ;;
+hcr-server) echo "HCR Server" ;;
+zumo-limit) echo "Limitador" ;;
+zumo) echo "Este panel" ;;
+systemd) echo "Sistema (arranque)" ;;
+systemd-journal*) echo "Registros del sistema" ;;
+systemd-logind) echo "Sesiones de login" ;;
+systemd-udevd) echo "Dispositivos" ;;
+systemd-resolve*) echo "DNS del sistema" ;;
+systemd-timesyn*|chronyd|ntpd) echo "Hora del sistema" ;;
+systemd-network*) echo "Red del sistema" ;;
+dbus-daemon) echo "Mensajes del sistema" ;;
+cron|crond) echo "Tareas programadas" ;;
+rsyslogd) echo "Registros (syslog)" ;;
+agetty|login) echo "Consola" ;;
+python3|python) echo "Python" ;;
+fail2ban*) echo "Anti fuerza bruta" ;;
+unattended-upgr*) echo "Actualizaciones" ;;
+apt|apt-get|dpkg) echo "Paquetes (apt)" ;;
+kworker*|ksoftirqd*|kswapd*|rcu_*|migration*) echo "Kernel" ;;
+*) echo "-" ;;
+esac
+}
+
+# Foto de la CPU usada por cada proceso: "pid nombre ticks" (usuario + sistema).
+_snap_cpu() {
+awk '{
+line=$0; sub(/^[0-9]+ \(/, "", line)
+i=match(line, /\)[^)]*$/); name=substr(line, 1, i-1); rest=substr(line, i+2)
+gsub(/ /, "_", name); split(rest, f, " "); print $1, name, f[12]+f[13]
+}' /proc/[0-9]*/stat 2>/dev/null
+}
+
+# Color según el porcentaje: verde < 70, amarillo < 90, rojo desde 90.
+_col_pct() {
+LC_ALL=C awk -v p="$1" 'BEGIN{ if (p >= 90) print "\033[1;31m"; else if (p >= 70) print "\033[1;33m"; else print "\033[1;32m" }'
+}
+
+# Los 5 procesos que más RAM y más CPU usan, con qué es cada uno, y al final el
+# uso real de RAM y CPU. La CPU se mide en vivo durante 1 segundo.
 procesos_top() {
 banner; echo -e " \e[1;38;5;141mPROCESOS QUE MÁS CONSUMEN${N}\n"
+echo -e " \e[2mMidiendo (1 segundo)...${N}\n"
+local tmp t0 t1 dt cores hz cpu_real mt mu ram_pct pid comm val d
+tmp=$(mktemp -d)
+cores=$(nproc 2>/dev/null || echo 1)
+hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
+head -n1 /proc/stat > "$tmp/s0"; _snap_cpu > "$tmp/p0"; t0=$(date +%s.%N)
+sleep 1
+head -n1 /proc/stat > "$tmp/s1"; _snap_cpu > "$tmp/p1"; t1=$(date +%s.%N)
+dt=$(LC_ALL=C awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
+cpu_real=$(LC_ALL=C awk 'NR==FNR{for(i=2;i<=9;i++)a+=$i; i0=$5+$6; next}
+{for(i=2;i<=9;i++)b+=$i; i1=$5+$6}
+END{dt=b-a; di=i1-i0; if(dt<=0) print "0.0"; else printf "%.1f", (dt-di)*100/dt}' "$tmp/s0" "$tmp/s1")
+
 echo -e " \e[1;38;5;208mMás RAM:${N}"
-ps -eo pid,comm,%mem,%cpu --sort=-%mem 2>/dev/null | head -n 6 | sed 's/^/ /'
+printf ' \e[2m%6s %-15s %5s  %s\e[0m\n' "PID" "PROCESO" "%RAM" "DE QUÉ ES"
+while read -r pid comm val; do
+[ -z "$pid" ] && continue
+printf ' %6s %-15s %5s  \e[2m%s\e[0m\n' "$pid" "${comm:0:15}" "$val" "$(desc_proceso "$comm")"
+done < <(ps -eo pid=,comm=,%mem= --sort=-%mem 2>/dev/null | head -n 5)
+
 echo; echo -e " \e[1;38;5;208mMás CPU:${N}"
-ps -eo pid,comm,%cpu,%mem --sort=-%cpu 2>/dev/null | head -n 6 | sed 's/^/ /'
+printf ' \e[2m%6s %-15s %5s  %s\e[0m\n' "PID" "PROCESO" "%CPU" "DE QUÉ ES"
+while read -r pid comm val; do
+[ -z "$pid" ] && continue
+printf ' %6s %-15s %5s  \e[2m%s\e[0m\n' "$pid" "${comm:0:15}" "$val" "$(desc_proceso "$comm")"
+done < <(LC_ALL=C awk -v dt="$dt" -v hz="$hz" -v c="$cores" 'NR==FNR{a[$1]=$3; next}
+($1 in a){ printf "%d %s %.1f\n", $1, $2, ($3-a[$1])/hz/dt*100/c }' "$tmp/p0" "$tmp/p1" | sort -k3 -nr | head -n 5)
+rm -rf "$tmp"
+
+read -r mt mu <<< "$(free -m | awk '/^Mem:/{print $2, $3}')"
+ram_pct=$(LC_ALL=C awk -v u="${mu:-0}" -v t="${mt:-1}" 'BEGIN{printf "%.1f", u*100/t}')
+echo; echo -e " $L"
+echo -e " \e[1;38;5;208mUso real ahora:${N}"
+echo -e "   RAM: $(_col_pct "$ram_pct")${ram_pct}%\e[0m  (${mu} de ${mt} MB)"
+echo -e "   CPU: $(_col_pct "$cpu_real")${cpu_real}%\e[0m  (medido en 1 s, de todos los núcleos)"
 pausa
 }
 
