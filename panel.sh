@@ -363,9 +363,7 @@ banner; echo -e " \e[1;38;5;141mELIMINAR USUARIO${N}\n"
 if [ ! -s "$DB" ]; then msg_err "No hay usuarios registrados"; pausa; return; fi
 lista_para_borrar
 echo; echo -e " $L"
-echo -e " \e[2mEscribí el usuario, el nombre del cliente o el HWID y Enter: se borra.${N}"
-echo -e " \e[2mEnter vacío para volver.${N}"
-read -rp " Borrar: " q
+read -rp " Escribí usuario o HWID para borrar: " q
 q="${q#"${q%%[![:space:]]*}"}"; q="${q%"${q##*[![:space:]]}"}"
 [ -z "$q" ] && return
 buscar_usuario "$q"; rc=$?
