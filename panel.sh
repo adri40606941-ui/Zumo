@@ -92,6 +92,30 @@ en_linea() { ps -u "$1" -o comm= 2>/dev/null | grep -c '^sshd$'; }
 nombre_valido() { [[ "$1" =~ ^[a-z][a-z0-9]{0,9}$ ]]; }
 clave_valida() { [[ "$1" =~ ^[A-Za-z0-9]{1,10}$ ]]; }
 
+# Lee entrada en vivo aceptando SOLO letras y números: el espacio o cualquier
+# símbolo no se escribe y avisa en el momento. Resultado en $REPLY_ALNUM.
+#   leer_alnum "Usuario: " [max=10] [minuscula]
+leer_alnum() {
+local prompt="$1" max="${2:-10}" lower="${3:-}" buf="" ch
+printf " %s" "$prompt"
+while IFS= read -rsn1 ch; do
+[[ -z "$ch" ]] && break                       # Enter
+if [[ "$ch" == $'\x7f' || "$ch" == $'\b' ]]; then  # borrar
+[ -n "$buf" ] && { buf="${buf%?}"; printf '\b \b'; }
+continue
+fi
+if [[ "$ch" == [A-Za-z0-9] ]]; then
+[ "${#buf}" -ge "$max" ] && continue           # tope de largo
+[ "$lower" = "lower" ] && ch="${ch,,}"         # forzar minúscula (usuarios)
+buf+="$ch"; printf '%s' "$ch"
+else
+printf '\n \e[1;31m✘ Solo letras y números\e[0m\n %s%s' "$prompt" "$buf"
+fi
+done
+printf '\n'
+REPLY_ALNUM="$buf"
+}
+
 esta_bloqueado() {
 local est
 est=$(passwd -S "$1" 2>/dev/null | awk '{print $2}')
@@ -125,8 +149,7 @@ echo
 if [ "$modo" = "2" ]; then
 read -rp " Nombre del cliente (solo para identificarlo en el panel): " etiqueta
 etiqueta=$(zumo_limpiar_etiqueta "$etiqueta")
-read -rp " Pegá el HWID del cliente (8 a 32 caracteres): " hwidraw
-hwid=$(echo "$hwidraw" | tr -cd 'A-Za-z0-9')
+leer_alnum "Pegá el HWID del cliente (8 a 32 caracteres): " 32; hwid="$REPLY_ALNUM"
 if [ ${#hwid} -lt 8 ] || [ ${#hwid} -gt 32 ]; then
 msg_err "HWID inválido (8 a 32 caracteres alfanuméricos; quedaron ${#hwid})"; pausa; return
 fi
@@ -153,11 +176,11 @@ pausa
 return
 fi
 
-read -rp " Usuario: " u
-nombre_valido "$u" || { msg_err "Usuario inválido (solo letras y números, máx 10, empieza con letra)"; pausa; return; }
+leer_alnum "Usuario: " 10 lower; u="$REPLY_ALNUM"
+nombre_valido "$u" || { msg_err "Usuario inválido (debe empezar con letra)"; pausa; return; }
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
-read -rp " Contraseña: " p
-clave_valida "$p" || { msg_err "Contraseña inválida (solo letras y números, máx 10)"; pausa; return; }
+leer_alnum "Contraseña: " 10; p="$REPLY_ALNUM"
+clave_valida "$p" || { msg_err "Contraseña inválida (no puede estar vacía)"; pausa; return; }
 read -rp " Días de duración: " d
 [[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
 read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
@@ -215,8 +238,7 @@ echo
 if [ "$modo" = "2" ]; then
 read -rp " Nombre del cliente: " etiqueta
 etiqueta=$(zumo_limpiar_etiqueta "$etiqueta")
-read -rp " Pegá el HWID del cliente (8 a 32 caracteres): " hwidraw
-hwid=$(echo "$hwidraw" | tr -cd 'A-Za-z0-9')
+leer_alnum "Pegá el HWID del cliente (8 a 32 caracteres): " 32; hwid="$REPLY_ALNUM"
 if [ ${#hwid} -lt 8 ] || [ ${#hwid} -gt 32 ]; then
 msg_err "HWID inválido (8 a 32 caracteres alfanuméricos; quedaron ${#hwid})"; pausa; return
 fi
@@ -242,11 +264,11 @@ pausa
 return
 fi
 
-read -rp " Usuario: " u
-nombre_valido "$u" || { msg_err "Usuario inválido (solo letras y números, máx 10, empieza con letra)"; pausa; return; }
+leer_alnum "Usuario: " 10 lower; u="$REPLY_ALNUM"
+nombre_valido "$u" || { msg_err "Usuario inválido (debe empezar con letra)"; pausa; return; }
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
-read -rp " Contraseña: " p
-clave_valida "$p" || { msg_err "Contraseña inválida (solo letras y números, máx 10)"; pausa; return; }
+leer_alnum "Contraseña: " 10; p="$REPLY_ALNUM"
+clave_valida "$p" || { msg_err "Contraseña inválida (no puede estar vacía)"; pausa; return; }
 read -rp " Minutos de duración: " min
 [[ "$min" =~ ^[0-9]+$ ]] && [ "$min" -ge 1 ] || { msg_err "Minutos inválidos"; pausa; return; }
 read -rp " Conexiones permitidas [1]: " lim; lim=${lim:-1}
@@ -331,8 +353,8 @@ es_hwid "$SEL" && op 5 "🔑" "Cambiar HWID"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " eo
 case $eo in
-1) read -rp " Contraseña nueva para $SEL: " np
-clave_valida "$np" || { msg_err "Contraseña inválida (solo letras y números, máx 10)"; sleep 1; continue; }
+1) leer_alnum "Contraseña nueva para $SEL: " 10; np="$REPLY_ALNUM"
+clave_valida "$np" || { msg_err "Contraseña inválida (no puede estar vacía)"; sleep 1; continue; }
 echo "$SEL:$np" | chpasswd
 msg_ok "Contraseña de $SEL actualizada"; sleep 1 ;;
 2) read -rp " Nuevo límite para $SEL [$lim]: " nl; nl=${nl:-$lim}
