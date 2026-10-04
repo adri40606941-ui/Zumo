@@ -882,6 +882,30 @@ systemctl enable zumo-limit >/dev/null 2>&1
 systemctl restart zumo-limit >/dev/null 2>&1
 echo -e " \e[1;32m✔ listo\e[0m"
 
+# Contador de datos por usuario (iptables owner + datos.db)
+command -v iptables >/dev/null 2>&1 || { export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends iptables >/dev/null 2>&1; }
+if curl -fsSL "$ZUMO_RAW/zumo-datos.sh" -o /tmp/zumo-datos.sh && bash -n /tmp/zumo-datos.sh; then
+install -m 0755 /tmp/zumo-datos.sh /usr/local/bin/zumo-datos
+cat > /etc/systemd/system/zumo-datos.service <<'DATEOF'
+[Unit]
+Description=ZUMO contador de datos por usuario
+After=network.target
+[Service]
+ExecStart=/usr/local/bin/zumo-datos
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target
+DATEOF
+systemctl daemon-reload >/dev/null 2>&1
+systemctl enable zumo-datos >/dev/null 2>&1
+systemctl restart zumo-datos >/dev/null 2>&1
+echo -e " \e[1;32m✔ contador de datos activo\e[0m"
+else
+echo -e " \e[1;31m✘ no se pudo bajar zumo-datos.sh\e[0m"
+fi
+rm -f /tmp/zumo-datos.sh
+
 echo -e "\e[1;33m[7/9]\e[0m Creando activador de HCR Server..."
 
 cat > /etc/zumo/activar-hcr.sh <<'ZUMOHCRACT'

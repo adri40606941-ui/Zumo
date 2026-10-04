@@ -22,7 +22,7 @@ zumo
 
 | Componente | Para qué sirve |
 |---|---|
-| **Panel** (`zumo`) | Crear/editar/borrar usuarios, ver quién está conectado, prender y apagar protocolos. En Herramientas: BBR, test de velocidad, limpieza de RAM y logs, y uso de CPU y RAM. |
+| **Panel** (`zumo`) | Crear/editar/borrar usuarios, ver quién está conectado, prender y apagar protocolos. En Herramientas: BBR, test de velocidad, limpieza de RAM y logs, uso de CPU y RAM, y uso de datos por usuario (MB/GB desde que se creó). |
 | **Limitador** (`zumo-limit`) | Cada 3 s corta las sesiones SSH que pasan el límite de cada usuario, corta a los vencidos y borra los temporales vencidos. |
 | **PDirect** | WebSocket en el puerto 80 → SSH local. |
 | **BadVPN** | UDPGW en el 7300 (para el tráfico UDP de las apps). |
@@ -81,7 +81,8 @@ Ver qué cortó: `journalctl -u zumo-limit -f`. Probar sin cortar nada:
 | `zumo-limit.c` | Fuente del limitador (el instalador lo baja y lo compila). |
 | `limit.conf` | Configuración de ejemplo del limitador. |
 | `quitar-panelweb.sh` | Quita de una VPS el panel web de versiones anteriores. |
-| `tests/` | Pruebas del limitador, de "Eliminar usuario" y de las herramientas (`sudo bash tests/prueba-limitador.sh`, `prueba-borrar.sh`, `prueba-herramientas.sh`). |
+| `zumo-datos.sh` | Contador de datos por usuario (iptables); alimenta Herramientas → Uso de datos. |
+| `tests/` | Pruebas del limitador, de "Eliminar usuario" y de las herramientas (`sudo bash tests/prueba-limitador.sh`, `prueba-borrar.sh`, `prueba-herramientas.sh`, `prueba-datos.sh`). |
 | `hcr-install.sh` / `hcr-server` | Instalador y binario de HCR. |
 | `bhttp-server-*` / `bhttp-shim-*` | Binarios de BHTTP por arquitectura. |
 | `main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |

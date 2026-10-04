@@ -367,6 +367,7 @@ local u="$1"
 pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 zumo_db_del "$u"
+( flock -w 5 9; [ -f /etc/zumo/datos.db ] && awk -F: -v u="$u" '$1!=u' /etc/zumo/datos.db > /etc/zumo/datos.db.tmp && mv -f /etc/zumo/datos.db.tmp /etc/zumo/datos.db ) 9>/etc/zumo/datos.lock 2>/dev/null
 systemctl stop "zumo-temp-$u.timer" 2>/dev/null
 if [ -f "$TEMPDB" ]; then
 awk -F: -v u="$u" '$1!=u' "$TEMPDB" > "$TEMPDB.tmp" && mv -f "$TEMPDB.tmp" "$TEMPDB"
@@ -1005,6 +1006,32 @@ echo -e "   CPU: $(_col_pct "$cpu_real")${cpu_real}%\e[0m  (medido en 1 s, de to
 pausa
 }
 
+_fmt_bytes() {
+awk -v b="$1" 'BEGIN{ if (b>=1073741824) printf "%.2f GB", b/1073741824; else printf "%.1f MB", b/1048576 }'
+}
+
+uso_datos() {
+banner; echo -e " \e[1;38;5;141mUSO DE DATOS${N}\n"
+local DATOS="${ZUMO_DATOS:-/etc/zumo/datos.db}" u b total=0 n=0
+if [ ! -s "$DB" ]; then msg_err "No hay usuarios registrados"; pausa; return; fi
+if ! systemctl is-active --quiet zumo-datos 2>/dev/null; then
+echo -e " \e[1;31m● El contador no está activo (actualizá con actualizar.sh)${N}\n"
+fi
+printf " \e[1;38;5;208m%-18s %s${N}\n" "USUARIO/CLIENTE" "GASTÓ"
+while IFS=: read -r u _; do
+[ -z "$u" ] && continue
+b=$(awk -F: -v u="$u" '$1==u{print $2}' "$DATOS" 2>/dev/null)
+b=${b:-0}
+total=$(awk -v a="$total" -v b="$b" 'BEGIN{printf "%.0f", a+b}')
+n=$((n+1))
+printf " \e[1;32m%-18s${N} \e[1;38;5;51m%s${N}\n" "$(etiqueta_de "$u")" "$(_fmt_bytes "$b")"
+done < "$DB"
+echo; echo -e " $L"
+echo -e " \e[1;38;5;214mTotal ($n usuarios): \e[1;38;5;51m$(_fmt_bytes "$total")${N}"
+echo -e " \e[2mSuma lo que bajó y subió cada usuario desde que se creó.${N}"
+pausa
+}
+
 menu_herramientas() {
 while true; do
 banner; echo -e " \e[1;38;5;141mHERRAMIENTAS${N}\n"
@@ -1017,6 +1044,7 @@ op 1 "⚡" "BBR"
 op 2 "🚀" "Test de velocidad"
 op 3 "🧹" "Liberar RAM y limpiar"
 op 4 "📊" "Uso de CPU y RAM"
+op 5 "📶" "Uso de datos"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -1024,6 +1052,7 @@ case $o in
 2) test_velocidad ;;
 3) liberar_ram ;;
 4) procesos_top ;;
+5) uso_datos ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac

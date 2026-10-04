@@ -61,6 +61,33 @@ if curl -fsSL "$BASE/zumo-limit.c$NC" -o "$TMP/zumo-limit.c" && [ -s "$TMP/zumo-
 else
 	err "no se pudo descargar zumo-limit.c del repo (¿ya lo subiste?)"
 fi
+# Contador de datos por usuario
+echo -e "${V}Contador de datos (zumo-datos)...${N}"
+
+# Contador de datos por usuario (iptables owner + datos.db)
+command -v iptables >/dev/null 2>&1 || { export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends iptables >/dev/null 2>&1; }
+if curl -fsSL "$BASE/zumo-datos.sh$NC" -o /tmp/zumo-datos.sh && bash -n /tmp/zumo-datos.sh; then
+install -m 0755 /tmp/zumo-datos.sh /usr/local/bin/zumo-datos
+cat > /etc/systemd/system/zumo-datos.service <<'DATEOF'
+[Unit]
+Description=ZUMO contador de datos por usuario
+After=network.target
+[Service]
+ExecStart=/usr/local/bin/zumo-datos
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target
+DATEOF
+systemctl daemon-reload >/dev/null 2>&1
+systemctl enable zumo-datos >/dev/null 2>&1
+systemctl restart zumo-datos >/dev/null 2>&1
+echo -e " ${G}✔ contador de datos activo${N}"
+else
+echo -e " ${R}✘ no se pudo bajar zumo-datos.sh${N}"
+fi
+rm -f /tmp/zumo-datos.sh
+
 # install.sh se baja aparte: el paso 5 extrae de ahí los activadores de protocolos.
 curl -fsSL "$BASE/install.sh$NC" -o "$TMP/install.sh" 2>/dev/null || rm -f "$TMP/install.sh"
 

@@ -14,7 +14,7 @@ trap limpiar EXIT
 
 N='\e[0m'; L='---'
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
-for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top; do
+for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
 	eval "$src"
@@ -101,5 +101,15 @@ chequear "muestra el uso real de CPU en %" "si" "$(grep -qE 'CPU: +[0-9]+\.[0-9]
 chequear "el uso real de CPU es mayor que 0 con un proceso trabajando" "si" "$(grep -E 'CPU: +[0-9.]+%' <<<"$SAL" | tail -1 | awk '{gsub("%","",$2); print ($2>0)?"si":"no"}')"
 chequear "el proceso que gasta CPU sale arriba en la lista de CPU" "si" "$(sed -n '/Más CPU/,$p' <<<"$SAL" | grep -qE '^ +[0-9]+ sh +[0-9.]+' && echo si || echo no)"
 
+echo "5) Uso de datos"
+etiqueta_de() { echo "$1"; }
+DB="$T/usuarios.db"; printf 'ana:1:2099-01-01\nbeto:1:2099-01-01\nnuevo:1:2099-01-01\n' > "$DB"
+export ZUMO_DATOS="$T/datos.db"; printf 'ana:1610612736\nbeto:5242880\n' > "$ZUMO_DATOS"
+SAL=$(uso_datos </dev/null | limpio)
+chequear "ana en GB" "si" "$(grep -qE 'ana +1\.50 GB' <<<"$SAL" && echo si || echo no)"
+chequear "beto en MB" "si" "$(grep -qE 'beto +5\.0 MB' <<<"$SAL" && echo si || echo no)"
+chequear "usuario sin datos en 0" "si" "$(grep -qE 'nuevo +0\.0 MB' <<<"$SAL" && echo si || echo no)"
+chequear "total de los 3 usuarios" "si" "$(grep -qE 'Total \(3 usuarios\): +1\.50 GB' <<<"$SAL" && echo si || echo no)"
+unset ZUMO_DATOS
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi

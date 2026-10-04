@@ -18,7 +18,7 @@ uptime
 nproc
 
 echo -e "\n--- 3) Servicios: estado y cuántas veces se reiniciaron ---"
-for svc in ssh sshd zumo-limit pdirect-80 udpgw-7300 bhttp-server bhttp-shim hcr-server fail2ban; do
+for svc in ssh sshd zumo-limit zumo-datos pdirect-80 udpgw-7300 bhttp-server bhttp-shim hcr-server fail2ban; do
   if systemctl list-unit-files 2>/dev/null | grep -q "^$svc.service"; then
     echo "· $svc:"
     systemctl show "$svc" -p NRestarts,ActiveState,SubState 2>/dev/null
