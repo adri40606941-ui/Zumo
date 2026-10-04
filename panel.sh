@@ -915,7 +915,7 @@ lib=$(( cache0 - cache1 )); [ "$lib" -lt 0 ] && lib=0
 echo -e " \e[1;38;5;208mRAM libre:\e[0m      ${libre0} → \e[1;32m${libre1} MB\e[0m"
 echo -e " \e[1;38;5;208mCaché liberada:\e[0m \e[1;32m${lib} MB\e[0m"
 echo -e " \e[1;38;5;208mDisco libre:\e[0m    ${disco0} → \e[1;32m${disco1} MB\e[0m"
-echo -e "\n \e[2mLimpia caché, logs viejos y paquetes. La RAM de los programas no se toca.${N}"
+echo -e "\n \e[2mLimpia caché y paquetes obsoletos.${N}"
 pausa
 }
 
