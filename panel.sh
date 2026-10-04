@@ -5,7 +5,7 @@ N='\e[0m'
 L='\e[38;5;97m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m'
 
 # Librería compartida de operaciones sobre el DB (lock + escritura atómica),
-# la misma que coordina con el panel web. Si falta, se baja del repo.
+# la misma que usa el borrador de temporales. Si falta, se baja del repo.
 ZUMO_LIB=/etc/zumo/zumo-lib.sh
 if [ ! -f "$ZUMO_LIB" ]; then
 	curl -fsSL "https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/zumo-lib.sh" -o "$ZUMO_LIB" 2>/dev/null
@@ -673,109 +673,6 @@ esac
 done
 }
 
-configurar_panelweb() {
-banner; echo -e " \e[1;38;5;141mCONFIGURAR PANEL WEB${N}\n"
-read -rp " Puerto para el panel [9090]: " wport; wport=${wport:-9090}
-[[ "$wport" =~ ^[0-9]+$ ]] || { msg_err "Puerto inválido"; pausa; return; }
-read -rp " ¿Escuchar solo en 127.0.0.1 (se entra por túnel SSH)? [s/N]: " wlocal
-wbind="0.0.0.0"; [[ "$wlocal" =~ ^[sS]$ ]] && wbind="127.0.0.1"
-read -rp " Usuario de acceso: " wuser
-[ -z "$wuser" ] && { msg_err "Usuario vacío"; pausa; return; }
-read -rsp " Contraseña de acceso: " wpass; echo
-[ -z "$wpass" ] && { msg_err "Contraseña vacía"; pausa; return; }
-
-echo; echo -e " \e[1;38;5;141mInstalando, aguardá...${N}"
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y >/dev/null 2>&1
-apt-get install -y --no-install-recommends python3 python3-flask >/dev/null 2>&1
-
-PASSHASH=$(WEBPASS="$wpass" python3 -c "
-import os
-from werkzeug.security import generate_password_hash
-print(generate_password_hash(os.environ['WEBPASS']))
-" 2>/dev/null)
-if [ -z "$PASSHASH" ]; then msg_err "No se pudo generar la contraseña (¿python3-flask instaló bien?)"; pausa; return; fi
-SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-
-mkdir -p /etc/zumo
-cat > /etc/zumo/web.conf <<EOF
-WEB_USER=$wuser
-WEB_PASS_HASH=$PASSHASH
-SECRET_KEY=$SECRET
-PORT=$wport
-BIND=$wbind
-EOF
-chmod 600 /etc/zumo/web.conf
-
-ZUMO="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
-if ! curl -fsSL "$ZUMO/panelweb.py?nocache=$(date +%s)" -o /etc/zumo/panelweb.py; then
-msg_err "No se pudo descargar panelweb.py"; pausa; return
-fi
-if ! python3 -m py_compile /etc/zumo/panelweb.py 2>/dev/null; then
-msg_err "panelweb.py tiene errores"; pausa; return
-fi
-chmod 644 /etc/zumo/panelweb.py
-
-cat > /etc/systemd/system/zumo-web.service <<'SVCEOF'
-[Unit]
-Description=ZUMO - Panel web
-After=network-online.target
-Wants=network-online.target
-[Service]
-ExecStart=/usr/bin/python3 /etc/zumo/panelweb.py
-Restart=always
-RestartSec=3
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-
-systemctl daemon-reload
-systemctl enable --now zumo-web >/dev/null 2>&1
-sleep 2
-if systemctl is-active --quiet zumo-web; then
-IP=$(curl -fsSL --max-time 4 -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
-msg_ok "Panel web activo"
-if [ "$wbind" = "127.0.0.1" ]; then
-echo -e "   Acceso:   \e[1;38;5;214mssh -L ${wport}:127.0.0.1:${wport} root@${IP}\e[0m  y abrí http://127.0.0.1:${wport}"
-else
-echo -e "   URL:      \e[1;38;5;214mhttp://${IP}:${wport}${N}"
-fi
-echo -e "   Usuario:  \e[1;38;5;214m$wuser${N}"
-echo -e " \e[2mEs HTTP sin cifrar: usalo en red de confianza o por VPN/túnel SSH si lo exponés a internet.${N}"
-else
-msg_err "No quedó activo; revisá journalctl -u zumo-web -n 30"
-fi
-pausa
-}
-
-menu_panelweb() {
-while true; do
-banner; echo -e " \e[1;38;5;141mPANEL WEB${N}\n"
-if systemctl is-active --quiet zumo-web 2>/dev/null; then
-pp=$(grep '^PORT=' /etc/zumo/web.conf 2>/dev/null | cut -d= -f2); pp=${pp:-9090}
-IP=$(curl -fsSL --max-time 4 -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
-echo -e " \e[1;32m● Panel web: activo${N}"
-echo -e "   http://${IP}:${pp}\n"
-else
-echo -e " \e[1;31m● Panel web: inactivo${N}\n"
-fi
-op 1 "⚡" "Configurar / activar"
-op 2 "✖" "Desactivar"
-op 3 "⟳" "Reiniciar"
-op 0 "◂" "Volver"
-echo -e "\n $L"; read -rp " Opción: " o
-case $o in
-1) configurar_panelweb ;;
-2) systemctl disable --now zumo-web >/dev/null 2>&1; msg_ok "Panel web desactivado"; pausa ;;
-3) systemctl restart zumo-web >/dev/null 2>&1; sleep 1
-if systemctl is-active --quiet zumo-web; then msg_ok "Panel web reiniciado"; else msg_err "No quedó activo; revisá journalctl -u zumo-web"; fi
-pausa ;;
-0) return ;;
-*) msg_err "Opción inválida"; sleep 1 ;;
-esac
-done
-}
-
 menu_protocolos() {
 while true; do
 banner; echo -e " \e[1;38;5;141mPROTOCOLOS${N}\n"
@@ -860,23 +757,16 @@ done
 menu_herramientas() {
 while true; do
 banner; echo -e " \e[1;38;5;141mHERRAMIENTAS${N}\n"
-if systemctl is-active --quiet zumo-web 2>/dev/null; then
-echo -e " \e[1;32m● Panel web: activo${N}"
-else
-echo -e " \e[1;31m● Panel web: inactivo${N}"
-fi
 if bbr_activo; then
 echo -e " \e[1;32m● BBR: activo${N}\n"
 else
 echo -e " \e[1;31m● BBR: inactivo${N}\n"
 fi
-op 1 "🌐" "Panel Web"
-op 2 "⚡" "BBR"
+op 1 "⚡" "BBR"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
-1) menu_panelweb ;;
-2) menu_bbr ;;
+1) menu_bbr ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac

@@ -1138,7 +1138,7 @@ echo -e " \e[1;32m✔ listo\e[0m"
 echo -e "\e[1;33m[9/9]\e[0m Instalando panel..."
 
 # Librería compartida de operaciones sobre el DB (lock + escritura atómica),
-# usada tanto por el panel de terminal como por el panel web.
+# usada por el panel de terminal y por el borrador de usuarios temporales.
 LIB_URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/zumo-lib.sh"
 LIB_TMP=$(mktemp)
 if curl -fsSL "$LIB_URL" -o "$LIB_TMP" && bash -n "$LIB_TMP" 2>/dev/null; then

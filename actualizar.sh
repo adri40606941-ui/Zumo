@@ -1,6 +1,6 @@
 #!/bin/bash
 # Actualiza una instalación Zumo existente con la última versión del repo:
-# panel de terminal, librería compartida, panel web y limitador (recompilado).
+# panel de terminal, librería compartida y limitador (recompilado).
 # No reinstala los protocolos; solo actualiza lo que cambió.
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
 
@@ -13,7 +13,7 @@ err() { echo -e " ${R}✘ $1${N}"; }
 mkdir -p /etc/zumo
 
 # 1) Librería compartida -------------------------------------------------------
-echo -e "${V}[1/5] Librería compartida (zumo-lib.sh)...${N}"
+echo -e "${V}[1/4] Librería compartida (zumo-lib.sh)...${N}"
 TMP=$(mktemp)
 if curl -fsSL "$BASE/zumo-lib.sh$NC" -o "$TMP" && bash -n "$TMP" 2>/dev/null; then
 	install -m 0644 "$TMP" /etc/zumo/zumo-lib.sh
@@ -24,7 +24,7 @@ fi
 rm -f "$TMP"
 
 # 2) Panel de terminal ---------------------------------------------------------
-echo -e "${V}[2/5] Panel de terminal (zumo)...${N}"
+echo -e "${V}[2/4] Panel de terminal (zumo)...${N}"
 TMP=$(mktemp)
 if curl -fsSL "$BASE/panel.sh$NC" -o "$TMP" && bash -n "$TMP" 2>/dev/null; then
 	[ -f /usr/local/bin/zumo ] && cp /usr/local/bin/zumo /usr/local/bin/zumo.bak
@@ -35,24 +35,8 @@ else
 fi
 rm -f "$TMP"
 
-# 3) Panel web (solo si ya estaba instalado) -----------------------------------
-echo -e "${V}[3/5] Panel web (panelweb.py)...${N}"
-if [ -f /etc/zumo/panelweb.py ] || systemctl list-unit-files 2>/dev/null | grep -q '^zumo-web.service'; then
-	TMP=$(mktemp)
-	if curl -fsSL "$BASE/panelweb.py$NC" -o "$TMP" && python3 -m py_compile "$TMP" 2>/dev/null; then
-		cp /etc/zumo/panelweb.py /etc/zumo/panelweb.py.bak 2>/dev/null
-		install -m 0644 "$TMP" /etc/zumo/panelweb.py
-		systemctl restart zumo-web 2>/dev/null && ok "actualizado y reiniciado" || ok "actualizado (no estaba corriendo)"
-	else
-		err "no se pudo descargar/validar panelweb.py (se dejó el actual)"
-	fi
-	rm -f "$TMP"
-else
-	echo -e " ${V}—${N} no está instalado, se omite"
-fi
-
-# 4) Limitador (se baja zumo-limit.c del repo y se recompila) ------------------
-echo -e "${V}[4/5] Limitador (zumo-limit)...${N}"
+# 3) Limitador (se baja zumo-limit.c del repo y se recompila) ------------------
+echo -e "${V}[3/4] Limitador (zumo-limit)...${N}"
 if ! command -v gcc >/dev/null 2>&1; then
 	export DEBIAN_FRONTEND=noninteractive
 	apt-get update >/dev/null 2>&1
@@ -80,9 +64,9 @@ fi
 # install.sh se baja aparte: el paso 5 extrae de ahí los activadores de protocolos.
 curl -fsSL "$BASE/install.sh$NC" -o "$TMP/install.sh" 2>/dev/null || rm -f "$TMP/install.sh"
 
-# 5) Refrescar los activadores de protocolos (traen el código fuente embebido:
+# 4) Refrescar los activadores de protocolos (traen el código fuente embebido:
 #    pdirect, etc.). Sin esto, reactivar un protocolo recompila la versión vieja.
-echo -e "${V}[5/5] Activadores de protocolos...${N}"
+echo -e "${V}[4/4] Activadores de protocolos...${N}"
 if [ -f "$TMP/install.sh" ]; then
 extraer_bloque() {
 # $1=marcador del heredoc  $2=archivo de salida
@@ -113,6 +97,11 @@ else
 err "no se pudo refrescar los activadores (sin install.sh)"
 fi
 rm -rf "$TMP"
+
+if systemctl list-unit-files 2>/dev/null | grep -q '^zumo-web.service'; then
+	echo -e " ${V}—${N} El panel web ya no forma parte de Zumo y no se actualiza. Para quitarlo de esta VPS:"
+	echo -e "   curl -fsSL \"$BASE/quitar-panelweb.sh\" | bash"
+fi
 
 echo
 ok "Actualización terminada. Abrí el panel con: zumo"

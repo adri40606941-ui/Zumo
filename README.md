@@ -2,7 +2,7 @@
 
 Panel para administrar accesos SSH en una VPS y exponerlos a través de varios
 transportes pensados para apps de túnel de Android (HTTP Injector, HTTP Custom,
-etc.). Incluye un panel de terminal y un panel web.
+etc.). Se maneja desde un panel de terminal.
 
 ## Instalación
 
@@ -23,7 +23,6 @@ zumo
 | Componente | Para qué sirve |
 |---|---|
 | **Panel** (`zumo`) | Crear/editar/borrar usuarios, ver quién está conectado, prender y apagar protocolos. |
-| **Panel web** | Lo mismo desde el navegador (opcional, se configura desde el panel). |
 | **Limitador** (`zumo-limit`) | Cada 3 s corta las sesiones SSH que pasan el límite de cada usuario, corta a los vencidos y borra los temporales vencidos. |
 | **PDirect** | WebSocket en el puerto 80 → SSH local. |
 | **BadVPN** | UDPGW en el 7300 (para el tráfico UDP de las apps). |
@@ -41,9 +40,8 @@ entra al mismo `sshd` del puerto 22. No están apilados uno dentro de otro.
 
 La base de usuarios está en `/etc/zumo/usuarios.db`, con el formato
 `usuario:limite:vencimiento`. Las operaciones sobre ese archivo pasan todas por
-`zumo-lib.sh` (panel de terminal) o por el equivalente en `panelweb.py` (panel
-web), que comparten el mismo lock (`/etc/zumo/usuarios.lock`) y escriben de
-forma atómica, para que los dos paneles no se pisen.
+`zumo-lib.sh`, que toma un lock (`/etc/zumo/usuarios.lock`) y escribe de forma
+atómica.
 
 ## Limitador
 
@@ -79,20 +77,20 @@ Ver qué cortó: `journalctl -u zumo-limit -f`. Probar sin cortar nada:
 |---|---|
 | `install.sh` | Instalador principal. |
 | `panel.sh` | Panel de terminal. |
-| `panelweb.py` | Panel web (Flask). |
 | `zumo-lib.sh` | Operaciones compartidas sobre `usuarios.db`. |
 | `zumo-limit.c` | Fuente del limitador (el instalador lo baja y lo compila). |
 | `limit.conf` | Configuración de ejemplo del limitador. |
-| `tests/` | Pruebas del limitador y del panel web (`sudo bash tests/prueba-limitador.sh`, `sudo python3 tests/prueba-panelweb.py`). |
+| `quitar-panelweb.sh` | Quita de una VPS el panel web de versiones anteriores. |
+| `tests/` | Prueba del limitador (`sudo bash tests/prueba-limitador.sh`). |
 | `hcr-install.sh` / `hcr-server` | Instalador y binario de HCR. |
 | `bhttp-server-*` / `bhttp-shim-*` | Binarios de BHTTP por arquitectura. |
 | `main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
 | `diagnostico.sh` | Chequeos de estado. |
 
-## Nota de seguridad
+## Quitar el panel web de una VPS
 
-El panel web es **HTTP sin cifrar**. Al configurarlo desde el panel podés elegir
-que escuche solo en `127.0.0.1` y entrar por túnel SSH
-(`ssh -L 9090:127.0.0.1:9090 root@IP`). Si lo exponés a internet, usalo en una red
-de confianza o detrás de una VPN. El login tiene un límite de
-intentos por IP para frenar fuerza bruta, pero eso no reemplaza al cifrado.
+Las versiones anteriores traían un panel web opcional. Si lo tenías instalado:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/quitar-panelweb.sh | bash
+```

@@ -4,9 +4,8 @@
 # Formato del DB (una línea por usuario):   usuario:limite:vencimiento
 #
 # Esta librería es la ÚNICA fuente de verdad para tocar ese archivo desde la
-# terminal. panel.sh la hace 'source'. panelweb.py usa el MISMO archivo, el
-# mismo lock (/etc/zumo/usuarios.lock) y el mismo formato, así que el panel de
-# la terminal y el panel web nunca se pisan entre sí ni dejan el DB corrupto.
+# terminal. panel.sh la hace 'source'. Todas las escrituras toman el lock
+# (/etc/zumo/usuarios.lock), así que nunca se pisan entre sí ni dejan el DB corrupto.
 #
 # Todas las escrituras son atómicas (archivo temporal + mv) y bajo flock.
 
