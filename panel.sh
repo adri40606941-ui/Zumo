@@ -1011,9 +1011,11 @@ awk -v b="$1" 'BEGIN{ if (b>=1073741824) printf "%.2f GB", b/1073741824; else pr
 }
 
 uso_datos() {
-banner; echo -e " \e[1;38;5;141mUSO DE DATOS${N}\n"
-local DATOS="${ZUMO_DATOS:-/etc/zumo/datos.db}" u b total=0 n=0
+local DATOS="${ZUMO_DATOS:-/etc/zumo/datos.db}" u b total n rc
 if [ ! -s "$DB" ]; then msg_err "No hay usuarios registrados"; pausa; return; fi
+while true; do
+total=0; n=0
+banner; echo -e " \e[1;38;5;141mUSO DE DATOS${N}\n"
 if ! systemctl is-active --quiet zumo-datos 2>/dev/null; then
 echo -e " \e[1;31m● El contador no está activo (actualizá con actualizar.sh)${N}\n"
 fi
@@ -1028,7 +1030,10 @@ printf " \e[1;32m%-18s${N} \e[1;38;5;51m%s${N}\n" "$(etiqueta_de "$u")" "$(_fmt_
 done < "$DB"
 echo; echo -e " $L"
 echo -e " \e[1;38;5;214mTotal ($n usuarios): \e[1;38;5;51m$(_fmt_bytes "$total")${N}"
-pausa
+echo -e "\n Enter para volver..."
+read -rsn1 -t 2; rc=$?
+[ "$rc" -gt 128 ] || break
+done
 }
 
 menu_herramientas() {
