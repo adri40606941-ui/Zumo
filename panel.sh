@@ -144,8 +144,10 @@ crear_usuario() {
 banner; echo -e " \e[1;38;5;141mCREAR USUARIO${N}\n"
 op 1 "●" "Normal"
 op 2 "🔑" "HWID"
+op 0 "◂" "Volver"
 echo; read -rp " Modo [1]: " modo; modo=${modo:-1}
 case "$modo" in
+0) return ;;
 1|2) ;;
 *) msg_err "Opción inválida"; sleep 1; return ;;
 esac
@@ -236,8 +238,10 @@ crear_temporal() {
 banner; echo -e " \e[1;38;5;141mUSUARIO TEMPORAL${N}\n"
 op 1 "●" "Común"
 op 2 "🔑" "HWID"
+op 0 "◂" "Volver"
 echo; read -rp " Modo [1]: " modo; modo=${modo:-1}
 case "$modo" in
+0) return ;;
 1|2) ;;
 *) msg_err "Opción inválida"; sleep 1; return ;;
 esac
