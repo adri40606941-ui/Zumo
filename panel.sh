@@ -353,18 +353,7 @@ BAN=""; COL=""
 read -rp " ¿Personalizar el banner? [s/N]: " pb
 if [[ "$pb" =~ ^[sS]$ ]]; then
 read -rp " Texto del banner [ZUMO]: " BAN; BAN=${BAN:-ZUMO}
-echo; echo -e " \e[1;38;5;141mColor:${N}"
-op 1 "●" "Amarillo"; op 2 "●" "Rojo"; op 3 "●" "Verde"
-op 4 "●" "Celeste"; op 5 "●" "Blanco"; op 6 "●" "Naranja"
-op 7 "●" "Rosa"; op 8 "✎" "Otro (nombre o #hex)"
-read -rp " Color [1]: " cc; cc=${cc:-1}
-case "$cc" in
-1) COL="yellow" ;; 2) COL="red" ;; 3) COL="lime" ;;
-4) COL="cyan" ;; 5) COL="white" ;; 6) COL="orange" ;;
-7) COL="#ff33cc" ;;
-8) read -rp " Color (ej: lime o #00ff88): " COL; COL=$(echo "$COL" | tr -cd 'A-Za-z0-9#') ;;
-*) COL="yellow" ;;
-esac
+COL="yellow"
 fi
 echo -e " \e[1;38;5;141mCompilando e instalando, aguardá...${N}"
 if [ -n "$BAN" ]; then
