@@ -48,6 +48,28 @@ local d=$(( ( $(date -d "$1" +%s) - $(date -d "$(date +%F)" +%s) ) / 86400 ))
 if [ "$d" -lt 0 ]; then echo "vencido"; elif [ "$d" -eq 1 ]; then echo "vence 1 día"; else echo "vence $d días"; fi
 }
 
+# Base de usuarios temporales (username:epoch_de_vencimiento) y mapa de IPs en vivo.
+TEMPDB=/etc/zumo/temporales.db
+ONLINEDB=/run/zumo/online.db
+
+es_temporal() { [ -f "$TEMPDB" ] && grep -q "^$1:" "$TEMPDB"; }
+
+# Minutos restantes de un usuario temporal.
+temp_restante() {
+local ep now
+ep=$(awk -F: -v u="$1" '$1==u{print $2; exit}' "$TEMPDB" 2>/dev/null)
+[ -z "$ep" ] && { echo "?"; return; }
+now=$(date +%s)
+local m=$(( (ep - now + 59) / 60 ))
+if [ "$m" -le 0 ]; then echo "venció"; else echo "${m}m restantes"; fi
+}
+
+# IPs reales conectadas de un usuario (las anota pdirect, las resuelve el limitador).
+ips_de() {
+[ -f "$ONLINEDB" ] || return
+awk -v u="$1" '$1==u{ for(i=2;i<=NF;i++) printf "%s ", $i }' "$ONLINEDB" 2>/dev/null
+}
+
 # Si el usuario fue creado en modo HWID, devuelve el nombre del cliente
 # (guardado en el campo GECOS como "hwid,<cliente>"); si no, el username tal cual.
 etiqueta_de() {
@@ -89,6 +111,10 @@ banner; echo -e " \e[1;38;5;141mCREAR USUARIO${N}\n"
 op 1 "●" "Normal"
 op 2 "🔑" "HWID"
 echo; read -rp " Modo [1]: " modo; modo=${modo:-1}
+case "$modo" in
+1|2) ;;
+*) msg_err "Opción inválida: elegí 1 (Normal) o 2 (HWID)"; sleep 1; return ;;
+esac
 echo
 
 if [ "$modo" = "2" ]; then
@@ -143,12 +169,102 @@ echo -e "   Límite:     \e[1;38;5;214m$lim conexión(es)${N}"
 echo -e " $L"; pausa
 }
 
+programar_borrado_temp() {
+# Agenda el borrado del usuario temporal con systemd-run (preciso al minuto).
+local u="$1" min="$2" ep
+# Garantizar el script de borrado (self-healing para instalaciones actualizadas).
+if [ ! -x /etc/zumo/borrar-temporal.sh ]; then
+cat > /etc/zumo/borrar-temporal.sh <<'BORRARTEMP'
+#!/bin/bash
+u="$1"
+[ -z "$u" ] && exit 0
+[ -f /etc/zumo/zumo-lib.sh ] && source /etc/zumo/zumo-lib.sh
+pkill -9 -u "$u" 2>/dev/null
+userdel "$u" 2>/dev/null
+if command -v zumo_db_del >/dev/null 2>&1; then zumo_db_del "$u"; else sed -i "/^$u:/d" /etc/zumo/usuarios.db 2>/dev/null; fi
+if [ -f /etc/zumo/temporales.db ]; then grep -v "^$u:" /etc/zumo/temporales.db > /etc/zumo/temporales.db.tmp 2>/dev/null && mv /etc/zumo/temporales.db.tmp /etc/zumo/temporales.db; fi
+exit 0
+BORRARTEMP
+chmod +x /etc/zumo/borrar-temporal.sh
+fi
+ep=$(( $(date +%s) + min*60 ))
+mkdir -p /etc/zumo
+grep -v "^$u:" "$TEMPDB" 2>/dev/null > "$TEMPDB.tmp"; mv "$TEMPDB.tmp" "$TEMPDB" 2>/dev/null
+echo "$u:$ep" >> "$TEMPDB"
+systemctl reset-failed "zumo-temp-$u.timer" 2>/dev/null
+systemd-run --quiet --collect --unit="zumo-temp-$u" --on-active="${min}min" \
+--timer-property=AccuracySec=5s /etc/zumo/borrar-temporal.sh "$u" 2>/dev/null
+}
+
+crear_temporal() {
+banner; echo -e " \e[1;38;5;141mUSUARIO TEMPORAL${N}\n"
+op 1 "●" "Común"
+op 2 "🔑" "HWID"
+echo; read -rp " Modo [1]: " modo; modo=${modo:-1}
+case "$modo" in
+1|2) ;;
+*) msg_err "Opción inválida: elegí 1 (Común) o 2 (HWID)"; sleep 1; return ;;
+esac
+echo
+
+if [ "$modo" = "2" ]; then
+read -rp " Nombre del cliente: " etiqueta
+etiqueta=$(zumo_limpiar_etiqueta "$etiqueta")
+read -rp " Minutos de duración: " min
+[[ "$min" =~ ^[0-9]+$ ]] && [ "$min" -ge 1 ] || { msg_err "Minutos inválidos"; pausa; return; }
+# HWID temporal: se genera un ID aleatorio que sirve de usuario y contraseña.
+hwid=$(tr -dc 'A-Z0-9' </dev/urandom | head -c 12)
+id "$hwid" &>/dev/null && { msg_err "Colisión de ID, reintentá"; pausa; return; }
+exp=$(date -d "+2 days" +%F)
+if ! useradd --badname -M -s /bin/false -e "$exp" -c "hwid,$etiqueta" "$hwid" 2>/dev/null; then
+msg_err "No se pudo crear el usuario temporal"; pausa; return
+fi
+echo "$hwid:$hwid" | chpasswd
+zumo_db_add "$hwid" 1 "$exp"
+programar_borrado_temp "$hwid" "$min"
+echo; echo -e " $L"
+msg_ok "Usuario HWID temporal creado"
+echo -e "   Cliente:                      \e[1;38;5;214m$etiqueta${N}"
+echo -e "   HWID (usuario y contraseña):  \e[1;38;5;214m$hwid${N}"
+echo -e "   Duración:                     \e[1;38;5;214m$min minuto(s)${N}"
+echo -e "   Límite:                       \e[1;38;5;214m1 conexión${N}"
+echo -e " $L"
+echo -e " \e[2mEl cliente carga ese ID como usuario Y contraseña. Se borra solo a los $min min.${N}"
+pausa
+return
+fi
+
+read -rp " Usuario: " u
+[[ "$u" =~ ^[a-z_][a-z0-9_-]*$ ]] || { msg_err "Nombre inválido"; pausa; return; }
+id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
+read -rp " Contraseña: " p
+zumo_password_valido "$p" || { msg_err "Contraseña inválida"; pausa; return; }
+read -rp " Minutos de duración: " min
+[[ "$min" =~ ^[0-9]+$ ]] && [ "$min" -ge 1 ] || { msg_err "Minutos inválidos"; pausa; return; }
+read -rp " Conexiones permitidas [1]: " lim; lim=${lim:-1}
+[[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido"; pausa; return; }
+exp=$(date -d "+2 days" +%F)
+useradd -M -s /bin/false -e "$exp" "$u" && echo "$u:$p" | chpasswd
+zumo_db_add "$u" "$lim" "$exp"
+programar_borrado_temp "$u" "$min"
+echo; echo -e " $L"
+msg_ok "Usuario temporal creado"
+echo -e "   Usuario:    \e[1;38;5;214m$u${N}"
+echo -e "   Contraseña: \e[1;38;5;214m$p${N}"
+echo -e "   Duración:   \e[1;38;5;214m$min minuto(s)${N}"
+echo -e "   Límite:     \e[1;38;5;214m$lim conexión(es)${N}"
+echo -e " $L"
+echo -e " \e[2mSe borra solo a los $min minutos.${N}"; pausa
+}
+
 eliminar_usuario() {
 banner; echo -e " \e[1;38;5;141mELIMINAR USUARIO${N}\n"
 elegir_usuario || { pausa; return; }
 pkill -9 -u "$SEL" 2>/dev/null
 userdel "$SEL" 2>/dev/null
 zumo_db_del "$SEL"
+systemctl stop "zumo-temp-$SEL.timer" 2>/dev/null
+grep -v "^$SEL:" "$TEMPDB" 2>/dev/null > "$TEMPDB.tmp" && mv "$TEMPDB.tmp" "$TEMPDB" 2>/dev/null
 msg_ok "Usuario $SEL eliminado"; pausa
 }
 
@@ -262,7 +378,9 @@ es_hwid "$u" && continue
 hay_comun=1
 on=$(en_linea "$u")
 if [ "$on" -gt 0 ]; then est_txt="● online ($on)"; est_col="\e[1;32m"; else est_txt="○ offline"; est_col="\e[2m"; fi
-printf " %-18s ${est_col}%-14s${N} %-8s %s\n" "$u" "$est_txt" "$lim" "$(dias "$exp")"
+if es_temporal "$u"; then venc="⏳ $(temp_restante "$u")"; else venc="$(dias "$exp")"; fi
+printf " %-18s ${est_col}%-14s${N} %-8s %s\n" "$u" "$est_txt" "$lim" "$venc"
+ips=$(ips_de "$u"); [ -n "$ips" ] && echo -e "    \e[2mIP:\e[0m \e[1;38;5;214m${ips% }${N}"
 done < "$DB"
 [ "$hay_comun" -eq 0 ] && echo -e " \e[2m(sin usuarios comunes)${N}"
 
@@ -275,8 +393,10 @@ es_hwid "$u" || continue
 hay_hwid=1
 on=$(en_linea "$u")
 if [ "$on" -gt 0 ]; then est_txt="● online ($on)"; est_col="\e[1;32m"; else est_txt="○ offline"; est_col="\e[2m"; fi
-printf " %-18s ${est_col}%-14s${N} %-8s %s\n" "$(etiqueta_de "$u")" "$est_txt" "$lim" "$(dias "$exp")"
+if es_temporal "$u"; then venc="⏳ $(temp_restante "$u")"; else venc="$(dias "$exp")"; fi
+printf " %-18s ${est_col}%-14s${N} %-8s %s\n" "$(etiqueta_de "$u")" "$est_txt" "$lim" "$venc"
 echo -e "    \e[2mHWID:\e[0m \e[1;38;5;214m$u${N}"
+ips=$(ips_de "$u"); [ -n "$ips" ] && echo -e "    \e[2mIP:\e[0m \e[1;38;5;214m${ips% }${N}"
 done < "$DB"
 [ "$hay_hwid" -eq 0 ] && echo -e " \e[2m(sin usuarios HWID)${N}"
 
@@ -293,6 +413,7 @@ op 2 "✖" "Eliminar usuario"
 op 3 "✎" "Editar usuario"
 op 4 "▤" "Ver usuarios (en vivo)"
 op 5 "⚠" "Usuarios vencidos"
+op 6 "⏳" "Usuario temporal"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -301,6 +422,7 @@ case $o in
 3) editar_usuario ;;
 4) listar_usuarios ;;
 5) vencidos ;;
+6) crear_temporal ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac

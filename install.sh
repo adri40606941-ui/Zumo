@@ -16,6 +16,28 @@ mkdir -p /etc/zumo
 touch /etc/zumo/usuarios.db
 grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
 
+# Borrador de usuarios temporales (lo agenda el panel con systemd-run).
+cat > /etc/zumo/borrar-temporal.sh <<'BORRARTEMP'
+#!/bin/bash
+# Borra un usuario temporal: lo saca del sistema, de la base y del registro temporal.
+u="$1"
+[ -z "$u" ] && exit 0
+[ -f /etc/zumo/zumo-lib.sh ] && source /etc/zumo/zumo-lib.sh
+pkill -9 -u "$u" 2>/dev/null
+userdel "$u" 2>/dev/null
+if command -v zumo_db_del >/dev/null 2>&1; then
+zumo_db_del "$u"
+else
+sed -i "/^$u:/d" /etc/zumo/usuarios.db 2>/dev/null
+fi
+if [ -f /etc/zumo/temporales.db ]; then
+grep -v "^$u:" /etc/zumo/temporales.db > /etc/zumo/temporales.db.tmp 2>/dev/null && mv /etc/zumo/temporales.db.tmp /etc/zumo/temporales.db
+fi
+exit 0
+BORRARTEMP
+chmod +x /etc/zumo/borrar-temporal.sh
+touch /etc/zumo/temporales.db
+
 # Para que sshd note rápido cuando un cliente se cae (red cambiada, app cerrada
 # de golpe) y no quede marcado "online" en el panel durante minutos, y para que
 # acepte algoritmos SSH viejos que usan apps de Android (HTTP Custom/Injector).
@@ -837,6 +859,7 @@ cat > "$LIMWORK/zumo-limit.c" <<'ZUMO_LIMIT_C'
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -1039,6 +1062,7 @@ static int scan_sshd(ConnRec *conns, Sock22 *socks, int nsocks,
 }
 
 int main(void) {
+    mkdir("/run/zumo", 0755);
     for (;;) {
         UserLim users[MAX_USERS];
         int nusers = load_users(users);
@@ -1080,6 +1104,31 @@ int main(void) {
                     for (int j = 0; j < nconns; j++)
                         if (conns[j].uid == uid && strcmp(conns[j].ip, ips[p]) == 0)
                             kill(conns[j].pid, SIGKILL);
+                }
+            }
+
+            /* Exportar "usuario -> IPs reales conectadas" para que el panel las
+             * muestre. Se escribe de forma atómica en /run/zumo/online.db. */
+            {
+                FILE *of = fopen("/run/zumo/online.db.tmp", "w");
+                if (of) {
+                    for (int i = 0; i < nusers; i++) {
+                        char seen[256][46]; int ns = 0;
+                        for (int j = 0; j < nconns && ns < 256; j++) {
+                            if (conns[j].uid != users[i].uid) continue;
+                            if (strcmp(conns[j].ip, "127.0.0.1") == 0) continue; /* sin resolver */
+                            int dup = 0;
+                            for (int s = 0; s < ns; s++) if (!strcmp(seen[s], conns[j].ip)) { dup = 1; break; }
+                            if (dup) continue;
+                            strncpy(seen[ns], conns[j].ip, 45); seen[ns][45] = '\0'; ns++;
+                        }
+                        if (ns == 0) continue;
+                        fprintf(of, "%s", users[i].name);
+                        for (int s = 0; s < ns; s++) fprintf(of, " %s", seen[s]);
+                        fputc('\n', of);
+                    }
+                    fclose(of);
+                    rename("/run/zumo/online.db.tmp", "/run/zumo/online.db");
                 }
             }
         }
