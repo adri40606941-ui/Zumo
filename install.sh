@@ -121,7 +121,21 @@ struct bufferevent *upstream;
 int relaying;
 int closing;
 int closed;
+int await_split; /* 1 = vimos X-Split y esperamos el segmento partido */
 } Conn;
+
+static void read_cb(struct bufferevent *bev, void *arg);
+void upstream_event_cb(struct bufferevent *bev, short events, void *arg);
+static void start_upstream(Conn *c);
+
+/* Busca (sin distinguir mayúsculas) si una cabecera está presente. */
+static int header_present(const char *h, const char *name)
+{
+size_t nl = strlen(name);
+for (const char *p = h; *p; p++)
+if (strncasecmp(p, name, nl) == 0) return 1;
+return 0;
+}
 
 static void close_conn(Conn *c)
 {
@@ -171,6 +185,25 @@ line = strtok_r(NULL, "\r\n", &save);
 return 1;
 }
 
+/* Abre la conexión al SSH local y empieza el relay (igual que antes). */
+static void start_upstream(Conn *c)
+{
+bufferevent_disable(c->client, EV_READ);
+struct event_base *base = bufferevent_get_base(c->client);
+c->upstream = bufferevent_socket_new(
+base, -1, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
+if (!c->upstream) { close_conn(c); return; }
+bufferevent_setcb(c->upstream, read_cb, NULL, upstream_event_cb, c);
+struct timeval tv = {60, 0};
+bufferevent_set_timeouts(c->upstream, &tv, NULL);
+bufferevent_setwatermark(c->upstream, EV_READ, 0, 262144);
+bufferevent_enable(c->upstream, EV_READ | EV_WRITE);
+if (bufferevent_socket_connect_hostname(
+c->upstream, NULL, AF_INET, SSH_HOST, ssh_port) < 0) {
+close_conn(c);
+}
+}
+
 static void read_cb(struct bufferevent *bev, void *arg)
 {
 Conn *c = arg;
@@ -183,6 +216,16 @@ if (dst)
 evbuffer_add_buffer(bufferevent_get_output(dst), in);
 return;
 }
+/* Esperando el segmento "partido" del payload (modo X-Split de las apps):
+ * se descarta y recién ahí se conecta al backend. */
+if (c->await_split) {
+size_t sn = evbuffer_get_length(in);
+if (sn == 0) return;
+evbuffer_drain(in, sn);
+c->await_split = 0;
+start_upstream(c);
+return;
+}
 size_t n = evbuffer_get_length(in);
 if (n >= MAX_HEADER) {
 reject_conn(c,
@@ -192,36 +235,39 @@ return;
 }
 unsigned char *data = evbuffer_pullup(in, -1);
 if (!data) return;
-if (!memmem(data, n, "\r\n\r\n", 4))
-return;
-char *headers = malloc(n + 1);
+unsigned char *eoh = memmem(data, n, "\r\n\r\n", 4);
+if (!eoh) return;
+size_t hlen = (size_t)(eoh - data) + 4;
+char *headers = malloc(hlen + 1);
 if (!headers) { close_conn(c); return; }
-memcpy(headers, data, n);
-headers[n] = '\0';
+memcpy(headers, data, hlen);
+headers[hlen] = '\0';
+int split = header_present(headers, "X-Split");
 int allowed = valid_host(headers);
 free(headers);
-evbuffer_drain(in, n);
 if (!allowed) {
+evbuffer_drain(in, n);
 reject_conn(c,
 "HTTP/1.1 403 Forbidden\r\n"
 "Connection: close\r\n\r\n");
 return;
 }
-bufferevent_disable(c->client, EV_READ);
-struct event_base *base = bufferevent_get_base(c->client);
-c->upstream = bufferevent_socket_new(
-base, -1, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
-if (!c->upstream) { close_conn(c); return; }
-extern void upstream_event_cb(struct bufferevent *, short, void *);
-bufferevent_setcb(c->upstream, read_cb, NULL, upstream_event_cb, c);
-struct timeval tv = {60, 0};
-bufferevent_set_timeouts(c->upstream, &tv, NULL);
-bufferevent_setwatermark(c->upstream, EV_READ, 0, 262144);
-bufferevent_enable(c->upstream, EV_READ | EV_WRITE);
-if (bufferevent_socket_connect_hostname(
-c->upstream, NULL, AF_INET, SSH_HOST, ssh_port) < 0) {
-close_conn(c);
+if (split) {
+/* Consumir solo las cabeceras; el segmento partido se descarta ya
+ * (si vino pegado) o en el próximo read (await_split). */
+evbuffer_drain(in, hlen);
+size_t rest = evbuffer_get_length(in);
+if (rest > 0) {
+evbuffer_drain(in, rest);
+start_upstream(c);
+} else {
+c->await_split = 1;
 }
+return;
+}
+/* Sin X-Split: comportamiento de siempre (se descarta todo y se conecta). */
+evbuffer_drain(in, n);
+start_upstream(c);
 }
 
 static void write_cb(struct bufferevent *bev, void *arg)
