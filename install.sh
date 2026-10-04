@@ -17,15 +17,39 @@ touch /etc/zumo/usuarios.db
 grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
 
 # Para que sshd note rápido cuando un cliente se cae (red cambiada, app cerrada de golpe)
-# y no quede marcado "online" en el panel durante varios minutos.
+# y no quede marcado "online" en el panel durante varios minutos, y para
+# que acepte algoritmos SSH viejos que todavía usan apps de Android como
+# HTTP Custom / HTTP Injector (si no, dan "Cannot negotiate, proposals
+# do not match" con Debian 12). Se valida con sshd -t antes de aplicar:
+# si algo no es compatible con esta versión de OpenSSH, no se toca nada.
 if [ -f /etc/ssh/sshd_config ]; then
-sed -i '/^ClientAliveInterval/d; /^ClientAliveCountMax/d; /^TCPKeepAlive/d' /etc/ssh/sshd_config
-cat >> /etc/ssh/sshd_config <<'EOF'
+_sshd_tmp=$(mktemp)
+cp /etc/ssh/sshd_config "$_sshd_tmp"
+sed -i '/^ClientAliveInterval/d; /^ClientAliveCountMax/d; /^TCPKeepAlive/d; /^KexAlgorithms/d; /^Ciphers/d; /^MACs/d; /^HostKeyAlgorithms/d; /^PubkeyAcceptedAlgorithms/d' "$_sshd_tmp"
+cat >> "$_sshd_tmp" <<'EOF'
 ClientAliveInterval 15
 ClientAliveCountMax 3
 TCPKeepAlive yes
+
+# Muchas apps de Android (HTTP Custom, HTTP Injector, etc.) usan
+# librerías SSH viejas que no entienden los algoritmos "modernos" que
+# trae Debian por defecto, y la conexión muere con "Cannot negotiate,
+# proposals do not match". Esto agrega soporte para los viejos sin
+# sacar los nuevos.
+KexAlgorithms +diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,diffie-hellman-group-exchange-sha1
+Ciphers +aes128-cbc,3des-cbc,aes256-cbc
+MACs +hmac-md5,hmac-sha1
+HostKeyAlgorithms +ssh-rsa
+PubkeyAcceptedAlgorithms +ssh-rsa
 EOF
+if sshd -t -f "$_sshd_tmp" 2>/tmp/zumo-sshd-check.log; then
+cp "$_sshd_tmp" /etc/ssh/sshd_config
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+else
+echo -e " \e[1;31m✘ No se pudo activar la compatibilidad SSH vieja (tu versión de OpenSSH rechazó algún algoritmo), se dejó la config como estaba:\e[0m"
+sed 's/^/   /' /tmp/zumo-sshd-check.log
+fi
+rm -f "$_sshd_tmp"
 fi
 echo -e " \e[1;32m✔ listo\e[0m"
 
