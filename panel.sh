@@ -841,6 +841,71 @@ esac
 done
 }
 
+# Test de velocidad con curl contra el servidor de Cloudflare (no instala nada).
+# Usa hasta ~200 MB de bajada y ~25 MB de subida. ZUMO_SPEED_URL solo se usa en pruebas.
+test_velocidad() {
+local base="${ZUMO_SPEED_URL:-https://speed.cloudflare.com}" lat dl ul
+banner; echo -e " \e[1;38;5;141mTEST DE VELOCIDAD${N}\n"
+command -v curl >/dev/null 2>&1 || { msg_err "Falta curl"; pausa; return; }
+echo -e " \e[2mUsa hasta 200 MB de bajada y 25 MB de subida.${N}\n"
+echo " Midiendo latencia..."
+lat=$(curl -s -o /dev/null -w '%{time_connect}' --max-time 10 "$base/__down?bytes=0" 2>/dev/null)
+echo " Midiendo bajada..."
+dl=$(curl -s -o /dev/null -w '%{speed_download}' --max-time 15 "$base/__down?bytes=200000000" 2>/dev/null)
+echo " Midiendo subida..."
+ul=$(head -c 25000000 /dev/zero | curl -s -o /dev/null -w '%{speed_upload}' --max-time 15 -X POST \
+-H 'Content-Type: application/octet-stream' --data-binary @- "$base/__up" 2>/dev/null)
+echo
+local lat_ms dl_m ul_m
+lat_ms=$(LC_ALL=C awk -v t="${lat:-0}" 'BEGIN{printf "%.0f", t*1000}')
+dl_m=$(LC_ALL=C awk -v b="${dl:-0}" 'BEGIN{printf "%.1f", b*8/1000000}')
+ul_m=$(LC_ALL=C awk -v b="${ul:-0}" 'BEGIN{printf "%.1f", b*8/1000000}')
+if [ "$dl_m" = "0.0" ] && [ "$ul_m" = "0.0" ]; then
+msg_err "No se pudo medir (¿sin internet o bloqueado?)"
+else
+echo -e " \e[1;38;5;208mLatencia:\e[0m \e[1;32m${lat_ms} ms\e[0m"
+echo -e " \e[1;38;5;208mBajada:\e[0m   \e[1;32m${dl_m} Mbps\e[0m"
+echo -e " \e[1;38;5;208mSubida:\e[0m   \e[1;32m${ul_m} Mbps\e[0m"
+fi
+pausa
+}
+
+# Vacía la caché de memoria y limpia logs y paquetes viejos. La RAM que usan los
+# programas no se toca: eso depende de qué esté corriendo (ver "Procesos").
+liberar_ram() {
+banner; echo -e " \e[1;38;5;141mLIBERAR RAM Y LIMPIAR${N}\n"
+local libre0 libre1 cache0 cache1 disco0 disco1 lib
+libre0=$(free -m | awk '/^Mem:/{print $4}')
+cache0=$(free -m | awk '/^Mem:/{print $6}')
+disco0=$(df -Pm / | awk 'NR==2{print $4}')
+sync
+if ! { echo 3 > /proc/sys/vm/drop_caches; } 2>/dev/null; then
+msg_err "Este servidor no permite vaciar la caché"
+fi
+journalctl --vacuum-size=50M >/dev/null 2>&1
+apt-get clean >/dev/null 2>&1
+find /var/log -type f \( -name '*.gz' -o -name '*.[0-9]' \) -delete 2>/dev/null
+libre1=$(free -m | awk '/^Mem:/{print $4}')
+cache1=$(free -m | awk '/^Mem:/{print $6}')
+disco1=$(df -Pm / | awk 'NR==2{print $4}')
+lib=$(( cache0 - cache1 )); [ "$lib" -lt 0 ] && lib=0
+echo -e " \e[1;38;5;208mRAM libre:\e[0m      ${libre0} → \e[1;32m${libre1} MB\e[0m"
+echo -e " \e[1;38;5;208mCaché liberada:\e[0m \e[1;32m${lib} MB\e[0m"
+echo -e " \e[1;38;5;208mDisco libre:\e[0m    ${disco0} → \e[1;32m${disco1} MB\e[0m"
+echo -e "\n \e[2mLimpia caché, logs viejos y paquetes. La RAM de los programas no se toca.${N}"
+pausa
+}
+
+# Los 5 procesos que más RAM y más CPU usan en este momento.
+procesos_top() {
+banner; echo -e " \e[1;38;5;141mPROCESOS QUE MÁS CONSUMEN${N}\n"
+echo -e " \e[1;38;5;208mMás RAM:${N}"
+ps -eo pid,comm,%mem,%cpu --sort=-%mem 2>/dev/null | head -n 6 | sed 's/^/ /'
+echo; echo -e " \e[1;38;5;208mMás CPU:${N}"
+ps -eo pid,comm,%cpu,%mem --sort=-%cpu 2>/dev/null | head -n 6 | sed 's/^/ /'
+pausa
+}
+
 menu_herramientas() {
 while true; do
 banner; echo -e " \e[1;38;5;141mHERRAMIENTAS${N}\n"
@@ -850,10 +915,16 @@ else
 echo -e " \e[1;31m● BBR: inactivo${N}\n"
 fi
 op 1 "⚡" "BBR"
+op 2 "🚀" "Test de velocidad"
+op 3 "🧹" "Liberar RAM y limpiar"
+op 4 "📊" "Procesos que más consumen"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) menu_bbr ;;
+2) test_velocidad ;;
+3) liberar_ram ;;
+4) procesos_top ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
