@@ -48,9 +48,8 @@ local d=$(( ( $(date -d "$1" +%s) - $(date -d "$(date +%F)" +%s) ) / 86400 ))
 if [ "$d" -lt 0 ]; then echo "vencido"; elif [ "$d" -eq 1 ]; then echo "vence 1 día"; else echo "vence $d días"; fi
 }
 
-# Base de usuarios temporales (username:epoch_de_vencimiento) y mapa de IPs en vivo.
+# Base de usuarios temporales (username:epoch_de_vencimiento).
 TEMPDB=/etc/zumo/temporales.db
-ONLINEDB=/run/zumo/online.db
 
 es_temporal() { [ -f "$TEMPDB" ] && grep -q "^$1:" "$TEMPDB"; }
 
@@ -64,10 +63,16 @@ local m=$(( (ep - now + 59) / 60 ))
 if [ "$m" -le 0 ]; then echo "venció"; else echo "${m}m restantes"; fi
 }
 
-# IPs reales conectadas de un usuario (las anota pdirect, las resuelve el limitador).
-ips_de() {
-[ -f "$ONLINEDB" ] || return
-awk -v u="$1" '$1==u{ for(i=2;i<=NF;i++) printf "%s ", $i }' "$ONLINEDB" 2>/dev/null
+# Hace cuánto está conectado un usuario: toma la sesión sshd más vieja (mayor
+# tiempo transcurrido) y lo formatea en días/horas/minutos.
+tiempo_conectado() {
+local s
+s=$(ps -u "$1" -o etimes=,comm= 2>/dev/null | awk '$2=="sshd"{if($1>m)m=$1} END{print m+0}')
+[ -z "$s" ] || [ "$s" -le 0 ] && { echo ""; return; }
+local d=$(( s/86400 )) h=$(( (s%86400)/3600 )) m=$(( (s%3600)/60 ))
+if [ "$d" -gt 0 ]; then echo "${d}d ${h}h"
+elif [ "$h" -gt 0 ]; then echo "${h}h ${m}m"
+else echo "${m}m"; fi
 }
 
 # Si el usuario fue creado en modo HWID, devuelve el nombre del cliente
@@ -411,7 +416,7 @@ on=$(en_linea "$u")
 if [ "$on" -gt 0 ]; then est_txt="● online ($on)"; est_col="\e[1;32m"; else est_txt="○ offline"; est_col="\e[2m"; fi
 if es_temporal "$u"; then venc="⏳ $(temp_restante "$u")"; else venc="$(dias "$exp")"; fi
 printf " %-18s ${est_col}%-14s${N} %-8s %s\n" "$u" "$est_txt" "$lim" "$venc"
-ips=$(ips_de "$u"); [ -n "$ips" ] && echo -e "    \e[2mIP:\e[0m \e[1;38;5;214m${ips% }${N}"
+if [ "$on" -gt 0 ]; then tc=$(tiempo_conectado "$u"); [ -n "$tc" ] && echo -e "    \e[2mconectado hace\e[0m \e[1;38;5;214m$tc${N}"; fi
 done < "$DB"
 [ "$hay_comun" -eq 0 ] && echo -e " \e[2m(sin usuarios comunes)${N}"
 
@@ -427,7 +432,7 @@ if [ "$on" -gt 0 ]; then est_txt="● online ($on)"; est_col="\e[1;32m"; else es
 if es_temporal "$u"; then venc="⏳ $(temp_restante "$u")"; else venc="$(dias "$exp")"; fi
 printf " %-18s ${est_col}%-14s${N} %-8s %s\n" "$(etiqueta_de "$u")" "$est_txt" "$lim" "$venc"
 echo -e "    \e[2mHWID:\e[0m \e[1;38;5;214m$u${N}"
-ips=$(ips_de "$u"); [ -n "$ips" ] && echo -e "    \e[2mIP:\e[0m \e[1;38;5;214m${ips% }${N}"
+if [ "$on" -gt 0 ]; then tc=$(tiempo_conectado "$u"); [ -n "$tc" ] && echo -e "    \e[2mconectado hace\e[0m \e[1;38;5;214m$tc${N}"; fi
 done < "$DB"
 [ "$hay_hwid" -eq 0 ] && echo -e " \e[2m(sin usuarios HWID)${N}"
 
