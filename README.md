@@ -24,7 +24,7 @@ zumo
 |---|---|
 | **Panel** (`zumo`) | Crear/editar/borrar usuarios, ver quién está conectado, prender y apagar protocolos. |
 | **Panel web** | Lo mismo desde el navegador (opcional, se configura desde el panel). |
-| **Limitador** (`zumo-limit`) | Mata las conexiones SSH que exceden el límite por usuario. |
+| **Limitador** (`zumo-limit`) | Cada 3 s corta las sesiones SSH que pasan el límite de cada usuario, corta a los vencidos y borra los temporales vencidos. |
 | **PDirect** | WebSocket en el puerto 80 → SSH local. |
 | **BadVPN** | UDPGW en el 7300 (para el tráfico UDP de las apps). |
 | **BHTTP** | Transporte BHTTP → SSH local (servidor + adaptador para DTunnel). |
@@ -45,6 +45,30 @@ La base de usuarios está en `/etc/zumo/usuarios.db`, con el formato
 web), que comparten el mismo lock (`/etc/zumo/usuarios.lock`) y escriben de
 forma atómica, para que los dos paneles no se pisen.
 
+## Limitador
+
+El límite de cada usuario (`usuarios.db`, segundo campo) es la cantidad de
+**sesiones SSH simultáneas**. Con límite 1, si el mismo usuario abre una segunda
+conexión, el limitador la corta en la siguiente revisión (como mucho 3 s) y la
+primera sigue conectada. Cuenta igual por PDirect, BHTTP, HCR o conexión directa,
+y por IPv4 o IPv6.
+
+Se ajusta en `/etc/zumo/limit.conf` (se relee solo, sin reiniciar):
+
+| Clave | Por defecto | Qué hace |
+|---|---|---|
+| `INTERVAL` | `3` | Segundos entre revisiones. |
+| `GRACE` | `0` | Segundos que una sesión de más puede vivir antes de cortarla. |
+| `KICK` | `newest` | `newest` corta la sesión nueva; `oldest` corta la vieja. |
+| `TEMP_CLEANUP` | `1` | Borra los usuarios temporales vencidos. |
+
+Si un cliente cambia de red y reconecta, su sesión vieja tarda hasta ~30 s en
+darse por caída y la nueva cuenta como "segunda". Si te pasa seguido, subí
+`GRACE` (por ejemplo 20) o usá `KICK=oldest`.
+
+Ver qué cortó: `journalctl -u zumo-limit -f`. Probar sin cortar nada:
+`zumo-limit --once --dry-run`.
+
 ## Archivos del repo
 
 | Archivo | Descripción |
@@ -53,6 +77,9 @@ forma atómica, para que los dos paneles no se pisen.
 | `panel.sh` | Panel de terminal. |
 | `panelweb.py` | Panel web (Flask). |
 | `zumo-lib.sh` | Operaciones compartidas sobre `usuarios.db`. |
+| `zumo-limit.c` | Fuente del limitador (el instalador lo baja y lo compila). |
+| `limit.conf` | Configuración de ejemplo del limitador. |
+| `tests/` | Pruebas del limitador y del panel web (`sudo bash tests/prueba-limitador.sh`, `sudo python3 tests/prueba-panelweb.py`). |
 | `hcr-install.sh` / `hcr-server` | Instalador y binario de HCR. |
 | `bhttp-server-*` / `bhttp-shim-*` | Binarios de BHTTP por arquitectura. |
 | `main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
@@ -60,6 +87,8 @@ forma atómica, para que los dos paneles no se pisen.
 
 ## Nota de seguridad
 
-El panel web es **HTTP sin cifrar**. Usalo en una red de confianza o detrás de
-una VPN / túnel SSH si lo exponés a internet. El login tiene un límite de
+El panel web es **HTTP sin cifrar**. Al configurarlo desde el panel podés elegir
+que escuche solo en `127.0.0.1` y entrar por túnel SSH
+(`ssh -L 9090:127.0.0.1:9090 root@IP`). Si lo exponés a internet, usalo en una red
+de confianza o detrás de una VPN. El login tiene un límite de
 intentos por IP para frenar fuerza bruta, pero eso no reemplaza al cifrado.

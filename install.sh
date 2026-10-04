@@ -845,302 +845,12 @@ echo -e " \e[1;32m✔ listo\e[0m"
 echo -e "\e[1;33m[6/9]\e[0m Compilando limitador de conexiones..."
 
 LIMWORK=$(mktemp -d)
-cat > "$LIMWORK/zumo-limit.c" <<'ZUMO_LIMIT_C'
-/* zumo-limit: limitador por IP real del cliente.
- *
- * El límite de cada usuario (usuarios.db) significa "dispositivos/IPs reales
- * simultáneas". Como las conexiones por pdirect llegan a sshd desde 127.0.0.1,
- * pdirect deja la IP real anotada en /run/zumo/pmap/<puerto>, y acá la
- * recuperamos por el puerto que sshd ve como peer.
- *
- * Margen de gracia: una IP nueva no se corta hasta llevar GRACE segundos
- * presente, para tolerar los cambios de red/IP de las redes móviles. */
-#define _GNU_SOURCE
-#include <dirent.h>
-#include <pwd.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <time.h>
-#include <unistd.h>
-
-#define DB_PATH "/etc/zumo/usuarios.db"
-#define PMAP_DIR "/run/zumo/pmap"
-#define MAX_USERS 4096
-#define MAX_PROCS 16384
-#define MAX_SOCK22 16384
-#define MAX_IPSTATE 16384
-#define GRACE 45          /* segundos de gracia para una IP nueva */
-#define SCAN_INTERVAL 3
-
-typedef struct { char name[64]; int limit; uid_t uid; } UserLim;
-
-/* socket aceptado por sshd: local_port==22, con su peer (ip:puerto) */
-typedef struct { unsigned long inode; char rem_ip[16]; int rem_port; } Sock22;
-
-/* una conexión de un usuario, ya resuelta a IP real */
-typedef struct { uid_t uid; pid_t pid; char ip[46]; } ConnRec;
-
-/* estado persistente por (uid, ip) para el margen de gracia */
-typedef struct { uid_t uid; char ip[46]; time_t first_seen; int seen; } IpState;
-
-static IpState ipstate[MAX_IPSTATE];
-static int nipstate = 0;
-
-static int load_users(UserLim *users) {
-    FILE *f = fopen(DB_PATH, "r");
-    if (!f) return 0;
-    char line[256];
-    int n = 0;
-    while (fgets(line, sizeof(line), f) && n < MAX_USERS) {
-        char *c1 = strchr(line, ':');
-        if (!c1) continue;
-        *c1 = 0;
-        char *c2 = strchr(c1 + 1, ':');
-        if (!c2) continue;
-        *c2 = 0;
-        if (line[0] == '\0' || strlen(line) >= sizeof(users[0].name)) continue;
-        int limit = atoi(c1 + 1);
-        if (limit < 1) continue;
-        struct passwd *pw = getpwnam(line);
-        if (!pw) continue;
-        strncpy(users[n].name, line, sizeof(users[n].name) - 1);
-        users[n].name[sizeof(users[n].name) - 1] = '\0';
-        users[n].limit = limit;
-        users[n].uid = pw->pw_uid;
-        n++;
-    }
-    fclose(f);
-    return n;
-}
-
-/* Convierte "0100007F" (hex little-endian de /proc/net/tcp) a "127.0.0.1". */
-static void hex_to_ip(const char *hex, char *out, size_t outsz) {
-    unsigned b[4];
-    if (sscanf(hex, "%2x%2x%2x%2x", &b[0], &b[1], &b[2], &b[3]) == 4)
-        snprintf(out, outsz, "%u.%u.%u.%u", b[3], b[2], b[1], b[0]);
-    else
-        snprintf(out, outsz, "0.0.0.0");
-}
-
-/* Parsea /proc/net/tcp y guarda los sockets ESTABLISHED con local_port==22. */
-static int scan_sock22(Sock22 *socks) {
-    FILE *f = fopen("/proc/net/tcp", "r");
-    if (!f) return 0;
-    char line[512];
-    int n = 0;
-    if (!fgets(line, sizeof(line), f)) { fclose(f); return 0; }  /* cabecera */
-    while (fgets(line, sizeof(line), f) && n < MAX_SOCK22) {
-        char lhex[33], rhex[33], st[8];
-        unsigned lport = 0, rport = 0;
-        unsigned long inode = 0;
-        /* sl local rem st tx:rx tr:when retr uid timeout inode */
-        if (sscanf(line, "%*d: %32[0-9A-Fa-f]:%x %32[0-9A-Fa-f]:%x %7s %*x:%*x %*x:%*x %*x %*d %*d %lu",
-                   lhex, &lport, rhex, &rport, st, &inode) != 6)
-            continue;
-        if (lport != 22) continue;          /* solo el lado sshd */
-        if (strcmp(st, "01") != 0) continue; /* solo ESTABLISHED */
-        socks[n].inode = inode;
-        hex_to_ip(rhex, socks[n].rem_ip, sizeof(socks[n].rem_ip));
-        socks[n].rem_port = (int)rport;
-        n++;
-    }
-    fclose(f);
-    return n;
-}
-
-/* Lee la IP real anotada por pdirect para un puerto interno dado. */
-static int pmap_lookup(int port, char *out, size_t outsz) {
-    char path[64];
-    snprintf(path, sizeof(path), PMAP_DIR "/%d", port);
-    FILE *f = fopen(path, "r");
-    if (!f) return 0;
-    if (!fgets(out, (int)outsz, f)) { fclose(f); return 0; }
-    fclose(f);
-    out[strcspn(out, "\r\n")] = '\0';
-    return out[0] != '\0';
-}
-
-/* Dado un pid de sshd, busca su socket de conexión (inode de local_port 22)
- * entre sus fds y devuelve la IP real del cliente. 1 si resolvió, 0 si no. */
-static int sshd_real_ip(pid_t pid, Sock22 *socks, int nsocks, char *out, size_t outsz) {
-    char dir[64];
-    snprintf(dir, sizeof(dir), "/proc/%d/fd", pid);
-    DIR *d = opendir(dir);
-    if (!d) return 0;
-    struct dirent *de;
-    int found = 0;
-    while ((de = readdir(d)) != NULL && !found) {
-        char link[320], target[128];
-        snprintf(link, sizeof(link), "%s/%s", dir, de->d_name);
-        ssize_t r = readlink(link, target, sizeof(target) - 1);
-        if (r <= 0) continue;
-        target[r] = '\0';
-        if (strncmp(target, "socket:[", 8) != 0) continue;
-        unsigned long inode = strtoul(target + 8, NULL, 10);
-        for (int i = 0; i < nsocks; i++) {
-            if (socks[i].inode != inode) continue;
-            /* es la conexión aceptada por sshd */
-            if (strcmp(socks[i].rem_ip, "127.0.0.1") == 0) {
-                /* túnel: la IP real está en el mapa de pdirect */
-                if (!pmap_lookup(socks[i].rem_port, out, outsz)) {
-                    /* aún no mapeada: lenient, no la contamos como IP aparte */
-                    strncpy(out, "127.0.0.1", outsz - 1); out[outsz-1] = '\0';
-                }
-            } else {
-                /* conexión directa: la IP real la vemos ya en el socket */
-                strncpy(out, socks[i].rem_ip, outsz - 1); out[outsz-1] = '\0';
-            }
-            found = 1;
-            break;
-        }
-    }
-    closedir(d);
-    return found;
-}
-
-/* Marca (uid,ip) como visto; si es nuevo registra first_seen. Devuelve first_seen. */
-static time_t ipstate_touch(uid_t uid, const char *ip, time_t now) {
-    for (int i = 0; i < nipstate; i++)
-        if (ipstate[i].uid == uid && strcmp(ipstate[i].ip, ip) == 0) {
-            ipstate[i].seen = 1;
-            return ipstate[i].first_seen;
-        }
-    if (nipstate < MAX_IPSTATE) {
-        ipstate[nipstate].uid = uid;
-        strncpy(ipstate[nipstate].ip, ip, sizeof(ipstate[0].ip) - 1);
-        ipstate[nipstate].ip[sizeof(ipstate[0].ip) - 1] = '\0';
-        ipstate[nipstate].first_seen = now;
-        ipstate[nipstate].seen = 1;
-        nipstate++;
-    }
-    return now;
-}
-
-static void ipstate_prune(void) {
-    int w = 0;
-    for (int i = 0; i < nipstate; i++)
-        if (ipstate[i].seen) ipstate[w++] = ipstate[i];
-    nipstate = w;
-}
-
-/* Escanea /proc por procesos sshd y los asocia a un usuario del db. */
-static int scan_sshd(ConnRec *conns, Sock22 *socks, int nsocks,
-                     UserLim *users, int nusers) {
-    int n = 0;
-    DIR *d = opendir("/proc");
-    if (!d) return 0;
-    struct dirent *de;
-    while ((de = readdir(d)) != NULL && n < MAX_PROCS) {
-        if (de->d_type != DT_DIR) continue;
-        pid_t pid = atoi(de->d_name);
-        if (pid <= 0) continue;
-        char path[64], l[256];
-        snprintf(path, sizeof(path), "/proc/%d/status", pid);
-        FILE *sf = fopen(path, "r");
-        if (!sf) continue;
-        int is_sshd = 0; long uid = -1;
-        while (fgets(l, sizeof(l), sf)) {
-            if (!strncmp(l, "Name:", 5)) { if (strstr(l, "sshd")) is_sshd = 1; }
-            else if (!strncmp(l, "Uid:", 4)) { sscanf(l + 4, "%ld", &uid); break; }
-        }
-        fclose(sf);
-        if (!is_sshd || uid < 0) continue;
-        /* ¿este uid es de un usuario del db? */
-        int ui = -1;
-        for (int i = 0; i < nusers; i++) if (users[i].uid == (uid_t)uid) { ui = i; break; }
-        if (ui < 0) continue;
-        char ip[46] = "";
-        if (!sshd_real_ip(pid, socks, nsocks, ip, sizeof(ip))) continue;
-        conns[n].uid = (uid_t)uid;
-        conns[n].pid = pid;
-        strncpy(conns[n].ip, ip, sizeof(conns[n].ip) - 1);
-        conns[n].ip[sizeof(conns[n].ip) - 1] = '\0';
-        n++;
-    }
-    closedir(d);
-    return n;
-}
-
-int main(void) {
-    mkdir("/run/zumo", 0755);
-    for (;;) {
-        UserLim users[MAX_USERS];
-        int nusers = load_users(users);
-        if (nusers > 0) {
-            static Sock22 socks[MAX_SOCK22];
-            static ConnRec conns[MAX_PROCS];
-            int nsocks = scan_sock22(socks);
-            int nconns = scan_sshd(conns, socks, nsocks, users, nusers);
-            time_t now = time(NULL);
-
-            /* refrescar estado de IPs */
-            for (int i = 0; i < nipstate; i++) ipstate[i].seen = 0;
-            for (int j = 0; j < nconns; j++) ipstate_touch(conns[j].uid, conns[j].ip, now);
-            ipstate_prune();
-
-            /* por usuario: contar IPs distintas y cortar las que exceden */
-            for (int i = 0; i < nusers; i++) {
-                uid_t uid = users[i].uid;
-                int lim = users[i].limit;
-                /* IPs distintas de este usuario, con su first_seen */
-                char ips[256][46]; time_t fs[256]; int nip = 0;
-                for (int k = 0; k < nipstate && nip < 256; k++) {
-                    if (ipstate[k].uid != uid) continue;
-                    strncpy(ips[nip], ipstate[k].ip, 45); ips[nip][45] = '\0';
-                    fs[nip] = ipstate[k].first_seen;
-                    nip++;
-                }
-                if (nip <= lim) continue;
-                /* ordenar por first_seen ascendente (más viejas primero) */
-                for (int a = 0; a < nip - 1; a++)
-                    for (int b = a + 1; b < nip; b++)
-                        if (fs[b] < fs[a]) {
-                            time_t t = fs[a]; fs[a] = fs[b]; fs[b] = t;
-                            char tmp[46]; strcpy(tmp, ips[a]); strcpy(ips[a], ips[b]); strcpy(ips[b], tmp);
-                        }
-                /* conservar las 'lim' más viejas; cortar el resto si pasó la gracia */
-                for (int p = lim; p < nip; p++) {
-                    if (now - fs[p] < GRACE) continue;  /* margen para cambios de red */
-                    for (int j = 0; j < nconns; j++)
-                        if (conns[j].uid == uid && strcmp(conns[j].ip, ips[p]) == 0)
-                            kill(conns[j].pid, SIGKILL);
-                }
-            }
-
-            /* Exportar "usuario -> IPs reales conectadas" para que el panel las
-             * muestre. Se escribe de forma atómica en /run/zumo/online.db. */
-            {
-                FILE *of = fopen("/run/zumo/online.db.tmp", "w");
-                if (of) {
-                    for (int i = 0; i < nusers; i++) {
-                        char seen[256][46]; int ns = 0;
-                        for (int j = 0; j < nconns && ns < 256; j++) {
-                            if (conns[j].uid != users[i].uid) continue;
-                            if (strcmp(conns[j].ip, "127.0.0.1") == 0) continue; /* sin resolver */
-                            int dup = 0;
-                            for (int s = 0; s < ns; s++) if (!strcmp(seen[s], conns[j].ip)) { dup = 1; break; }
-                            if (dup) continue;
-                            strncpy(seen[ns], conns[j].ip, 45); seen[ns][45] = '\0'; ns++;
-                        }
-                        if (ns == 0) continue;
-                        fprintf(of, "%s", users[i].name);
-                        for (int s = 0; s < ns; s++) fprintf(of, " %s", seen[s]);
-                        fputc('\n', of);
-                    }
-                    fclose(of);
-                    rename("/run/zumo/online.db.tmp", "/run/zumo/online.db");
-                }
-            }
-        }
-        sleep(SCAN_INTERVAL);
-    }
-    return 0;
-}
-
-ZUMO_LIMIT_C
+ZUMO_RAW="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+if ! curl -fsSL "$ZUMO_RAW/zumo-limit.c" -o "$LIMWORK/zumo-limit.c" || [ ! -s "$LIMWORK/zumo-limit.c" ]; then
+echo -e " \e[1;31m✘ No se pudo descargar zumo-limit.c desde el repo.\e[0m"
+rm -rf "$LIMWORK"
+exit 1
+fi
 
 if gcc -O2 -o "$LIMWORK/zumo-limit" "$LIMWORK/zumo-limit.c" 2>"$LIMWORK/err.log"; then
 install -m 0755 "$LIMWORK/zumo-limit" /usr/local/bin/zumo-limit
@@ -1151,21 +861,25 @@ sed 's/^/   /' "$LIMWORK/err.log"
 rm -rf "$LIMWORK"
 exit 1
 fi
+# Configuración del limitador: solo se baja si no existe (no pisa tus cambios).
+[ -f /etc/zumo/limit.conf ] || curl -fsSL "$ZUMO_RAW/limit.conf" -o /etc/zumo/limit.conf 2>/dev/null || true
 rm -rf "$LIMWORK"
 
 cat > /etc/systemd/system/zumo-limit.service <<'SVCEOF'
 [Unit]
-Description=ZUMO limitador de conexiones
+Description=ZUMO limitador de conexiones (1 sesion por usuario, revisa cada 3 s)
 After=network.target
 [Service]
 ExecStart=/usr/local/bin/zumo-limit
 Restart=always
+RestartSec=2
 [Install]
 WantedBy=multi-user.target
 SVCEOF
 
 systemctl daemon-reload >/dev/null 2>&1
-systemctl enable --now zumo-limit >/dev/null 2>&1
+systemctl enable zumo-limit >/dev/null 2>&1
+systemctl restart zumo-limit >/dev/null 2>&1
 echo -e " \e[1;32m✔ listo\e[0m"
 
 echo -e "\e[1;33m[7/9]\e[0m Creando activador de HCR Server..."

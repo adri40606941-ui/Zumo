@@ -162,7 +162,7 @@ id "$hwid" &>/dev/null && { msg_err "Ese HWID ya está registrado"; pausa; retur
 read -rp " Días de duración: " d
 [[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
 read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
-[[ "$lim" =~ ^[0-9]+$ ]] || { msg_err "Límite inválido"; pausa; return; }
+[[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido (mínimo 1)"; pausa; return; }
 exp=$(date -d "+$d days" +%F)
 if ! useradd --badname -M -s /bin/false -e "$exp" -c "hwid,$etiqueta" "$hwid" 2>/dev/null; then
 msg_err "No se pudo crear el usuario (probá con otro HWID)"; pausa; return
@@ -189,9 +189,12 @@ clave_valida "$p" || { msg_err "Contraseña inválida (no puede estar vacía)"; 
 read -rp " Días de duración: " d
 [[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
 read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
-[[ "$lim" =~ ^[0-9]+$ ]] || { msg_err "Límite inválido"; pausa; return; }
+[[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido (mínimo 1)"; pausa; return; }
 exp=$(date -d "+$d days" +%F)
-useradd -M -s /bin/false -e "$exp" "$u" && echo "$u:$p" | chpasswd
+if ! useradd -M -s /bin/false -e "$exp" "$u" 2>/dev/null; then
+msg_err "No se pudo crear el usuario"; pausa; return
+fi
+echo "$u:$p" | chpasswd
 zumo_db_add "$u" "$lim" "$exp"
 echo; echo -e " $L"
 msg_ok "Usuario creado"
@@ -279,7 +282,10 @@ read -rp " Minutos de duración: " min
 read -rp " Conexiones permitidas [1]: " lim; lim=${lim:-1}
 [[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido"; pausa; return; }
 exp=$(date -d "+2 days" +%F)
-useradd -M -s /bin/false -e "$exp" "$u" && echo "$u:$p" | chpasswd
+if ! useradd -M -s /bin/false -e "$exp" "$u" 2>/dev/null; then
+msg_err "No se pudo crear el usuario temporal"; pausa; return
+fi
+echo "$u:$p" | chpasswd
 zumo_db_add "$u" "$lim" "$exp"
 programar_borrado_temp "$u" "$min"
 echo; echo -e " $L"
@@ -671,6 +677,8 @@ configurar_panelweb() {
 banner; echo -e " \e[1;38;5;141mCONFIGURAR PANEL WEB${N}\n"
 read -rp " Puerto para el panel [9090]: " wport; wport=${wport:-9090}
 [[ "$wport" =~ ^[0-9]+$ ]] || { msg_err "Puerto inválido"; pausa; return; }
+read -rp " ¿Escuchar solo en 127.0.0.1 (se entra por túnel SSH)? [s/N]: " wlocal
+wbind="0.0.0.0"; [[ "$wlocal" =~ ^[sS]$ ]] && wbind="127.0.0.1"
 read -rp " Usuario de acceso: " wuser
 [ -z "$wuser" ] && { msg_err "Usuario vacío"; pausa; return; }
 read -rsp " Contraseña de acceso: " wpass; echo
@@ -695,6 +703,7 @@ WEB_USER=$wuser
 WEB_PASS_HASH=$PASSHASH
 SECRET_KEY=$SECRET
 PORT=$wport
+BIND=$wbind
 EOF
 chmod 600 /etc/zumo/web.conf
 
@@ -726,7 +735,11 @@ sleep 2
 if systemctl is-active --quiet zumo-web; then
 IP=$(curl -fsSL --max-time 4 -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 msg_ok "Panel web activo"
+if [ "$wbind" = "127.0.0.1" ]; then
+echo -e "   Acceso:   \e[1;38;5;214mssh -L ${wport}:127.0.0.1:${wport} root@${IP}\e[0m  y abrí http://127.0.0.1:${wport}"
+else
 echo -e "   URL:      \e[1;38;5;214mhttp://${IP}:${wport}${N}"
+fi
 echo -e "   Usuario:  \e[1;38;5;214m$wuser${N}"
 echo -e " \e[2mEs HTTP sin cifrar: usalo en red de confianza o por VPN/túnel SSH si lo exponés a internet.${N}"
 else

@@ -12,7 +12,9 @@ from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, request, redirect, url_for, session, render_template_string, jsonify
+from urllib.parse import urlparse
+
+from flask import Flask, request, redirect, url_for, session, render_template_string, jsonify, abort
 from werkzeug.security import check_password_hash
 
 CONF_PATH = "/etc/zumo/web.conf"
@@ -86,6 +88,27 @@ def cargar_config():
 CONF = cargar_config()
 app = Flask(__name__)
 app.secret_key = CONF.get("SECRET_KEY") or secrets.token_hex(32)
+# La cookie de sesión no viaja en peticiones que vienen de otro sitio: frena
+# que una página ajena dispare acciones del panel (CSRF) desde tu navegador.
+app.config.update(SESSION_COOKIE_SAMESITE="Strict", SESSION_COOKIE_HTTPONLY=True)
+
+
+@app.before_request
+def _mismo_origen():
+    """Las acciones (POST) solo se aceptan si el navegador dice que salen de
+    este mismo panel. Doble defensa junto con SameSite=Strict."""
+    if request.method != "POST":
+        return
+    origen = request.headers.get("Origin") or request.headers.get("Referer") or ""
+    if origen and urlparse(origen).netloc != request.host:
+        abort(403)
+
+
+def _usuario_del_panel(usuario):
+    """Solo se puede operar sobre usuarios que están en usuarios.db. Sin esto,
+    /eliminar/root ejecutaría userdel y pkill sobre cuentas del sistema."""
+    if not any(u["usuario"] == usuario for u in leer_usuarios()):
+        abort(404)
 
 # ---------- lógica de usuarios (misma convención que panel.sh / usuarios.db) ----------
 
@@ -834,8 +857,10 @@ def crear():
         limite = int(request.form.get("limite", "1") or 1)
     except ValueError:
         limite = 1
-    if dias < 1:
+    if dias < 1 or dias > 3650:
         return redirect(url_for("index"))
+    if limite < 1:
+        limite = 1
 
     if modo == "hwid":
         etiqueta = (request.form.get("etiqueta") or "cliente").strip()
@@ -857,6 +882,7 @@ def crear():
 @app.route("/eliminar/<usuario>", methods=["POST"])
 @login_requerido
 def eliminar(usuario):
+    _usuario_del_panel(usuario)
     eliminar_usuario(usuario)
     return redirect(url_for("index"))
 
@@ -864,11 +890,12 @@ def eliminar(usuario):
 @app.route("/renovar/<usuario>", methods=["POST"])
 @login_requerido
 def renovar(usuario):
+    _usuario_del_panel(usuario)
     try:
         dias = int(request.form.get("dias", "0") or 0)
     except ValueError:
         dias = 0
-    if dias > 0:
+    if 0 < dias <= 3650:
         renovar_usuario(usuario, dias)
     return redirect(url_for("index"))
 
@@ -876,6 +903,7 @@ def renovar(usuario):
 @app.route("/limite/<usuario>", methods=["POST"])
 @login_requerido
 def limite(usuario):
+    _usuario_del_panel(usuario)
     try:
         nl = int(request.form.get("limite", "0") or 0)
     except ValueError:
@@ -888,6 +916,7 @@ def limite(usuario):
 @app.route("/bloquear/<usuario>", methods=["POST"])
 @login_requerido
 def bloquear(usuario):
+    _usuario_del_panel(usuario)
     if esta_bloqueado(usuario):
         desbloquear_usuario(usuario)
     else:
@@ -898,6 +927,7 @@ def bloquear(usuario):
 @app.route("/hwid/<usuario>", methods=["POST"])
 @login_requerido
 def hwid_cambiar(usuario):
+    _usuario_del_panel(usuario)
     nuevo = request.form.get("nuevo_hwid", "")
     ok, _ = cambiar_hwid(usuario, nuevo)
     if not ok:
@@ -907,4 +937,5 @@ def hwid_cambiar(usuario):
 
 if __name__ == "__main__":
     port = int(CONF.get("PORT", "9090"))
-    app.run(host="0.0.0.0", port=port)
+    # BIND=127.0.0.1 en web.conf deja el panel solo para acceso por túnel SSH.
+    app.run(host=CONF.get("BIND", "0.0.0.0"), port=port)
