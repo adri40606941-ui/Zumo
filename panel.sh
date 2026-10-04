@@ -298,15 +298,87 @@ echo -e " $L"
 echo -e " \e[2mSe borra solo a los $min minutos.${N}"; pausa
 }
 
+# Lista todos los usuarios juntos (comunes y HWID). Los HWID muestran el nombre
+# del cliente y, debajo, su HWID. Verde = conectado.
+lista_para_borrar() {
+local u lim exp on col lab
+while IFS=: read -r u lim exp; do
+[ -z "$u" ] && continue
+on=$(en_linea "$u")
+if [ "${on:-0}" -gt 0 ]; then col='\e[1;32m●\e[0m'; else col='\e[2m○\e[0m'; fi
+if es_hwid "$u"; then
+lab=$(etiqueta_de "$u")
+printf ' %b \e[1;38;5;214m%s\e[0m \e[2m(HWID)\e[0m\n' "$col" "$lab"
+printf '     \e[2m%s\e[0m\n' "$u"
+else
+printf ' %b \e[1;38;5;214m%s\e[0m\n' "$col" "$u"
+fi
+done < "$DB"
+}
+
+# Busca lo que escribió la persona: usuario exacto, nombre del cliente (HWID) o
+# usuario sin distinguir mayúsculas. El resultado queda en $SEL (siempre sale de
+# la base, nunca del texto escrito). Devuelve 1 si no existe y 2 si el nombre
+# coincide con varios clientes HWID (quedan en AMBIGUOS).
+buscar_usuario() {
+local q="$1" u lim exp lab
+local -a hits=()
+AMBIGUOS=()
+while IFS=: read -r u lim exp; do
+[ -z "$u" ] && continue
+if [ "$u" = "$q" ]; then SEL="$u"; return 0; fi
+done < "$DB"
+while IFS=: read -r u lim exp; do
+[ -z "$u" ] && continue
+es_hwid "$u" || continue
+lab=$(etiqueta_de "$u")
+[ "${lab,,}" = "${q,,}" ] && hits+=("$u")
+done < "$DB"
+if [ ${#hits[@]} -eq 1 ]; then SEL="${hits[0]}"; return 0; fi
+if [ ${#hits[@]} -gt 1 ]; then AMBIGUOS=("${hits[@]}"); return 2; fi
+while IFS=: read -r u lim exp; do
+[ -z "$u" ] && continue
+es_hwid "$u" && continue
+if [ "${u,,}" = "${q,,}" ]; then SEL="$u"; return 0; fi
+done < "$DB"
+return 1
+}
+
+# Saca al usuario del sistema, de la base y de los temporales.
+borrar_usuario_completo() {
+local u="$1"
+pkill -9 -u "$u" 2>/dev/null
+userdel "$u" 2>/dev/null
+zumo_db_del "$u"
+systemctl stop "zumo-temp-$u.timer" 2>/dev/null
+if [ -f "$TEMPDB" ]; then
+awk -F: -v u="$u" '$1!=u' "$TEMPDB" > "$TEMPDB.tmp" && mv -f "$TEMPDB.tmp" "$TEMPDB"
+fi
+}
+
 eliminar_usuario() {
+local q rc nombre h
+while true; do
 banner; echo -e " \e[1;38;5;141mELIMINAR USUARIO${N}\n"
-elegir_usuario || { pausa; return; }
-pkill -9 -u "$SEL" 2>/dev/null
-userdel "$SEL" 2>/dev/null
-zumo_db_del "$SEL"
-systemctl stop "zumo-temp-$SEL.timer" 2>/dev/null
-grep -v "^$SEL:" "$TEMPDB" 2>/dev/null > "$TEMPDB.tmp" && mv "$TEMPDB.tmp" "$TEMPDB" 2>/dev/null
-msg_ok "Usuario $SEL eliminado"; pausa
+if [ ! -s "$DB" ]; then msg_err "No hay usuarios registrados"; pausa; return; fi
+lista_para_borrar
+echo; echo -e " $L"
+echo -e " \e[2mEscribí el usuario, el nombre del cliente o el HWID y Enter: se borra.${N}"
+echo -e " \e[2mEnter vacío para volver.${N}"
+read -rp " Borrar: " q
+q="${q#"${q%%[![:space:]]*}"}"; q="${q%"${q##*[![:space:]]}"}"
+[ -z "$q" ] && return
+buscar_usuario "$q"; rc=$?
+case $rc in
+0) nombre="$(etiqueta_de "$SEL")"
+borrar_usuario_completo "$SEL"
+msg_ok "Usuario $nombre eliminado"; sleep 1 ;;
+2) msg_err "Hay varios clientes con el nombre \"$q\". Escribí el HWID:"
+for h in "${AMBIGUOS[@]}"; do echo -e "     \e[1;38;5;214m$h${N}"; done
+pausa ;;
+*) msg_err "No existe: $q"; sleep 1 ;;
+esac
+done
 }
 
 vencidos() {
