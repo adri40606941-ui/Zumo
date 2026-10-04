@@ -58,7 +58,8 @@ timeout 20 "$T/zumo-limit" --once --dry-run 2>"$T/dry.log"
 chequear "todas vivas" "vivo vivo vivo vivo vivo vivo" "$(estado $A1 $A2 $A3 $B1 $B2 $C1)"
 chequear "informa lo que cortaría" "si" "$(grep -q 'dry-run.*ztest1' "$T/dry.log" && echo si || echo no)"
 
-echo "2) KICK=newest (por defecto): conserva la más vieja"
+echo "2) KICK=newest: conserva la más vieja"
+echo "KICK=newest" > "$T/limit.conf"
 timeout 20 "$T/zumo-limit" --once 2>"$T/real.log"; sleep 0.3
 chequear "ztest1 límite 1 (vieja, media, nueva)" "vivo cortado cortado" "$(estado $A1 $A2 $A3)"
 chequear "ztest2 límite 2 (ambas se quedan)" "vivo vivo" "$(estado $B1 $B2)"
@@ -70,11 +71,11 @@ abrir ztest1; N1=$NUEVO_PID; sleep 0.3
 timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
 chequear "ztest1 vieja sigue, nueva cortada" "vivo cortado" "$(estado $A1 $N1)"
 
-echo "4) KICK=oldest: conserva la más nueva"
-echo "KICK=oldest" > "$T/limit.conf"
+echo "4) Sin limit.conf el valor por defecto es KICK=oldest: conserva la más nueva"
+rm -f "$T/limit.conf"
 abrir ztest1; N2=$NUEVO_PID; sleep 0.3
 timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
-chequear "ztest1 (vieja cortada, nueva sigue)" "cortado vivo" "$(estado $A1 $N2)"
+chequear "ztest1 por defecto (vieja cortada, nueva sigue)" "cortado vivo" "$(estado $A1 $N2)"
 
 echo "5) GRACE=60: no corta una sesión extra recién abierta"
 printf 'KICK=newest\nGRACE=60\n' > "$T/limit.conf"

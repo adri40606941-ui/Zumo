@@ -49,9 +49,11 @@ forma atómica, para que los dos paneles no se pisen.
 
 El límite de cada usuario (`usuarios.db`, segundo campo) es la cantidad de
 **sesiones SSH simultáneas**. Con límite 1, si el mismo usuario abre una segunda
-conexión, el limitador la corta en la siguiente revisión (como mucho 3 s) y la
-primera sigue conectada. Cuenta igual por PDirect, BHTTP, HCR o conexión directa,
-y por IPv4 o IPv6.
+conexión, el limitador corta una de las dos en la siguiente revisión (como mucho
+3 s): por defecto la vieja (`KICK=oldest`), así quien reconecta tras perder la
+señal entra enseguida. Con `KICK=newest` se queda la primera y se corta la
+nueva. Cuenta igual por PDirect, BHTTP, HCR o conexión directa, y por IPv4 o
+IPv6.
 
 Se ajusta en `/etc/zumo/limit.conf` (se relee solo, sin reiniciar):
 
@@ -59,12 +61,14 @@ Se ajusta en `/etc/zumo/limit.conf` (se relee solo, sin reiniciar):
 |---|---|---|
 | `INTERVAL` | `3` | Segundos entre revisiones. |
 | `GRACE` | `0` | Segundos que una sesión de más puede vivir antes de cortarla. |
-| `KICK` | `newest` | `newest` corta la sesión nueva; `oldest` corta la vieja. |
+| `KICK` | `oldest` | `oldest` corta la sesión vieja y deja la nueva; `newest` corta la nueva y deja la vieja. |
 | `TEMP_CLEANUP` | `1` | Borra los usuarios temporales vencidos. |
 
 Si un cliente cambia de red y reconecta, su sesión vieja tarda hasta ~30 s en
-darse por caída y la nueva cuenta como "segunda". Si te pasa seguido, subí
-`GRACE` (por ejemplo 20) o usá `KICK=oldest`.
+darse por caída y la nueva cuenta como "segunda". Con `KICK=oldest` (por
+defecto) no se nota. Con `KICK=newest`, la nueva se corta hasta que la vieja
+caiga: subí `GRACE` (por ejemplo 20) si te pasa seguido. Ojo con `oldest`: si
+dos personas comparten un usuario, se van sacando una a la otra.
 
 Ver qué cortó: `journalctl -u zumo-limit -f`. Probar sin cortar nada:
 `zumo-limit --once --dry-run`.

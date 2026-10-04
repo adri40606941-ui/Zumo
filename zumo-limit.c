@@ -6,8 +6,10 @@
  *      IP, así que cuenta igual por PDirect, BHTTP, HCR o conexión directa, y
  *      por IPv4 o IPv6.
  *   2. Si un usuario tiene más sesiones que su límite, corta las que sobran.
- *      Por defecto conserva la más vieja y corta las nuevas (KICK=newest), así
- *      el segundo dispositivo no logra quedarse conectado.
+ *      Por defecto corta la más vieja y deja la nueva (KICK=oldest): si un
+ *      cliente pierde la señal y reconecta, entra enseguida y la sesión caída
+ *      (que el servidor tarda ~30 s en notar) es la que se corta. Con
+ *      KICK=newest se conserva la más vieja y se corta la nueva.
  *   3. Corta todas las sesiones de los usuarios vencidos.
  *   4. Borra los usuarios temporales cuyo tiempo ya pasó (por si el timer de
  *      systemd se perdió con un reinicio).
@@ -15,7 +17,7 @@
  * Configuración opcional en /etc/zumo/limit.conf (se relee en cada vuelta):
  *   INTERVAL=3        segundos entre revisiones (1 a 60)
  *   GRACE=0           segundos que una sesión extra puede vivir antes de cortarla
- *   KICK=newest       newest = corta la nueva; oldest = corta la vieja
+ *   KICK=oldest       oldest = corta la vieja; newest = corta la nueva
  *   TEMP_CLEANUP=1    1 = borrar temporales vencidos, 0 = no
  *
  * Opciones de línea de comandos:
@@ -109,7 +111,7 @@ static void trim(char *s) {
 static void load_conf(Conf *c) {
     c->interval = 3;
     c->grace = 0;
-    c->kick_newest = 1;
+    c->kick_newest = 0;
     c->temp_cleanup = 1;
     FILE *f = fopen(CONF_PATH, "r");
     if (!f) return;
