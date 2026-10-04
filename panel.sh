@@ -87,6 +87,11 @@ case "$(getent passwd "$1" 2>/dev/null | awk -F: '{print $5}')" in hwid,*) retur
 
 en_linea() { ps -u "$1" -o comm= 2>/dev/null | grep -c '^sshd$'; }
 
+# Validación de usuario/contraseña: solo letras y números, máximo 10, sin
+# espacios ni símbolos. El usuario además empieza con letra (minúscula).
+nombre_valido() { [[ "$1" =~ ^[a-z][a-z0-9]{0,9}$ ]]; }
+clave_valida() { [[ "$1" =~ ^[A-Za-z0-9]{1,10}$ ]]; }
+
 esta_bloqueado() {
 local est
 est=$(passwd -S "$1" 2>/dev/null | awk '{print $2}')
@@ -149,10 +154,10 @@ return
 fi
 
 read -rp " Usuario: " u
-[[ "$u" =~ ^[a-z_][a-z0-9_-]*$ ]] || { msg_err "Nombre inválido"; pausa; return; }
+nombre_valido "$u" || { msg_err "Usuario inválido (solo letras y números, máx 10, empieza con letra)"; pausa; return; }
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
 read -rp " Contraseña: " p
-zumo_password_valido "$p" || { msg_err "Contraseña inválida (vacía, muy larga o con caracteres no permitidos)"; pausa; return; }
+clave_valida "$p" || { msg_err "Contraseña inválida (solo letras y números, máx 10)"; pausa; return; }
 read -rp " Días de duración: " d
 [[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
 read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
@@ -238,10 +243,10 @@ return
 fi
 
 read -rp " Usuario: " u
-[[ "$u" =~ ^[a-z_][a-z0-9_-]*$ ]] || { msg_err "Nombre inválido"; pausa; return; }
+nombre_valido "$u" || { msg_err "Usuario inválido (solo letras y números, máx 10, empieza con letra)"; pausa; return; }
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
 read -rp " Contraseña: " p
-zumo_password_valido "$p" || { msg_err "Contraseña inválida"; pausa; return; }
+clave_valida "$p" || { msg_err "Contraseña inválida (solo letras y números, máx 10)"; pausa; return; }
 read -rp " Minutos de duración: " min
 [[ "$min" =~ ^[0-9]+$ ]] && [ "$min" -ge 1 ] || { msg_err "Minutos inválidos"; pausa; return; }
 read -rp " Conexiones permitidas [1]: " lim; lim=${lim:-1}
@@ -327,7 +332,7 @@ op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " eo
 case $eo in
 1) read -rp " Contraseña nueva para $SEL: " np
-zumo_password_valido "$np" || { msg_err "Contraseña inválida"; sleep 1; continue; }
+clave_valida "$np" || { msg_err "Contraseña inválida (solo letras y números, máx 10)"; sleep 1; continue; }
 echo "$SEL:$np" | chpasswd
 msg_ok "Contraseña de $SEL actualizada"; sleep 1 ;;
 2) read -rp " Nuevo límite para $SEL [$lim]: " nl; nl=${nl:-$lim}
