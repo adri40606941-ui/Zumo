@@ -355,15 +355,14 @@ if [[ "$pb" =~ ^[sS]$ ]]; then
 read -rp " Texto del banner [ZUMO]: " BAN; BAN=${BAN:-ZUMO}
 COL="yellow"
 fi
+read -rp " ¿Permitir conexión sin payload (solo IP + puerto)? [S/n]: " np
+NOPAY=1; [[ "$np" =~ ^[nN]$ ]] && NOPAY=0
 echo -e " \e[1;38;5;141mCompilando e instalando, aguardá...${N}"
-if [ -n "$BAN" ]; then
-RESULTADO=0; bash /etc/zumo/activar-pdirect.sh "$BAN" "$COL" "101" || RESULTADO=1
-else
-RESULTADO=0; bash /etc/zumo/activar-pdirect.sh || RESULTADO=1
-fi
+RESULTADO=0; bash /etc/zumo/activar-pdirect.sh "$BAN" "$COL" "101" "$NOPAY" || RESULTADO=1
 if [ "$RESULTADO" -eq 0 ]; then
 msg_ok "PDirect activo (80 → SSH)"
 [ -n "$BAN" ] && echo -e "   Banner: \e[1;38;5;214m$BAN${N}  Color: \e[1;38;5;214m${COL:-yellow}${N}"
+[ "$NOPAY" = "1" ] && echo -e "   Modo sin payload: \e[1;32mactivado\e[0m (entra con solo IP + puerto)"
 else
 msg_err "Falló; revisá 'journalctl -u pdirect-80'"
 fi; pausa
