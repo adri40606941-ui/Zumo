@@ -61,25 +61,22 @@ cat > /etc/zumo/activar-pdirect.sh <<'ZUMOPDIRECTACT'
 export DEBIAN_FRONTEND=noninteractive
 WORK=$(mktemp -d)
 
-# Banner/color/modo/sin-payload opcionales (los pasa el panel). Se guardan en
+# Banner/color/modo opcionales (los pasa el panel). Se guardan en
 # /etc/zumo/pdirect.env, que el servicio lee. Cada campo que no se pasa conserva
 # el valor previo (reactivar no borra lo elegido antes).
 A_BANNER="${1:-}"
 A_COLOR="${2:-}"
 A_MODO="${3:-}"
-A_NOPAY="${4:-}"
 _pf() { [ -f /etc/zumo/pdirect.env ] && grep -m1 "^$1=" /etc/zumo/pdirect.env | cut -d= -f2-; }
 F_BANNER="${A_BANNER:-$(_pf PDIRECT_BANNER)}"
 F_COLOR="${A_COLOR:-$(_pf PDIRECT_COLOR)}"
 F_MODO="${A_MODO:-$(_pf PDIRECT_MODE)}"
-F_NOPAY="${A_NOPAY:-$(_pf PDIRECT_NOPAYLOAD)}"
-if [ -n "$A_BANNER" ] || [ -n "$A_COLOR" ] || [ -n "$A_MODO" ] || [ -n "$A_NOPAY" ]; then
+if [ -n "$A_BANNER" ] || [ -n "$A_COLOR" ] || [ -n "$A_MODO" ]; then
 mkdir -p /etc/zumo
 {
 [ -n "$F_BANNER" ] && echo "PDIRECT_BANNER=$F_BANNER"
 [ -n "$F_COLOR" ] && echo "PDIRECT_COLOR=$F_COLOR"
 [ -n "$F_MODO" ] && echo "PDIRECT_MODE=$F_MODO"
-[ -n "$F_NOPAY" ] && echo "PDIRECT_NOPAYLOAD=$F_NOPAY"
 } > /etc/zumo/pdirect.env
 chmod 644 /etc/zumo/pdirect.env
 fi
@@ -136,9 +133,6 @@ cat > "$WORK/pdirect.c" <<'ZUMO_PDIRECT_C'
  * largo para el túnel ya establecido (el keepalive mantiene vivo el ocioso). */
 #define HEADER_TIMEOUT 10
 #define RELAY_TIMEOUT 120
-/* Modo "sin payload": si el cliente no manda nada en este tiempo, se lo conecta
- * directo al SSH (passthrough), sin respuesta HTTP. Así entra con solo IP+puerto. */
-#define NOPAYLOAD_WAIT 2
 
 /* Control de flujo: si la salida de un lado supera HIGH, se pausa la lectura
  * del otro; se reanuda cuando baja de LOW. Evita que un peer lento infle RAM. */
@@ -155,7 +149,6 @@ static char allowed_ip[64];
 static char allowed_name[64];
 static const char *g_response;
 static int g_conns;
-static int g_nopayload;  /* 1 = permitir conexión directa sin payload HTTP */
 
 static const char RESP_101[] =
 "HTTP/1.1 101 <font color=\"yellow\"><b>ZUMO</b></font>\r\n\r\n"
@@ -215,8 +208,6 @@ typedef struct {
 	int closed;
 	int await_split;  /* 1 = vimos X-Split y esperamos el segmento partido */
 	int counted;      /* 1 = esta conexión suma en los contadores */
-	int got_data;     /* 1 = el cliente ya mandó algo (es un payload HTTP) */
-	int raw;          /* 1 = passthrough directo al SSH, sin respuesta HTTP */
 	char ip[46];
 } Conn;
 
@@ -340,15 +331,6 @@ static void read_cb(struct bufferevent *bev, void *arg)
 		start_upstream(c);
 		return;
 	}
-	/* El cliente mandó datos: es un payload HTTP. En modo sin-payload le damos
-	 * el tiempo completo de cabeceras (antes el timeout era corto para decidir). */
-	if (!c->got_data) {
-		c->got_data = 1;
-		if (g_nopayload) {
-			struct timeval h = {HEADER_TIMEOUT, 0};
-			bufferevent_set_timeouts(c->client, &h, NULL);
-		}
-	}
 	size_t n = evbuffer_get_length(in);
 	if (n >= MAX_HEADER) {
 		reject_conn(c,
@@ -419,10 +401,7 @@ void upstream_event_cb(struct bufferevent *bev, short events, void *arg)
 		if (ufd >= 0) set_keepalive(ufd);
 		bufferevent_setcb(c->client, read_cb, write_cb, NULL, c);
 		bufferevent_setcb(c->upstream, read_cb, write_cb, upstream_event_cb, c);
-		/* En modo raw (sin payload) NO se manda la respuesta HTTP: el cliente
-		 * es un SSH directo que espera el banner del servidor, no un 101. */
-		if (!c->raw)
-			bufferevent_write(c->client, g_response, strlen(g_response));
+		bufferevent_write(c->client, g_response, strlen(g_response));
 		struct timeval tv = {RELAY_TIMEOUT, 0};
 		bufferevent_set_timeouts(c->client, &tv, NULL);
 		bufferevent_set_timeouts(c->upstream, &tv, NULL);
@@ -433,12 +412,6 @@ void upstream_event_cb(struct bufferevent *bev, short events, void *arg)
 		bufferevent_setwatermark(c->upstream, EV_WRITE, RELAY_LOW, 0);
 		bufferevent_enable(c->client, EV_READ | EV_WRITE);
 		bufferevent_enable(c->upstream, EV_READ | EV_WRITE);
-		/* Si el cliente ya había mandado bytes (raw con datos), reenviarlos. */
-		if (c->raw) {
-			struct evbuffer *ci = bufferevent_get_input(c->client);
-			if (evbuffer_get_length(ci))
-				evbuffer_add_buffer(bufferevent_get_output(c->upstream), ci);
-		}
 		return;
 	}
 	if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR | BEV_EVENT_TIMEOUT))
@@ -450,14 +423,6 @@ static void client_event_cb(struct bufferevent *bev, short events, void *arg)
 	(void)bev;
 	Conn *c = arg;
 	if (!c || c->closed) return;
-	/* Modo sin payload: si venció el tiempo y el cliente no mandó nada, no es
-	 * un payload HTTP sino un SSH directo -> passthrough sin respuesta HTTP. */
-	if ((events & BEV_EVENT_TIMEOUT) && g_nopayload &&
-	    !c->relaying && !c->got_data) {
-		c->raw = 1;
-		start_upstream(c);
-		return;
-	}
 	if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR | BEV_EVENT_TIMEOUT))
 		close_conn(c);
 }
@@ -492,9 +457,7 @@ static void accept_cb(struct evconnlistener *listener, evutil_socket_t fd,
 	ip_inc(ip);
 
 	bufferevent_setcb(c->client, read_cb, write_cb, client_event_cb, c);
-	/* En modo sin-payload esperamos poco por el primer byte: si no llega,
-	 * asumimos SSH directo y hacemos passthrough. Si llega, se extiende. */
-	struct timeval tv = {g_nopayload ? NOPAYLOAD_WAIT : HEADER_TIMEOUT, 0};
+	struct timeval tv = {HEADER_TIMEOUT, 0};  /* corto para las cabeceras */
 	bufferevent_set_timeouts(c->client, &tv, NULL);
 	bufferevent_setwatermark(c->client, EV_READ, 0, MAX_HEADER);
 	bufferevent_enable(c->client, EV_READ | EV_WRITE);
@@ -611,9 +574,6 @@ int main(int argc, char **argv)
 	const char *modo = argc > 3 ? argv[3] : getenv("PDIRECT_MODE");
 	if (!modo || !*modo) modo = "101";
 	build_response(strcmp(modo, "200") == 0 ? 200 : 101);
-	const char *nop = getenv("PDIRECT_NOPAYLOAD");
-	g_nopayload = (nop && (nop[0] == '1' || nop[0] == 't' || nop[0] == 'T' ||
-	                       nop[0] == 's' || nop[0] == 'S' || nop[0] == 'y' || nop[0] == 'Y'));
 
 	snprintf(allowed_ip, sizeof(allowed_ip), "%s:%d", SSH_HOST, ssh_port);
 	snprintf(allowed_name, sizeof(allowed_name), "localhost:%d", ssh_port);
