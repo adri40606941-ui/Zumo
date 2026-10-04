@@ -16,40 +16,53 @@ mkdir -p /etc/zumo
 touch /etc/zumo/usuarios.db
 grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
 
-# Para que sshd note rápido cuando un cliente se cae (red cambiada, app cerrada de golpe)
-# y no quede marcado "online" en el panel durante varios minutos, y para
-# que acepte algoritmos SSH viejos que todavía usan apps de Android como
-# HTTP Custom / HTTP Injector (si no, dan "Cannot negotiate, proposals
-# do not match" con Debian 12). Se valida con sshd -t antes de aplicar:
-# si algo no es compatible con esta versión de OpenSSH, no se toca nada.
+# Para que sshd note rápido cuando un cliente se cae (red cambiada, app cerrada
+# de golpe) y no quede marcado "online" en el panel durante minutos, y para que
+# acepte algoritmos SSH viejos que usan apps de Android (HTTP Custom/Injector).
+# Se hace en DOS pasos independientes, validados por separado con sshd -t, para
+# que si los algoritmos viejos fallan en tu OpenSSH, el timeout IGUAL se aplique.
 if [ -f /etc/ssh/sshd_config ]; then
-_sshd_tmp=$(mktemp)
-cp /etc/ssh/sshd_config "$_sshd_tmp"
-sed -i '/^ClientAliveInterval/d; /^ClientAliveCountMax/d; /^TCPKeepAlive/d; /^KexAlgorithms/d; /^Ciphers/d; /^MACs/d; /^HostKeyAlgorithms/d; /^PubkeyAcceptedAlgorithms/d' "$_sshd_tmp"
-cat >> "$_sshd_tmp" <<'EOF'
-ClientAliveInterval 15
-ClientAliveCountMax 3
-TCPKeepAlive yes
 
-# Muchas apps de Android (HTTP Custom, HTTP Injector, etc.) usan
-# librerías SSH viejas que no entienden los algoritmos "modernos" que
-# trae Debian por defecto, y la conexión muere con "Cannot negotiate,
-# proposals do not match". Esto agrega soporte para los viejos sin
-# sacar los nuevos.
+# Paso 1: timeout de sesiones muertas (esto nunca lo rechaza OpenSSH).
+_sshd_t1=$(mktemp)
+cp /etc/ssh/sshd_config "$_sshd_t1"
+sed -i '/^ClientAliveInterval/d; /^ClientAliveCountMax/d; /^TCPKeepAlive/d' "$_sshd_t1"
+cat >> "$_sshd_t1" <<'EOF'
+ClientAliveInterval 15
+ClientAliveCountMax 2
+TCPKeepAlive yes
+EOF
+if sshd -t -f "$_sshd_t1" 2>/tmp/zumo-sshd-check.log; then
+cp "$_sshd_t1" /etc/ssh/sshd_config
+else
+echo -e " \e[1;31m✘ No se pudo aplicar el timeout de sesiones:\e[0m"
+sed 's/^/   /' /tmp/zumo-sshd-check.log
+fi
+rm -f "$_sshd_t1"
+
+# Paso 2: compatibilidad con algoritmos SSH viejos (puede fallar en OpenSSH
+# nuevos; si falla, no afecta al timeout ya aplicado arriba).
+_sshd_t2=$(mktemp)
+cp /etc/ssh/sshd_config "$_sshd_t2"
+sed -i '/^KexAlgorithms/d; /^Ciphers/d; /^MACs/d; /^HostKeyAlgorithms/d; /^PubkeyAcceptedAlgorithms/d' "$_sshd_t2"
+cat >> "$_sshd_t2" <<'EOF'
+# Apps de Android con librerías SSH viejas (HTTP Custom, HTTP Injector, etc.)
+# no entienden los algoritmos modernos de Debian 12 y dan "Cannot negotiate".
 KexAlgorithms +diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,diffie-hellman-group-exchange-sha1
 Ciphers +aes128-cbc,3des-cbc,aes256-cbc
 MACs +hmac-md5,hmac-sha1
 HostKeyAlgorithms +ssh-rsa
 PubkeyAcceptedAlgorithms +ssh-rsa
 EOF
-if sshd -t -f "$_sshd_tmp" 2>/tmp/zumo-sshd-check.log; then
-cp "$_sshd_tmp" /etc/ssh/sshd_config
-systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+if sshd -t -f "$_sshd_t2" 2>/tmp/zumo-sshd-check2.log; then
+cp "$_sshd_t2" /etc/ssh/sshd_config
 else
-echo -e " \e[1;31m✘ No se pudo activar la compatibilidad SSH vieja (tu versión de OpenSSH rechazó algún algoritmo), se dejó la config como estaba:\e[0m"
-sed 's/^/   /' /tmp/zumo-sshd-check.log
+echo -e " \e[1;31m✘ No se pudo activar la compatibilidad SSH vieja (tu OpenSSH rechazó algún algoritmo), se dejó esa parte como estaba:\e[0m"
+sed 's/^/   /' /tmp/zumo-sshd-check2.log
 fi
-rm -f "$_sshd_tmp"
+rm -f "$_sshd_t2"
+
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 fi
 echo -e " \e[1;32m✔ listo\e[0m"
 
