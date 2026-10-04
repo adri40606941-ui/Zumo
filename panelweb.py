@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Panel web ZUMO: crear/borrar/editar usuarios y ver quién está conectado,
 desde el navegador. Usa la misma base /etc/zumo/usuarios.db que panel.sh."""
+import fcntl
+import os
 import re
 import secrets
 import subprocess
+import tempfile
+import time
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -13,6 +17,59 @@ from werkzeug.security import check_password_hash
 
 CONF_PATH = "/etc/zumo/web.conf"
 DB_PATH = "/etc/zumo/usuarios.db"
+LOCK_PATH = "/etc/zumo/usuarios.lock"
+
+# Mismo formato y mismo lock que usa panel.sh (zumo-lib.sh). Toda lectura-
+# modificación-escritura del DB se hace con el lock tomado para que el panel
+# de la terminal y el panel web no se pisen entre sí.
+
+
+class _db_lock:
+    """Lock exclusivo sobre /etc/zumo/usuarios.lock (compatible con flock de bash)."""
+
+    def __enter__(self):
+        self._f = open(LOCK_PATH, "w")
+        fcntl.flock(self._f, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *_):
+        try:
+            fcntl.flock(self._f, fcntl.LOCK_UN)
+        finally:
+            self._f.close()
+
+
+def _escribir_db_atomico(lineas):
+    """Escribe el DB completo de forma atómica (tmp + rename) para no dejarlo
+    corrupto si algo falla a mitad de camino. Asumí el lock ya tomado."""
+    destino = os.path.dirname(DB_PATH) or "."
+    fd, tmp = tempfile.mkstemp(dir=destino, prefix=".usuarios.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write("\n".join(lineas) + ("\n" if lineas else ""))
+        os.replace(tmp, DB_PATH)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _limpiar_etiqueta(s):
+    """La etiqueta se guarda en el GECOS (/etc/passwd, separado por ':'), así que
+    no puede llevar ':' ni saltos de línea o corrompería esa línea del passwd."""
+    s = (s or "cliente").strip()
+    s = re.sub(r"[\x00-\x1f\x7f:]", "", s)
+    return s[:48] or "cliente"
+
+
+def _password_valido(p):
+    """Sin caracteres de control (romperían la línea 'usuario:pass' de chpasswd)
+    y con un tope de largo razonable."""
+    if not p or len(p) > 128:
+        return False
+    return not re.search(r"[\x00-\x1f\x7f]", p)
 
 
 def cargar_config():
@@ -87,46 +144,57 @@ def dias_restantes(exp):
 def crear_usuario(usuario, password, dias, limite, etiqueta=None):
     if etiqueta is None and not re.match(r"^[a-z_][a-z0-9_-]*$", usuario):
         return False, "Nombre de usuario inválido (minúsculas, sin espacios)."
-    r = subprocess.run(["id", usuario], capture_output=True)
-    if r.returncode == 0:
-        return False, "Ese usuario ya existe."
-    exp = (datetime.now() + timedelta(days=dias)).strftime("%Y-%m-%d")
-    cmd = ["useradd", "-M", "-s", "/bin/false", "-e", exp]
-    if etiqueta is not None:
-        cmd += ["--badname", "-c", f"hwid,{etiqueta}"]
-    cmd.append(usuario)
-    try:
-        subprocess.run(cmd, check=True, capture_output=True)
-        subprocess.run(["chpasswd"], input=f"{usuario}:{password}\n".encode(), check=True, capture_output=True)
-    except subprocess.CalledProcessError as e:
-        return False, f"Falló al crear el usuario: {e.stderr.decode(errors='ignore')[:200]}"
-    with open(DB_PATH, "a") as f:
-        f.write(f"{usuario}:{limite}:{exp}\n")
+    if not _password_valido(password):
+        return False, "Contraseña inválida (vacía, muy larga o con caracteres no permitidos)."
+    with _db_lock():
+        r = subprocess.run(["id", usuario], capture_output=True)
+        if r.returncode == 0:
+            return False, "Ese usuario ya existe."
+        exp = (datetime.now() + timedelta(days=dias)).strftime("%Y-%m-%d")
+        cmd = ["useradd", "-M", "-s", "/bin/false", "-e", exp]
+        if etiqueta is not None:
+            cmd += ["--badname", "-c", f"hwid,{_limpiar_etiqueta(etiqueta)}"]
+        cmd.append(usuario)
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            subprocess.run(["chpasswd"], input=f"{usuario}:{password}\n".encode(), check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            return False, f"Falló al crear el usuario: {e.stderr.decode(errors='ignore')[:200]}"
+        with open(DB_PATH, "a") as f:
+            f.write(f"{usuario}:{limite}:{exp}\n")
     return True, exp
 
 
 def eliminar_usuario(usuario):
     subprocess.run(["pkill", "-9", "-u", usuario], capture_output=True)
     subprocess.run(["userdel", usuario], capture_output=True)
-    if Path(DB_PATH).exists():
-        lineas = [l for l in Path(DB_PATH).read_text().splitlines() if not l.startswith(usuario + ":")]
-        Path(DB_PATH).write_text("\n".join(lineas) + ("\n" if lineas else ""))
+    with _db_lock():
+        if Path(DB_PATH).exists():
+            lineas = [l for l in Path(DB_PATH).read_text().splitlines()
+                      if l.split(":")[0] != usuario]
+            _escribir_db_atomico(lineas)
 
 
 def cambiar_password(usuario, password):
+    if not _password_valido(password):
+        return False
     subprocess.run(["chpasswd"], input=f"{usuario}:{password}\n".encode(), capture_output=True)
+    return True
 
 
 def _reescribir_db(usuario, campo, valor):
-    if not Path(DB_PATH).exists():
-        return
-    out = []
-    for l in Path(DB_PATH).read_text().splitlines():
-        p = l.split(":")
-        if len(p) == 3 and p[0] == usuario:
-            p[campo] = valor
-        out.append(":".join(p))
-    Path(DB_PATH).write_text("\n".join(out) + ("\n" if out else ""))
+    with _db_lock():
+        if not Path(DB_PATH).exists():
+            return
+        out = []
+        for l in Path(DB_PATH).read_text().splitlines():
+            if not l:
+                continue
+            p = l.split(":")
+            if len(p) == 3 and p[0] == usuario:
+                p[campo] = valor
+            out.append(":".join(p))
+        _escribir_db_atomico(out)
 
 
 def cambiar_limite(usuario, nuevo_limite):
@@ -194,14 +262,17 @@ def cambiar_hwid(usuario_actual, nuevo_hwid):
     except subprocess.CalledProcessError as e:
         return False, f"Falló el cambio: {e.stderr.decode(errors='ignore')[:200]}"
     subprocess.run(["chpasswd"], input=f"{nuevo_hwid}:{nuevo_hwid}\n".encode(), capture_output=True)
-    if Path(DB_PATH).exists():
-        out = []
-        for l in Path(DB_PATH).read_text().splitlines():
-            p = l.split(":")
-            if len(p) == 3 and p[0] == usuario_actual:
-                p[0] = nuevo_hwid
-            out.append(":".join(p))
-        Path(DB_PATH).write_text("\n".join(out) + ("\n" if out else ""))
+    with _db_lock():
+        if Path(DB_PATH).exists():
+            out = []
+            for l in Path(DB_PATH).read_text().splitlines():
+                if not l:
+                    continue
+                p = l.split(":")
+                if len(p) == 3 and p[0] == usuario_actual:
+                    p[0] = nuevo_hwid
+                out.append(":".join(p))
+            _escribir_db_atomico(out)
     return True, nuevo_hwid
 
 
@@ -242,6 +313,38 @@ def usuarios_para_api():
 
 
 # ---------- auth ----------
+
+# Rate-limit de login por IP: tras varios intentos fallidos dentro de la
+# ventana, se rechaza con una espera creciente. En memoria (se reinicia con el
+# servicio), suficiente para frenar fuerza bruta en un panel chico.
+_LOGIN_FALLOS = {}
+_LOGIN_MAX = 5
+_LOGIN_VENTANA = 300  # segundos
+
+
+def _login_ip():
+    return request.remote_addr or "?"
+
+
+def _login_bloqueado(ip):
+    rec = _LOGIN_FALLOS.get(ip)
+    if not rec:
+        return False
+    fallos, primero = rec
+    if time.time() - primero > _LOGIN_VENTANA:
+        _LOGIN_FALLOS.pop(ip, None)
+        return False
+    return fallos >= _LOGIN_MAX
+
+
+def _login_fallo(ip):
+    fallos, primero = _LOGIN_FALLOS.get(ip, (0, time.time()))
+    _LOGIN_FALLOS[ip] = (fallos + 1, primero)
+
+
+def _login_ok(ip):
+    _LOGIN_FALLOS.pop(ip, None)
+
 
 def login_requerido(f):
     @wraps(f)
@@ -683,11 +786,19 @@ setInterval(actualizar, 3000);
 def login():
     error = None
     if request.method == "POST":
+        ip = _login_ip()
+        if _login_bloqueado(ip):
+            time.sleep(2)
+            error = "Demasiados intentos. Esperá unos minutos e intentá de nuevo."
+            return render_template_string(LOGIN_HTML, error=error, css=BASE_CSS)
         u = request.form.get("usuario", "")
         p = request.form.get("password", "")
         if u and p and u == CONF.get("WEB_USER") and check_password_hash(CONF.get("WEB_PASS_HASH", ""), p):
+            _login_ok(ip)
             session["ok"] = True
             return redirect(url_for("index"))
+        _login_fallo(ip)
+        time.sleep(1)  # penalización fija contra fuerza bruta
         error = "Usuario o contraseña incorrectos"
     return render_template_string(LOGIN_HTML, error=error, css=BASE_CSS)
 

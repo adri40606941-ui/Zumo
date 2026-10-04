@@ -4,6 +4,18 @@ DB=/etc/zumo/usuarios.db
 N='\e[0m'
 L='\e[38;5;97m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m'
 
+# Librería compartida de operaciones sobre el DB (lock + escritura atómica),
+# la misma que coordina con el panel web. Si falta, se baja del repo.
+ZUMO_LIB=/etc/zumo/zumo-lib.sh
+if [ ! -f "$ZUMO_LIB" ]; then
+	curl -fsSL "https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/zumo-lib.sh" -o "$ZUMO_LIB" 2>/dev/null
+fi
+# shellcheck source=/dev/null
+if ! source "$ZUMO_LIB" 2>/dev/null; then
+	echo "Error: no se encontró $ZUMO_LIB (reinstalá el panel)." >&2
+	exit 1
+fi
+
 stats() {
 read -r _ mt mu _ <<< "$(free -m | awk '/^Mem:/{print $1,$2,$3}')"
 local mfreep=$(( (mt-mu)*100/mt ))
@@ -53,6 +65,12 @@ case "$(getent passwd "$1" 2>/dev/null | awk -F: '{print $5}')" in hwid,*) retur
 
 en_linea() { ps -u "$1" -o comm= 2>/dev/null | grep -c '^sshd$'; }
 
+esta_bloqueado() {
+local est
+est=$(passwd -S "$1" 2>/dev/null | awk '{print $2}')
+[ "$est" = "L" ]
+}
+
 elegir_usuario() {
 mapfile -t USERS < <(cut -d: -f1 "$DB" | sed '/^$/d')
 if [ ${#USERS[@]} -eq 0 ]; then msg_err "No hay usuarios registrados"; return 1; fi
@@ -75,7 +93,7 @@ echo
 
 if [ "$modo" = "2" ]; then
 read -rp " Nombre del cliente (solo para identificarlo en el panel): " etiqueta
-[ -z "$etiqueta" ] && etiqueta="cliente"
+etiqueta=$(zumo_limpiar_etiqueta "$etiqueta")
 read -rp " Pegá el HWID del cliente (8 a 32 caracteres): " hwidraw
 hwid=$(echo "$hwidraw" | tr -cd 'A-Za-z0-9')
 if [ ${#hwid} -lt 8 ] || [ ${#hwid} -gt 32 ]; then
@@ -91,7 +109,7 @@ if ! useradd --badname -M -s /bin/false -e "$exp" -c "hwid,$etiqueta" "$hwid" 2>
 msg_err "No se pudo crear el usuario (probá con otro HWID)"; pausa; return
 fi
 echo "$hwid:$hwid" | chpasswd
-echo "$hwid:$lim:$exp" >> "$DB"
+zumo_db_add "$hwid" "$lim" "$exp"
 echo; echo -e " $L"
 msg_ok "Usuario HWID creado"
 echo -e "   Cliente:                      \e[1;38;5;214m$etiqueta${N}"
@@ -108,14 +126,14 @@ read -rp " Usuario: " u
 [[ "$u" =~ ^[a-z_][a-z0-9_-]*$ ]] || { msg_err "Nombre inválido"; pausa; return; }
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
 read -rp " Contraseña: " p
-[ -z "$p" ] && { msg_err "Contraseña vacía"; pausa; return; }
+zumo_password_valido "$p" || { msg_err "Contraseña inválida (vacía, muy larga o con caracteres no permitidos)"; pausa; return; }
 read -rp " Días de duración: " d
 [[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
 read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
 [[ "$lim" =~ ^[0-9]+$ ]] || { msg_err "Límite inválido"; pausa; return; }
 exp=$(date -d "+$d days" +%F)
 useradd -M -s /bin/false -e "$exp" "$u" && echo "$u:$p" | chpasswd
-echo "$u:$lim:$exp" >> "$DB"
+zumo_db_add "$u" "$lim" "$exp"
 echo; echo -e " $L"
 msg_ok "Usuario creado"
 echo -e "   Usuario:    \e[1;38;5;214m$u${N}"
@@ -130,7 +148,7 @@ banner; echo -e " \e[1;38;5;141mELIMINAR USUARIO${N}\n"
 elegir_usuario || { pausa; return; }
 pkill -9 -u "$SEL" 2>/dev/null
 userdel "$SEL" 2>/dev/null
-sed -i "/^$SEL:/d" "$DB"
+zumo_db_del "$SEL"
 msg_ok "Usuario $SEL eliminado"; pausa
 }
 
@@ -160,7 +178,7 @@ for item in "${VENC[@]}"; do
 u="${item%%|*}"
 pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
-sed -i "/^$u:/d" "$DB"
+zumo_db_del "$u"
 done
 msg_ok "${#VENC[@]} usuario(s) vencido(s) eliminado(s)"; pausa ;;
 *) return ;;
@@ -178,26 +196,49 @@ exp="${info#*:}"
 banner; echo -e " \e[1;38;5;141mEDITAR USUARIO: $SEL${N}\n"
 echo -e "   Límite actual:      \e[1;38;5;214m$lim${N}"
 echo -e "   Vencimiento actual: \e[1;38;5;214m$exp ($(dias "$exp"))${N}\n"
+local estado_bloq="desbloqueado"; esta_bloqueado "$SEL" && estado_bloq="bloqueado"
+echo -e "   Estado:             \e[1;38;5;214m$estado_bloq${N}\n"
 op 1 "✎" "Cambiar contraseña"
 op 2 "⚙" "Cambiar límite de conexiones"
 op 3 "⏱" "Cambiar días (vencimiento)"
+if esta_bloqueado "$SEL"; then op 4 "🔓" "Desbloquear"; else op 4 "🔒" "Bloquear"; fi
+es_hwid "$SEL" && op 5 "🔑" "Cambiar HWID"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " eo
 case $eo in
 1) read -rp " Contraseña nueva para $SEL: " np
-[ -z "$np" ] && { msg_err "Contraseña vacía"; sleep 1; continue; }
+zumo_password_valido "$np" || { msg_err "Contraseña inválida"; sleep 1; continue; }
 echo "$SEL:$np" | chpasswd
 msg_ok "Contraseña de $SEL actualizada"; sleep 1 ;;
 2) read -rp " Nuevo límite para $SEL [$lim]: " nl; nl=${nl:-$lim}
 [[ "$nl" =~ ^[0-9]+$ ]] && [ "$nl" -ge 1 ] || { msg_err "Límite inválido"; sleep 1; continue; }
-awk -F: -v u="$SEL" -v l="$nl" 'BEGIN{OFS=":"} $1==u{$2=l} {print}' "$DB" > "$DB.tmp" && mv "$DB.tmp" "$DB"
+zumo_db_set "$SEL" 2 "$nl"
 msg_ok "Límite de $SEL ahora es $nl"; sleep 1 ;;
 3) read -rp " Días desde hoy: " nd
 [[ "$nd" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; sleep 1; continue; }
 nexp=$(date -d "+$nd days" +%F)
 usermod -e "$nexp" "$SEL" 2>/dev/null
-awk -F: -v u="$SEL" -v e="$nexp" 'BEGIN{OFS=":"} $1==u{$3=e} {print}' "$DB" > "$DB.tmp" && mv "$DB.tmp" "$DB"
+zumo_db_set "$SEL" 3 "$nexp"
 msg_ok "Vencimiento de $SEL ahora: $nexp ($(dias "$nexp"))"; sleep 1 ;;
+4) if esta_bloqueado "$SEL"; then
+usermod -U "$SEL" 2>/dev/null; msg_ok "$SEL desbloqueado"
+else
+usermod -L "$SEL" 2>/dev/null; pkill -9 -u "$SEL" 2>/dev/null; msg_ok "$SEL bloqueado"
+fi; sleep 1 ;;
+5) es_hwid "$SEL" || { msg_err "Ese usuario no es de modo HWID"; sleep 1; continue; }
+read -rp " HWID nuevo (8 a 32 alfanuméricos): " nhraw
+nh=$(echo "$nhraw" | tr -cd 'A-Za-z0-9')
+if [ ${#nh} -lt 8 ] || [ ${#nh} -gt 32 ]; then msg_err "HWID inválido"; sleep 1; continue; fi
+id "$nh" &>/dev/null && { msg_err "Ya existe un usuario con ese HWID"; sleep 1; continue; }
+pkill -9 -u "$SEL" 2>/dev/null
+if usermod --badname -l "$nh" "$SEL" 2>/dev/null; then
+echo "$nh:$nh" | chpasswd
+zumo_db_rename "$SEL" "$nh"
+SEL="$nh"
+msg_ok "HWID cambiado a $nh"
+else
+msg_err "No se pudo cambiar el HWID"
+fi; sleep 1 ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
@@ -495,7 +536,7 @@ systemctl daemon-reload
 systemctl enable --now zumo-web >/dev/null 2>&1
 sleep 2
 if systemctl is-active --quiet zumo-web; then
-IP=$(curl -fsSL -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+IP=$(curl -fsSL --max-time 4 -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 msg_ok "Panel web activo"
 echo -e "   URL:      \e[1;38;5;214mhttp://${IP}:${wport}${N}"
 echo -e "   Usuario:  \e[1;38;5;214m$wuser${N}"
@@ -511,7 +552,7 @@ while true; do
 banner; echo -e " \e[1;38;5;141mPANEL WEB${N}\n"
 if systemctl is-active --quiet zumo-web 2>/dev/null; then
 pp=$(grep '^PORT=' /etc/zumo/web.conf 2>/dev/null | cut -d= -f2); pp=${pp:-9090}
-IP=$(curl -fsSL -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+IP=$(curl -fsSL --max-time 4 -4 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 echo -e " \e[1;32m● Panel web: activo${N}"
 echo -e "   http://${IP}:${pp}\n"
 else

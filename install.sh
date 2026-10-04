@@ -885,6 +885,19 @@ echo -e " \e[1;32m✔ listo\e[0m"
 
 echo -e "\e[1;33m[9/9]\e[0m Instalando panel..."
 
+# Librería compartida de operaciones sobre el DB (lock + escritura atómica),
+# usada tanto por el panel de terminal como por el panel web.
+LIB_URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/zumo-lib.sh"
+LIB_TMP=$(mktemp)
+if curl -fsSL "$LIB_URL" -o "$LIB_TMP" && bash -n "$LIB_TMP" 2>/dev/null; then
+install -m 0644 "$LIB_TMP" /etc/zumo/zumo-lib.sh
+rm -f "$LIB_TMP"
+else
+rm -f "$LIB_TMP"
+echo -e " \e[1;31m✘ No se pudo descargar zumo-lib.sh desde el repo.\e[0m"
+exit 1
+fi
+
 PANEL_URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/panel.sh"
 PANEL_TMP=$(mktemp)
 if curl -fsSL "$PANEL_URL" -o "$PANEL_TMP" && bash -n "$PANEL_TMP" 2>/dev/null; then

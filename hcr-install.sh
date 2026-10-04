@@ -244,7 +244,7 @@ render_unit() {
 	cat >"${TEMP_UNIT}" <<EOF
 [Unit]
 Description=HCR relay
-Documentation=file:${SCRIPT_DIR}/README.md
+Documentation=https://github.com/adri40606941-ui/Zumo
 Wants=network-online.target
 After=network-online.target ssh.service sshd.service
 StartLimitIntervalSec=60
