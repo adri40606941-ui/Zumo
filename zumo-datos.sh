@@ -8,6 +8,7 @@
 DB="${ZUMO_DB:-/etc/zumo/usuarios.db}"
 DATOS="${ZUMO_DATOS:-/etc/zumo/datos.db}"
 LOCK="${ZUMO_DATOS_LOCK:-/etc/zumo/datos.lock}"
+HIST="${ZUMO_HIST:-/etc/zumo/datos-hist.db}"   # fecha:usuario:bytes (por día)
 PASSWD="${ZUMO_PASSWD:-/etc/passwd}"
 INT="${INTERVAL:-2}"
 
@@ -42,6 +43,17 @@ guardar() { # $1 = líneas "usuario bytes_a_sumar" (puede ir vacío)
 				for (u in add) if (u in ok && !(u in vis)) { ord[++c]=u; tot[u]=0 }
 				for (i=1;i<=c;i++) { u=ord[i]; printf "%s:%.0f\n", u, tot[u]+add[u] }
 			}' <(printf '%s\n' "$1") "$DATOS" > "$DATOS.tmp" && mv -f "$DATOS.tmp" "$DATOS"
+		# Historial por día (para ver el gasto de hoy / del mes), 400 días como máximo.
+		touch "$HIST"
+		awk -v db="$DB" -v hoy="$(date +%F)" -v lim="$(date -d '-400 days' +%F)" '
+			BEGIN { while ((getline l < db) > 0) { split(l, f, ":"); ok[f[1]]=1 } }
+			NR==FNR { if ($1!="") add[$1]+=$2; next }
+			{ split($0, f, ":"); if (!(f[2] in ok) || f[1] < lim) next
+			  k=f[1] ":" f[2]; if (!(k in vis)) { vis[k]=1; ord[++c]=k }; tot[k]=f[3] }
+			END {
+				for (u in add) if (u in ok) { k=hoy ":" u; if (!(k in vis)) { vis[k]=1; ord[++c]=k; tot[k]=0 }; tot[k]+=add[u] }
+				for (i=1;i<=c;i++) printf "%s:%.0f\n", ord[i], tot[ord[i]]
+			}' <(printf '%s\n' "$1") "$HIST" > "$HIST.tmp" && mv -f "$HIST.tmp" "$HIST"
 	) 9>"$LOCK"
 }
 

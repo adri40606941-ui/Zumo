@@ -9,7 +9,7 @@ AQUI=$(cd "$(dirname "$0")/.." && pwd)
 T=$(mktemp -d /tmp/zumo-datos.XXXXXX); chmod 755 "$T"; FALLOS=0; PIDS=""
 limpiar() { kill $PIDS 2>/dev/null; exec 7>&- 8>&- 2>/dev/null; userdel zdt1 2>/dev/null; userdel zdt2 2>/dev/null; rm -rf "$T"; }
 trap limpiar EXIT
-export ZUMO_DB="$T/db" ZUMO_DATOS="$T/datos" ZUMO_DATOS_LOCK="$T/lock" INTERVAL=1
+export ZUMO_DB="$T/db" ZUMO_HIST="$T/hist" ZUMO_DATOS="$T/datos" ZUMO_DATOS_LOCK="$T/lock" INTERVAL=1
 chequear() { if [ "$2" = "$3" ]; then echo "  ok   $1 ($3)"; else echo "  FALLA $1: esperado '$2', real '$3'"; FALLOS=$((FALLOS+1)); fi; }
 useradd -M -s /bin/false zdt1; useradd -M -s /bin/false zdt2
 printf 'zdt1:1:2099-01-01\nzdt2:1:2099-01-01\n' > "$ZUMO_DB"
@@ -45,9 +45,13 @@ echo "3) Si la sesión se cierra, no se pierde lo ya contado"
 exec 7>&-; sleep 3
 chequear "zdt1 sigue ~5 MB" "si" "$(rango "$(datos zdt1)" 4900000 5300000)"
 
+HOY=$(date +%F)
+chequear "el historial tiene la fila de hoy (~5 MB)" "si" "$(rango "$(awk -F: -v h="$HOY" '$1==h && $2=="zdt1"{print $3}' "$T/hist")" 4900000 5300000)"
+
 echo "4) Un usuario fuera de la base se limpia (se prueba con 15 ciclos)"
 printf 'zdt2:1:2099-01-01\n' > "$ZUMO_DB"
 sleep 17
 chequear "zdt1 fuera de datos.db" "" "$(datos zdt1)"
+chequear "zdt1 fuera del historial" "0" "$(grep -c ':zdt1:' "$T/hist")"
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi

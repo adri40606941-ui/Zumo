@@ -16,6 +16,11 @@ if ! source "$ZUMO_LIB" 2>/dev/null; then
 	exit 1
 fi
 
+hora_vps() {
+local dn=(Dom Lun Mar Mié Jue Vie Sáb)
+echo "${dn[$(date +%w)]} $(date '+%d/%m/%Y  %H:%M:%S %Z')"
+}
+
 stats() {
 read -r _ mt mu _ <<< "$(free -m | awk '/^Mem:/{print $1,$2,$3}')"
 local mfreep=$(( (mt-mu)*100/mt ))
@@ -27,6 +32,7 @@ local creadas=$(grep -c ':' "$DB" 2>/dev/null)
 local online=$(ps -eo user:32,comm 2>/dev/null | awk '$2=="sshd" && $1!="root" && $1!="sshd"{print $1}' | sort -u | wc -l)
 echo -e " \e[1;38;5;208mRAM:\e[0m ${mu}/${mt}MB (\e[1;32m${mfreep}% libre\e[0m)  \e[1;38;5;208mCPU:\e[0m ${cpu}% (\e[1;32m${cpufree}% libre\e[0m)"
 echo -e " \e[1;38;5;208mCuentas:\e[0m ${creadas}  \e[1;38;5;208mEn línea:\e[0m \e[1;32m${online}\e[0m"
+echo -e " \e[1;38;5;208mHora VPS:\e[0m $(hora_vps)"
 }
 
 banner() {
@@ -140,6 +146,58 @@ if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt ${#USERS[@]} ]; then
 SEL="${USERS[$((n-1))]}"
 }
 
+ip_publica() {
+local ip
+ip=$(curl -4 -fsS --max-time 3 https://api.ipify.org 2>/dev/null)
+[[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+echo "${ip:-?}"
+}
+
+puertos_activos() {
+local ssh out
+ssh=$(awk 'tolower($1)=="port"{print $2; exit}' /etc/ssh/sshd_config 2>/dev/null)
+out="SSH ${ssh:-22}"
+systemctl is-active --quiet pdirect-80 2>/dev/null && out+=" · WebSocket 80"
+systemctl is-active --quiet udpgw-7300 2>/dev/null && out+=" · BadVPN 7300"
+if systemctl is-active --quiet bhttp-server 2>/dev/null && systemctl is-active --quiet bhttp-shim 2>/dev/null; then out+=" · BHTTP $(bhttp_port)"; fi
+systemctl is-active --quiet hcr-server 2>/dev/null && out+=" · HCR $(hcr_port)"
+echo "$out"
+}
+
+# mensaje_cliente USUARIO CLAVE VENCE_TEXTO — bloque listo para copiar y mandar.
+mensaje_cliente() {
+local u="$1" clave="$2" vence="$3" lim
+lim=$(zumo_db_campo "$u" 2)
+echo -e " $L"
+echo -e " \e[1;38;5;141mDATOS PARA EL CLIENTE${N}"
+echo -e " \e[1;38;5;208mServidor:\e[0m     \e[1;38;5;214m$(ip_publica)${N}"
+if es_hwid "$u"; then
+echo -e " \e[1;38;5;208mCliente:\e[0m      \e[1;38;5;214m$(etiqueta_de "$u")${N}"
+echo -e " \e[1;38;5;208mUsuario y clave:\e[0m \e[1;38;5;214m$u${N}"
+else
+echo -e " \e[1;38;5;208mUsuario:\e[0m      \e[1;38;5;214m$u${N}"
+echo -e " \e[1;38;5;208mContraseña:\e[0m   \e[1;38;5;214m${clave:-(la que le diste)}${N}"
+fi
+echo -e " \e[1;38;5;208mVence:\e[0m        \e[1;38;5;214m$vence${N}"
+echo -e " \e[1;38;5;208mConexiones:\e[0m   \e[1;38;5;214m${lim:-1}${N}"
+echo -e " \e[1;38;5;208mPuertos:\e[0m      \e[1;38;5;214m$(puertos_activos)${N}"
+echo -e " $L"
+}
+
+mensaje_para_cliente() {
+banner; echo -e " \e[1;38;5;141mMENSAJE PARA EL CLIENTE${N}\n"
+elegir_usuario || { pausa; return; }
+local clave="" exp v
+if ! es_hwid "$SEL"; then
+read -rp " Contraseña del cliente (Enter = no mostrarla): " clave
+fi
+if es_temporal "$SEL"; then v="$(temp_restante "$SEL")"
+else exp=$(zumo_db_campo "$SEL" 3); v="$exp ($(dias "$exp"))"; fi
+echo
+mensaje_cliente "$SEL" "$clave" "$v"
+pausa
+}
+
 crear_usuario() {
 banner; echo -e " \e[1;38;5;141mCREAR USUARIO${N}\n"
 op 1 "●" "Normal"
@@ -171,14 +229,8 @@ msg_err "No se pudo crear el usuario (probá con otro HWID)"; pausa; return
 fi
 echo "$hwid:$hwid" | chpasswd
 zumo_db_add "$hwid" "$lim" "$exp"
-echo; echo -e " $L"
-msg_ok "Usuario HWID creado"
-echo -e "   Cliente:                      \e[1;38;5;214m$etiqueta${N}"
-echo -e "   HWID (usuario y contraseña):  \e[1;38;5;214m$hwid${N}"
-echo -e "   Duración:                     \e[1;38;5;214m$(dias "$exp")${N}"
-echo -e "   Límite:                       \e[1;38;5;214m$lim conexión(es)${N}"
-echo -e " $L"
-echo -e " \e[2mEl cliente carga ese mismo ID como usuario Y como contraseña en la app.${N}"
+echo; msg_ok "Usuario HWID creado"
+mensaje_cliente "$hwid" "" "$(dias "$exp")"
 pausa
 return
 fi
@@ -198,13 +250,9 @@ msg_err "No se pudo crear el usuario"; pausa; return
 fi
 echo "$u:$p" | chpasswd
 zumo_db_add "$u" "$lim" "$exp"
-echo; echo -e " $L"
-msg_ok "Usuario creado"
-echo -e "   Usuario:    \e[1;38;5;214m$u${N}"
-echo -e "   Contraseña: \e[1;38;5;214m$p${N}"
-echo -e "   Duración:   \e[1;38;5;214m$(dias "$exp")${N}"
-echo -e "   Límite:     \e[1;38;5;214m$lim conexión(es)${N}"
-echo -e " $L"; pausa
+echo; msg_ok "Usuario creado"
+mensaje_cliente "$u" "$p" "$(dias "$exp")"
+pausa
 }
 
 programar_borrado_temp() {
@@ -264,14 +312,8 @@ fi
 echo "$hwid:$hwid" | chpasswd
 zumo_db_add "$hwid" 1 "$exp"
 programar_borrado_temp "$hwid" "$min"
-echo; echo -e " $L"
-msg_ok "Usuario HWID temporal creado"
-echo -e "   Cliente:                      \e[1;38;5;214m$etiqueta${N}"
-echo -e "   HWID (usuario y contraseña):  \e[1;38;5;214m$hwid${N}"
-echo -e "   Duración:                     \e[1;38;5;214m$min minuto(s)${N}"
-echo -e "   Límite:                       \e[1;38;5;214m1 conexión${N}"
-echo -e " $L"
-echo -e " \e[2mEl cliente carga ese ID como usuario Y contraseña. Se borra solo a los $min min.${N}"
+echo; msg_ok "Usuario HWID temporal creado"
+mensaje_cliente "$hwid" "" "$min minuto(s)"
 pausa
 return
 fi
@@ -292,14 +334,9 @@ fi
 echo "$u:$p" | chpasswd
 zumo_db_add "$u" "$lim" "$exp"
 programar_borrado_temp "$u" "$min"
-echo; echo -e " $L"
-msg_ok "Usuario temporal creado"
-echo -e "   Usuario:    \e[1;38;5;214m$u${N}"
-echo -e "   Contraseña: \e[1;38;5;214m$p${N}"
-echo -e "   Duración:   \e[1;38;5;214m$min minuto(s)${N}"
-echo -e "   Límite:     \e[1;38;5;214m$lim conexión(es)${N}"
-echo -e " $L"
-echo -e " \e[2mSe borra solo a los $min minutos.${N}"; pausa
+echo; msg_ok "Usuario temporal creado"
+mensaje_cliente "$u" "$p" "$min minuto(s)"
+pausa
 }
 
 # Lista todos los usuarios juntos (comunes y HWID). Los HWID muestran el nombre
@@ -368,6 +405,7 @@ pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 zumo_db_del "$u"
 ( flock -w 5 9; [ -f /etc/zumo/datos.db ] && awk -F: -v u="$u" '$1!=u' /etc/zumo/datos.db > /etc/zumo/datos.db.tmp && mv -f /etc/zumo/datos.db.tmp /etc/zumo/datos.db ) 9>/etc/zumo/datos.lock 2>/dev/null
+( flock -w 5 9; [ -f /etc/zumo/datos-hist.db ] && awk -F: -v u="$u" '$2!=u' /etc/zumo/datos-hist.db > /etc/zumo/datos-hist.db.tmp && mv -f /etc/zumo/datos-hist.db.tmp /etc/zumo/datos-hist.db ) 9>/etc/zumo/datos.lock 2>/dev/null
 systemctl stop "zumo-temp-$u.timer" 2>/dev/null
 if [ -f "$TEMPDB" ]; then
 awk -F: -v u="$u" '$1!=u' "$TEMPDB" > "$TEMPDB.tmp" && mv -f "$TEMPDB.tmp" "$TEMPDB"
@@ -440,6 +478,8 @@ local f="${ZUMO_DATOS:-/etc/zumo/datos.db}"
 datos_rename() {
 local f="${ZUMO_DATOS:-/etc/zumo/datos.db}"
 ( flock -w 5 9; [ -f "$f" ] && awk -F: -v a="$1" -v b="$2" -v OFS=: '$1==a{$1=b}1' "$f" > "$f.tmp" && mv -f "$f.tmp" "$f" ) 9>"${ZUMO_DATOS_LOCK:-/etc/zumo/datos.lock}" 2>/dev/null
+local h="${ZUMO_HIST:-/etc/zumo/datos-hist.db}"
+( flock -w 5 9; [ -f "$h" ] && awk -F: -v a="$1" -v b="$2" -v OFS=: '$2==a{$2=b}1' "$h" > "$h.tmp" && mv -f "$h.tmp" "$h" ) 9>"${ZUMO_DATOS_LOCK:-/etc/zumo/datos.lock}" 2>/dev/null
 }
 
 editar_usuario() {
@@ -504,6 +544,29 @@ esac
 done
 }
 
+conectados() {
+local f=/run/zumo/online.db u on ips tc n ses rc
+while true; do
+banner; echo -e " \e[1;38;5;141mCONECTADOS AHORA${N}\n"
+n=0; ses=0
+while IFS=: read -r u _; do
+[ -z "$u" ] && continue
+on=$(en_linea "$u"); [ "$on" -gt 0 ] || continue
+n=$((n+1)); ses=$((ses+on))
+ips=$(awk -v u="$u" '$1==u{$1=""; sub(/^ /,""); print; exit}' "$f" 2>/dev/null)
+tc=$(tiempo_conectado "$u")
+printf " \e[1;32m● %-16s\e[0m \e[2mhace\e[0m \e[1;38;5;214m%s${N}\n" "$(etiqueta_de "$u") ($on)" "${tc:-?}"
+[ -n "$ips" ] && echo -e "    \e[2mIP:\e[0m \e[1;38;5;214m$ips${N}"
+done < "$DB"
+[ "$n" -eq 0 ] && echo -e " \e[2m(nadie conectado ahora)${N}"
+echo; echo -e " $L"
+echo -e " \e[1;38;5;214mUsuarios: $n   Sesiones: $ses${N}"
+echo -e "\n Enter para volver..."
+read -rsn1 -t 2; rc=$?
+[ "$rc" -gt 128 ] || break
+done
+}
+
 listar_usuarios() {
 if [ ! -s "$DB" ]; then banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"; msg_err "No hay usuarios"; pausa; return; fi
 while true; do
@@ -557,6 +620,7 @@ op 3 "✎" "Editar usuario"
 op 4 "▤" "Ver usuarios (en vivo)"
 op 5 "⚠" "Usuarios vencidos"
 op 6 "⏳" "Usuario temporal"
+op 7 "✉" "Mensaje para el cliente"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -566,6 +630,7 @@ case $o in
 4) listar_usuarios ;;
 5) vencidos ;;
 6) crear_temporal ;;
+7) mensaje_para_cliente ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
@@ -1033,29 +1098,333 @@ awk -v b="$1" 'BEGIN{ if (b>=1073741824) printf "%.2f GB", b/1073741824; else pr
 }
 
 uso_datos() {
-local DATOS="${ZUMO_DATOS:-/etc/zumo/datos.db}" u b total n rc
+local DATOS="${ZUMO_DATOS:-/etc/zumo/datos.db}" HIST="${ZUMO_HIST:-/etc/zumo/datos-hist.db}"
+local u b d m total totd totm n rc k vista=1 hoy mes hh lista
 if [ ! -s "$DB" ]; then msg_err "No hay usuarios registrados"; pausa; return; fi
 while true; do
-total=0; n=0
+hoy=$(date +%F); mes=${hoy:0:7}
 banner; echo -e " \e[1;38;5;141mUSO DE DATOS${N}\n"
 if ! systemctl is-active --quiet zumo-datos 2>/dev/null; then
 echo -e " \e[1;31m● El contador no está activo (actualizá con actualizar.sh)${N}\n"
 fi
-printf " \e[1;38;5;208m%-18s %s${N}\n" "USUARIO/CLIENTE" "GASTÓ"
+case $vista in
+1)
+hh=$(awk -F: -v h="$hoy" -v m="$mes" '{ if ($1==h) d[$2]+=$3; if (substr($1,1,7)==m) s[$2]+=$3 }
+END { for (u in s) printf "%s %.0f %.0f\n", u, d[u]+0, s[u]; for (u in d) if (!(u in s)) printf "%s %.0f 0\n", u, d[u] }' "$HIST" 2>/dev/null)
+total=0; totd=0; totm=0; n=0
+printf " \e[1;38;5;208m%-10s %9s %9s %9s${N}\n" "USUARIO" "HOY" "MES" "TOTAL"
 while IFS=: read -r u _; do
 [ -z "$u" ] && continue
-b=$(awk -F: -v u="$u" '$1==u{print $2}' "$DATOS" 2>/dev/null)
-b=${b:-0}
+b=$(awk -F: -v u="$u" '$1==u{print $2}' "$DATOS" 2>/dev/null); b=${b:-0}
+read -r d m <<< "$(awk -v u="$u" '$1==u{print $2, $3}' <<<"$hh")"
+d=${d:-0}; m=${m:-0}
 total=$(awk -v a="$total" -v b="$b" 'BEGIN{printf "%.0f", a+b}')
+totd=$(awk -v a="$totd" -v b="$d" 'BEGIN{printf "%.0f", a+b}')
+totm=$(awk -v a="$totm" -v b="$m" 'BEGIN{printf "%.0f", a+b}')
 n=$((n+1))
-printf " \e[1;32m%-18s${N} \e[1;38;5;51m%s${N}\n" "$(etiqueta_de "$u")" "$(_fmt_bytes "$b")"
+printf " \e[1;32m%-10s\e[0m \e[1;38;5;51m%9s %9s %9s${N}\n" "$(etiqueta_de "$u" | cut -c1-10)" "$(_fmt_bytes "$d")" "$(_fmt_bytes "$m")" "$(_fmt_bytes "$b")"
 done < "$DB"
 echo; echo -e " $L"
-echo -e " \e[1;38;5;214mTotal ($n usuarios): \e[1;38;5;51m$(_fmt_bytes "$total")${N}"
-echo -e "\n Enter para volver..."
-read -rsn1 -t 2; rc=$?
-[ "$rc" -gt 128 ] || break
+printf " \e[1;38;5;214m%-10s\e[0m \e[1;38;5;51m%9s %9s %9s${N}\n" "TOTAL($n)" "$(_fmt_bytes "$totd")" "$(_fmt_bytes "$totm")" "$(_fmt_bytes "$total")" ;;
+2)
+echo -e " \e[1;38;5;208mPOR DÍA (todos los usuarios, últimos 14 días)${N}\n"
+lista=$(awk -F: '{ d[$1]+=$3 } END { for (k in d) printf "%s %.0f\n", k, d[k] }' "$HIST" 2>/dev/null | sort -r | head -n 14)
+if [ -z "$lista" ]; then echo -e " \e[2m(todavía sin datos)${N}"; fi
+while read -r k b; do
+[ -z "$k" ] && continue
+printf " \e[1;32m%s${N}  \e[1;38;5;51m%10s${N}\n" "${k:8:2}/${k:5:2}/${k:0:4}" "$(_fmt_bytes "$b")"
+done <<<"$lista"
+echo; echo -e " $L" ;;
+3)
+echo -e " \e[1;38;5;208mPOR MES (todos los usuarios, últimos 6 meses)${N}\n"
+lista=$(awk -F: '{ d[substr($1,1,7)]+=$3 } END { for (k in d) printf "%s %.0f\n", k, d[k] }' "$HIST" 2>/dev/null | sort -r | head -n 6)
+if [ -z "$lista" ]; then echo -e " \e[2m(todavía sin datos)${N}"; fi
+while read -r k b; do
+[ -z "$k" ] && continue
+printf " \e[1;32m%s${N}  \e[1;38;5;51m%10s${N}\n" "${k:5:2}/${k:0:4}" "$(_fmt_bytes "$b")"
+done <<<"$lista"
+echo; echo -e " $L" ;;
+esac
+echo -e " \e[2m[1] Usuarios  [2] Por día  [3] Por mes   Enter: volver${N}"
+read -rsn1 -t 2 k; rc=$?
+[ "$rc" -gt 128 ] && continue
+case $k in 1|2|3) vista=$k ;; *) break ;; esac
 done
+}
+
+# ---------------------------------------------------------------- Respaldo
+RESP_DIR="${ZUMO_RESP_DIR:-/etc/zumo/respaldos}"
+
+# Cambia las filas de los usuarios de $2 (backup) dentro de $1 (actual).
+# $3 = columna donde está el usuario (1 = datos.db, 2 = datos-hist.db).
+_merge_por_usuario() {
+local actual="$1" backup="$2" col="$3" us="$4"
+[ -s "$backup" ] || return 0
+touch "$actual"
+{ awk -F: -v col="$col" -v us="$us" 'BEGIN{n=split(us,a," "); for(i=1;i<=n;i++) m[a[i]]=1} !($col in m)' "$actual"
+awk -F: -v col="$col" -v us="$us" 'BEGIN{n=split(us,a," "); for(i=1;i<=n;i++) m[a[i]]=1} ($col in m)' "$backup"; } > "$actual.tmp" && mv -f "$actual.tmp" "$actual"
+}
+
+# _respaldo_crear ARCHIVO CLAVE — guarda usuarios (con su contraseña cifrada),
+# vencimientos, temporales, datos y configuración, todo cifrado con la clave.
+_respaldo_crear() {
+local out="$1" clave="$2" w u hash gecos n=0 f
+w=$(mktemp -d)
+: > "$w/cuentas.txt"
+while IFS=: read -r u _; do
+[ -z "$u" ] && continue
+getent passwd "$u" >/dev/null 2>&1 || continue
+hash=$(getent shadow "$u" | cut -d: -f2)
+gecos=$(getent passwd "$u" | cut -d: -f5)
+printf '%s:%s:%s\n' "$u" "$hash" "$gecos" >> "$w/cuentas.txt"
+n=$((n+1))
+done < "$DB"
+cp "$DB" "$w/usuarios.db"
+[ -f "$TEMPDB" ] && cp "$TEMPDB" "$w/temporales.db"
+[ -f "${ZUMO_DATOS:-/etc/zumo/datos.db}" ] && cp "${ZUMO_DATOS:-/etc/zumo/datos.db}" "$w/datos.db"
+[ -f "${ZUMO_HIST:-/etc/zumo/datos-hist.db}" ] && cp "${ZUMO_HIST:-/etc/zumo/datos-hist.db}" "$w/datos-hist.db"
+[ -f "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}" ] && cp "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}" "$w/limit.conf"
+tar czf "$w/datos.tgz" -C "$w" --exclude=datos.tgz . 2>/dev/null
+mkdir -p "$(dirname "$out")"
+ZBK="$clave" openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:ZBK -in "$w/datos.tgz" -out "$out" 2>/dev/null
+local rc=$?
+rm -rf "$w"
+[ $rc -eq 0 ] && chmod 600 "$out"
+BK_CUENTAS=$n
+return $rc
+}
+
+# _respaldo_restaurar ARCHIVO CLAVE — recrea usuarios, contraseñas, vencimientos,
+# temporales y datos. Los usuarios que ya existen no se tocan (se actualiza su
+# límite y vencimiento en la base).
+_respaldo_restaurar() {
+local arch="$1" clave="$2" w u hash gecos lim exp nuevos=0 existentes=0 vencidos=0 us="" ep now min
+local -a args
+local -A TEMP=()
+w=$(mktemp -d)
+if ! ZBK="$clave" openssl enc -d -aes-256-cbc -pbkdf2 -pass env:ZBK -in "$arch" 2>/dev/null | tar xz -C "$w" 2>/dev/null || [ ! -s "$w/cuentas.txt" ]; then
+rm -rf "$w"; return 1
+fi
+now=$(date +%s)
+if [ -f "$w/temporales.db" ]; then
+while IFS=: read -r u ep; do [ -n "$u" ] && TEMP[$u]=$ep; done < "$w/temporales.db"
+fi
+while IFS=: read -r u hash gecos; do
+[ -z "$u" ] && continue
+lim=$(awk -F: -v u="$u" '$1==u{print $2; exit}' "$w/usuarios.db"); lim=${lim:-1}
+exp=$(awk -F: -v u="$u" '$1==u{print $3; exit}' "$w/usuarios.db")
+[ -n "$exp" ] || continue
+if [ -n "${TEMP[$u]:-}" ] && [ "${TEMP[$u]}" -le "$now" ]; then vencidos=$((vencidos+1)); continue; fi
+if id "$u" >/dev/null 2>&1; then
+existentes=$((existentes+1))
+else
+args=(-M -s /bin/false -e "$exp")
+[ -n "$gecos" ] && args+=(-c "$gecos")
+case "$gecos" in hwid,*) args+=(--badname) ;; esac
+if useradd "${args[@]}" "$u" 2>/dev/null; then
+echo "$u:$hash" | chpasswd -e 2>/dev/null
+nuevos=$((nuevos+1))
+else
+continue
+fi
+fi
+zumo_db_del "$u"; zumo_db_add "$u" "$lim" "$exp"
+us+="$u "
+if [ -n "${TEMP[$u]:-}" ]; then
+min=$(( (TEMP[$u] - now + 59) / 60 ))
+[ "$min" -ge 1 ] && programar_borrado_temp "$u" "$min"
+fi
+done < "$w/cuentas.txt"
+_merge_por_usuario "${ZUMO_DATOS:-/etc/zumo/datos.db}" "$w/datos.db" 1 "$us"
+_merge_por_usuario "${ZUMO_HIST:-/etc/zumo/datos-hist.db}" "$w/datos-hist.db" 2 "$us"
+[ -f "$w/limit.conf" ] && [ -w "$(dirname "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}")" ] && cp "$w/limit.conf" "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}"
+rm -rf "$w"
+RS_NUEVOS=$nuevos; RS_EXISTENTES=$existentes; RS_VENCIDOS=$vencidos
+return 0
+}
+
+# Servidor de un solo uso: entrega el respaldo una vez en /respaldo y se apaga
+# (o a los 10 minutos). El archivo va cifrado, así que no se ve nada en el cable.
+_respaldo_servidor_py() {
+cat <<'PY'
+import http.server, sys, threading
+arch, puerto = sys.argv[1], int(sys.argv[2])
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        if self.path.split("?")[0] != "/respaldo":
+            self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers(); return
+        d = open(arch, "rb").read()
+        self.send_response(200); self.send_header("Content-Length", str(len(d))); self.end_headers()
+        self.wfile.write(d)
+        print("DESCARGADO", flush=True)
+        threading.Thread(target=srv.shutdown).start()
+srv = http.server.HTTPServer(("0.0.0.0", puerto), H)
+t = threading.Timer(600, srv.shutdown); t.daemon = True; t.start()
+srv.serve_forever()
+PY
+}
+
+_respaldos_lista() {
+RESPALDOS=()
+local f
+for f in $(ls -1t "$RESP_DIR"/*.zbk 2>/dev/null); do RESPALDOS+=("$f"); done
+}
+
+_respaldo_elegir() { # sale con 1 si no hay o se cancela; deja el archivo en BK_ELEGIDO
+local i n sz
+_respaldos_lista
+if [ ${#RESPALDOS[@]} -eq 0 ]; then msg_err "No hay respaldos guardados. Creá uno primero."; return 1; fi
+for i in "${!RESPALDOS[@]}"; do
+sz=$(du -h "${RESPALDOS[$i]}" | cut -f1)
+echo -e " \e[1;38;5;208m[$((i+1))]\e[0m \e[1;32m$(basename "${RESPALDOS[$i]}")\e[0m \e[2m($sz)${N}"
+done
+echo -e " \e[1;38;5;208m[0]\e[0m \e[1;32mVolver${N}\n"
+read -rp " Número [1 = el último]: " n; n=${n:-1}
+[ "$n" = "0" ] && return 1
+if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt ${#RESPALDOS[@]} ]; then msg_err "Opción inválida"; return 1; fi
+BK_ELEGIDO="${RESPALDOS[$((n-1))]}"
+}
+
+crear_respaldo() {
+banner; echo -e " \e[1;38;5;141mCREAR RESPALDO${N}\n"
+local clave arch
+if ! command -v openssl >/dev/null 2>&1; then msg_err "Falta openssl (apt install openssl)"; pausa; return; fi
+read -rp " Clave del respaldo, 4 a 20 letras/números (Enter = generar): " clave
+[ -z "$clave" ] && clave=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 8)
+[[ "$clave" =~ ^[A-Za-z0-9]{4,20}$ ]] || { msg_err "Clave inválida"; pausa; return; }
+mkdir -p "$RESP_DIR"; chmod 700 "$RESP_DIR"
+arch="$RESP_DIR/zumo-$(date +%Y%m%d-%H%M%S).zbk"
+if _respaldo_crear "$arch" "$clave"; then
+ls -1t "$RESP_DIR"/*.zbk 2>/dev/null | tail -n +11 | xargs -r rm -f
+echo; msg_ok "Respaldo creado ($BK_CUENTAS usuarios)"
+echo -e "   Archivo: \e[1;38;5;214m$arch${N}"
+echo -e "   Clave:   \e[1;38;5;214m$clave${N}"
+echo -e "\n \e[1;31mAnotá la clave: sin ella no se puede restaurar.${N}"
+else
+msg_err "No se pudo crear el respaldo"
+fi
+pausa
+}
+
+compartir_respaldo() {
+banner; echo -e " \e[1;38;5;141mCOMPARTIR RESPALDO (IP y puerto)${N}\n"
+local puerto pid ip ufw_regla=0 salida rc
+command -v python3 >/dev/null 2>&1 || { msg_err "Falta python3 (apt install python3)"; pausa; return; }
+_respaldo_elegir || { pausa; return; }
+read -rp " Puerto [8088]: " puerto; puerto=${puerto:-8088}
+[[ "$puerto" =~ ^[0-9]+$ ]] && [ "$puerto" -ge 1 ] && [ "$puerto" -le 65535 ] || { msg_err "Puerto inválido"; pausa; return; }
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+ufw allow "$puerto/tcp" >/dev/null 2>&1 && ufw_regla=1
+fi
+salida=$(mktemp)
+_respaldo_servidor_py > "$salida.py"
+python3 "$salida.py" "$BK_ELEGIDO" "$puerto" > "$salida" 2>&1 &
+pid=$!
+sleep 1
+if ! kill -0 "$pid" 2>/dev/null; then msg_err "No se pudo abrir el puerto $puerto (¿está en uso?)"; rm -f "$salida" "$salida.py"; [ $ufw_regla = 1 ] && ufw delete allow "$puerto/tcp" >/dev/null 2>&1; pausa; return; fi
+ip=$(ip_publica)
+echo
+msg_ok "Listo para descargar (una sola vez, 10 minutos)"
+echo -e "\n   IP:     \e[1;38;5;214m$ip${N}"
+echo -e "   Puerto: \e[1;38;5;214m$puerto${N}"
+echo -e "\n \e[2mEn la VPS nueva: Herramientas → Respaldo → Restaurar desde otra VPS.${N}"
+echo -e " \e[2mNecesitás también la clave del respaldo. Si no conecta, abrí ese puerto en el firewall del proveedor.${N}"
+echo -e "\n Esperando la descarga... (Enter para cancelar)"
+while kill -0 "$pid" 2>/dev/null; do
+read -rsn1 -t 1 && break
+done
+if grep -q DESCARGADO "$salida" 2>/dev/null; then echo; msg_ok "Respaldo descargado. Servidor cerrado."
+else echo; echo -e " \e[2mServidor cerrado.${N}"; fi
+kill "$pid" 2>/dev/null
+rm -f "$salida" "$salida.py"
+[ $ufw_regla = 1 ] && ufw delete allow "$puerto/tcp" >/dev/null 2>&1
+pausa
+}
+
+_respaldo_restaurar_pantalla() { # $1 = archivo
+local clave
+read -rsp " Clave del respaldo: " clave; echo
+if _respaldo_restaurar "$1" "$clave"; then
+echo; msg_ok "Restauración lista"
+echo -e "   Usuarios creados:         \e[1;38;5;214m$RS_NUEVOS${N}"
+echo -e "   Ya existían (se dejaron): \e[1;38;5;214m$RS_EXISTENTES${N}"
+[ "$RS_VENCIDOS" -gt 0 ] && echo -e "   Temporales vencidos:      \e[1;38;5;214m$RS_VENCIDOS (no se crearon)${N}"
+echo -e "\n \e[2mLos protocolos (PDirect, BadVPN, etc.) se activan desde el menú Protocolos.${N}"
+else
+msg_err "Clave incorrecta o archivo dañado"
+fi
+}
+
+restaurar_desde_ip() {
+banner; echo -e " \e[1;38;5;141mRESTAURAR DESDE OTRA VPS${N}\n"
+local ip puerto arch
+read -rp " IP de la VPS vieja (Enter = volver): " ip
+[ -z "$ip" ] && return
+[[ "$ip" =~ ^[A-Za-z0-9.:-]+$ ]] || { msg_err "IP inválida"; pausa; return; }
+read -rp " Puerto [8088]: " puerto; puerto=${puerto:-8088}
+[[ "$puerto" =~ ^[0-9]+$ ]] || { msg_err "Puerto inválido"; pausa; return; }
+mkdir -p "$RESP_DIR"; chmod 700 "$RESP_DIR"
+arch="$RESP_DIR/recibido-$(date +%Y%m%d-%H%M%S).zbk"
+echo -e " \e[2mDescargando...${N}"
+if ! curl -fsS --max-time 120 -o "$arch" "http://$ip:$puerto/respaldo" 2>/dev/null || [ ! -s "$arch" ]; then
+rm -f "$arch"; msg_err "No se pudo descargar. Revisá IP, puerto y que la VPS vieja siga esperando."; pausa; return
+fi
+msg_ok "Descargado"
+_respaldo_restaurar_pantalla "$arch"
+pausa
+}
+
+restaurar_guardado() {
+banner; echo -e " \e[1;38;5;141mRESTAURAR UN RESPALDO GUARDADO${N}\n"
+_respaldo_elegir || { pausa; return; }
+echo
+_respaldo_restaurar_pantalla "$BK_ELEGIDO"
+pausa
+}
+
+menu_respaldo() {
+while true; do
+banner; echo -e " \e[1;38;5;141mRESPALDO Y RESTAURACIÓN${N}\n"
+op 1 "💾" "Crear respaldo"
+op 2 "📤" "Compartir respaldo (IP y puerto)"
+op 3 "📥" "Restaurar desde otra VPS (IP y puerto)"
+op 4 "♻" "Restaurar un respaldo guardado"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) crear_respaldo ;;
+2) compartir_respaldo ;;
+3) restaurar_desde_ip ;;
+4) restaurar_guardado ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
+actualizar_zumo() {
+banner; echo -e " \e[1;38;5;141mACTUALIZAR ZUMO${N}\n"
+local api="${ZUMO_API:-https://api.github.com/repos/adri40606941-ui/Zumo/commits/main}"
+local raw="${ZUMO_RAW_BASE:-https://raw.githubusercontent.com/adri40606941-ui/Zumo}"
+local sha actual tmp
+actual=$(cat /etc/zumo/version 2>/dev/null)
+echo -e " \e[2mBuscando la última versión...${N}"
+sha=$(curl -fsSL --max-time 15 "$api" 2>/dev/null | grep -m1 '"sha"' | sed 's/.*"sha": *"\([0-9a-f]\{40\}\)".*/\1/')
+[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { msg_err "No se pudo consultar GitHub (¿hay internet?)"; pausa; return; }
+if [ "$sha" = "$actual" ]; then msg_ok "Ya tenés la última versión (${sha:0:7})"; pausa; return; fi
+echo -e " Instalada: \e[1;38;5;214m${actual:+${actual:0:7}}${actual:-desconocida}${N}"
+echo -e " Nueva:     \e[1;38;5;214m${sha:0:7}${N}\n"
+tmp=$(mktemp)
+if ! curl -fsSL --max-time 30 "$raw/$sha/actualizar.sh" -o "$tmp" || ! bash -n "$tmp" 2>/dev/null; then
+rm -f "$tmp"; msg_err "No se pudo bajar el actualizador"; pausa; return
+fi
+sed -i "s#/Zumo/main#/Zumo/$sha#g" "$tmp"
+bash "$tmp"
+rm -f "$tmp"
+echo; msg_ok "Reiniciando el panel..."
+sleep 2
+exec /usr/local/bin/zumo
 }
 
 menu_herramientas() {
@@ -1071,6 +1440,8 @@ op 2 "🚀" "Test de velocidad"
 op 3 "🧹" "Liberar RAM y limpiar"
 op 4 "📊" "Uso de CPU y RAM"
 op 5 "📶" "Uso de datos"
+op 6 "⬆" "Actualizar Zumo"
+op 7 "💾" "Respaldo y restauración"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -1079,6 +1450,8 @@ case $o in
 3) liberar_ram ;;
 4) procesos_top ;;
 5) uso_datos ;;
+6) actualizar_zumo ;;
+7) menu_respaldo ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
@@ -1091,12 +1464,14 @@ banner
 op 1 "●" "Usuario"
 op 2 "⚡" "Protocolos"
 op 3 "🛠" "Herramientas"
+op 4 "●" "Conectados ahora"
 op 0 "✖" "Salir"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) menu_usuario ;;
 2) menu_protocolos ;;
 3) menu_herramientas ;;
+4) conectados ;;
 0) clear; exit 0 ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac

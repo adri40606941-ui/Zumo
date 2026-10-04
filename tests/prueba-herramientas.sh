@@ -14,7 +14,7 @@ trap limpiar EXIT
 
 N='\e[0m'; L='---'
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
-for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename; do
+for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente conectados es_hwid en_linea tiempo_conectado actualizar_zumo bhttp_port hcr_port dias es_temporal temp_restante; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
 	eval "$src"
@@ -103,13 +103,25 @@ chequear "el proceso que gasta CPU sale arriba en la lista de CPU" "si" "$(sed -
 
 echo "5) Uso de datos"
 etiqueta_de() { echo "$1"; }
+export ZUMO_DB="$T/usuarios.db"; ZUMO_LOCK="$T/lock"
+# shellcheck source=/dev/null
+source "$AQUI/zumo-lib.sh"
 DB="$T/usuarios.db"; printf 'ana:1:2099-01-01\nbeto:1:2099-01-01\nnuevo:1:2099-01-01\n' > "$DB"
-export ZUMO_DATOS="$T/datos.db"; printf 'ana:1610612736\nbeto:5242880\n' > "$ZUMO_DATOS"
+export ZUMO_DATOS="$T/datos.db" ZUMO_HIST="$T/hist.db"
+printf 'ana:1610612736\nbeto:5242880\n' > "$ZUMO_DATOS"
+HOY=$(date +%F); MES=${HOY:0:7}
+printf '%s:ana:1048576\n%s-01:ana:2097152\n%s:beto:5242880\n2020-01-05:ana:9999999\n' "$HOY" "$MES" "$HOY" > "$ZUMO_HIST"
 SAL=$(uso_datos </dev/null | limpio)
-chequear "ana en GB" "si" "$(grep -qE 'ana +1\.50 GB' <<<"$SAL" && echo si || echo no)"
-chequear "beto en MB" "si" "$(grep -qE 'beto +5\.0 MB' <<<"$SAL" && echo si || echo no)"
-chequear "usuario sin datos en 0" "si" "$(grep -qE 'nuevo +0\.0 MB' <<<"$SAL" && echo si || echo no)"
-chequear "total de los 3 usuarios" "si" "$(grep -qE 'Total \(3 usuarios\): +1\.50 GB' <<<"$SAL" && echo si || echo no)"
+chequear "ana: hoy 1.0 MB, mes 3.0 MB, total 1.50 GB" "si" "$(grep -qE 'ana +1\.0 MB +3\.0 MB +1\.50 GB' <<<"$SAL" && echo si || echo no)"
+chequear "beto: hoy 5.0 MB, mes 5.0 MB, total 5.0 MB" "si" "$(grep -qE 'beto +5\.0 MB +5\.0 MB +5\.0 MB' <<<"$SAL" && echo si || echo no)"
+chequear "usuario sin datos en 0" "si" "$(grep -qE 'nuevo +0\.0 MB +0\.0 MB +0\.0 MB' <<<"$SAL" && echo si || echo no)"
+chequear "total de los 3 usuarios" "si" "$(grep -qE 'TOTAL\(3\) +6\.0 MB +8\.0 MB +1\.50 GB' <<<"$SAL" && echo si || echo no)"
+SAL=$(printf '2\n' | uso_datos | limpio)
+chequear "vista por día muestra hoy" "si" "$(grep -qE "$(date +%d/%m/%Y) +6\.0 MB" <<<"$SAL" && echo si || echo no)"
+chequear "vista por día muestra un día viejo" "si" "$(grep -qE '05/01/2020 +9\.5 MB' <<<"$SAL" && echo si || echo no)"
+SAL=$(printf '3\n' | uso_datos | limpio)
+chequear "vista por mes muestra el mes actual" "si" "$(grep -qE "${MES:5:2}/${MES:0:4} +8\.0 MB" <<<"$SAL" && echo si || echo no)"
+
 echo "6) Renovar pone el contador en 0; cambiar HWID lo traslada"
 export ZUMO_DATOS_LOCK="$T/lock"
 datos_rename ana ana2
@@ -117,6 +129,39 @@ chequear "rename traslada los datos" "1610612736" "$(datos_de ana2)"
 datos_reset ana2
 chequear "renovar deja en 0" "" "$(datos_de ana2)"
 chequear "los demás no se tocan" "5242880" "$(datos_de beto)"
-unset ZUMO_DATOS
+unset ZUMO_DATOS ZUMO_HIST
+
+echo "7) Hora de la VPS, mensaje para el cliente, conectados, actualizar"
+chequear "hora VPS con día y hora" "si" "$(hora_vps | grep -qE '^(Dom|Lun|Mar|Mié|Jue|Vie|Sáb) [0-9]{2}/[0-9]{2}/[0-9]{4} +[0-9]{2}:[0-9]{2}:[0-9]{2}' && echo si || echo no)"
+ip_publica() { echo "1.2.3.4"; }
+puertos_activos() { echo "SSH 22 · WebSocket 80"; }
+SAL=$(mensaje_cliente ana clave99 "30 días" | limpio)
+chequear "mensaje: servidor" "si" "$(grep -q 'Servidor: *1.2.3.4' <<<"$SAL" && echo si || echo no)"
+chequear "mensaje: usuario y contraseña" "si" "$(grep -q 'Usuario: *ana' <<<"$SAL" && grep -q 'Contraseña: *clave99' <<<"$SAL" && echo si || echo no)"
+chequear "mensaje: vence y puertos" "si" "$(grep -q 'Vence: *30 días' <<<"$SAL" && grep -q 'Puertos: *SSH 22' <<<"$SAL" && echo si || echo no)"
+SAL=$(mensaje_cliente ana "" "30 días" | limpio)
+chequear "mensaje sin clave avisa" "si" "$(grep -q 'la que le diste' <<<"$SAL" && echo si || echo no)"
+SAL=$(conectados </dev/null | limpio)
+chequear "conectados: pantalla y resumen" "si" "$(grep -q 'CONECTADOS AHORA' <<<"$SAL" && grep -qE 'Usuarios: [0-9]+ +Sesiones: [0-9]+' <<<"$SAL" && echo si || echo no)"
+# actualizar: API de mentira con un sha, y un raw con un actualizar.sh de mentira
+SHA=$(printf 'a%.0s' $(seq 40))
+mkdir -p "$T/web/api/commits" "$T/web/raw/$SHA"
+printf '{\n  "sha": "%s",\n  "commit": {"tree": {"sha": "%s"}}\n}\n' "$SHA" "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" > "$T/web/api/commits/main"
+printf '#!/bin/bash\necho EJECUTADO > "%s"\n' "$T/ejecutado" > "$T/web/raw/$SHA/actualizar.sh"
+( cd "$T/web" && python3 -m http.server "$((PORT+7))" --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > "$T/web.pid" ); sleep 1
+exec_orig=$(declare -f actualizar_zumo)
+export ZUMO_API="http://127.0.0.1:$((PORT+7))/api/commits/main" ZUMO_RAW_BASE="http://127.0.0.1:$((PORT+7))/raw"
+# se prueba sin el exec final del panel
+eval "${exec_orig/exec \/usr\/local\/bin\/zumo/echo REINICIA}"
+SAL=$(actualizar_zumo </dev/null | limpio)
+kill "$(cat "$T/web.pid")" 2>/dev/null
+chequear "actualizar encuentra la versión nueva" "si" "$(grep -q 'Nueva: *aaaaaaa' <<<"$SAL" && echo si || echo no)"
+chequear "actualizar corre el actualizador" "EJECUTADO" "$(cat "$T/ejecutado" 2>/dev/null)"
+chequear "actualizar reinicia el panel" "si" "$(grep -q REINICIA <<<"$SAL" && echo si || echo no)"
+export ZUMO_API="http://127.0.0.1:1/x"
+SAL=$(actualizar_zumo </dev/null | limpio)
+chequear "sin internet avisa" "si" "$(grep -q 'No se pudo consultar' <<<"$SAL" && echo si || echo no)"
+unset ZUMO_API ZUMO_RAW_BASE
+
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi
