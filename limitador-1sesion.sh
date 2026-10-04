@@ -30,7 +30,9 @@ if [ "$1" = "--desinstalar" ]; then
 	exit 0
 fi
 
-cat > "$BIN" <<'EOF'
+# Se escribe a un temporal y se mueve: el bash que ya está corriendo sigue
+# leyendo el archivo viejo y no se corrompe al actualizar.
+cat > "$BIN.tmp" <<'EOF'
 #!/bin/bash
 # limitador1: 1 sesión SSH por usuario. Log en /var/log/limitador1.log
 MANTENER=nueva
@@ -64,7 +66,7 @@ while :; do
 	sleep "$INTERVALO"
 done
 EOF
-chmod 0755 "$BIN"
+chmod 0755 "$BIN.tmp" && mv -f "$BIN.tmp" "$BIN"
 
 [ -f "$CONF" ] || printf 'MANTENER=nueva   # nueva | vieja\nINTERVALO=3\n' > "$CONF"
 
@@ -89,7 +91,8 @@ pkill -f /opt/sshplus/limiter 2>/dev/null
 screen -S limiter -X quit >/dev/null 2>&1
 
 systemctl daemon-reload
-systemctl enable --now limitador1 >/dev/null 2>&1
+systemctl enable limitador1 >/dev/null 2>&1
+systemctl restart limitador1 >/dev/null 2>&1
 if systemctl is-active --quiet limitador1; then
 	echo -e "${V}✔ limitador1 activo: 1 sesión por usuario, revisa cada 3 s${N}"
 	echo "  Log:    tail -f /var/log/limitador1.log"
