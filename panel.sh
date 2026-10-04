@@ -301,33 +301,45 @@ echo -e " \e[2mSe borra solo a los $min minutos.${N}"; pausa
 # Lista todos los usuarios juntos (comunes y HWID). Los HWID muestran el nombre
 # del cliente y, debajo, su HWID. Verde = conectado.
 lista_para_borrar() {
-local u lim exp on col lab
+local u lim exp on col lab i=0
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
+i=$((i+1))
 on=$(en_linea "$u")
 if [ "${on:-0}" -gt 0 ]; then col='\e[1;32m●\e[0m'; else col='\e[2m○\e[0m'; fi
 if es_hwid "$u"; then
 lab=$(etiqueta_de "$u")
-printf ' %b \e[1;38;5;214m%s\e[0m \e[2m(HWID)\e[0m\n' "$col" "$lab"
-printf '     \e[2m%s\e[0m\n' "$u"
+printf ' \e[1;38;5;208m[%d]\e[0m %b \e[1;38;5;214m%s\e[0m \e[2m(HWID)\e[0m\n' "$i" "$col" "$lab"
+printf '      \e[2m%s\e[0m\n' "$u"
 else
-printf ' %b \e[1;38;5;214m%s\e[0m\n' "$col" "$u"
+printf ' \e[1;38;5;208m[%d]\e[0m %b \e[1;38;5;214m%s\e[0m\n' "$i" "$col" "$u"
 fi
 done < "$DB"
 }
 
-# Busca lo que escribió la persona: usuario exacto, nombre del cliente (HWID) o
-# usuario sin distinguir mayúsculas. El resultado queda en $SEL (siempre sale de
+# Busca lo que escribió la persona: usuario o HWID exacto, número de la lista,
+# nombre del cliente (HWID) o usuario sin distinguir mayúsculas. El resultado queda en $SEL (siempre sale de
 # la base, nunca del texto escrito). Devuelve 1 si no existe y 2 si el nombre
 # coincide con varios clientes HWID (quedan en AMBIGUOS).
 buscar_usuario() {
-local q="$1" u lim exp lab
+local q="$1" u lim exp lab i=0
 local -a hits=()
 AMBIGUOS=()
+# 1) usuario o HWID exacto
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 if [ "$u" = "$q" ]; then SEL="$u"; return 0; fi
 done < "$DB"
+# 2) número de la lista (mismo orden que lista_para_borrar)
+if [[ "$q" =~ ^[0-9]+$ ]]; then
+while IFS=: read -r u lim exp; do
+[ -z "$u" ] && continue
+i=$((i+1))
+if [ "$i" -eq "$((10#$q))" ]; then SEL="$u"; return 0; fi
+done < "$DB"
+return 1
+fi
+# 3) nombre del cliente (HWID)
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 es_hwid "$u" || continue
@@ -336,6 +348,7 @@ lab=$(etiqueta_de "$u")
 done < "$DB"
 if [ ${#hits[@]} -eq 1 ]; then SEL="${hits[0]}"; return 0; fi
 if [ ${#hits[@]} -gt 1 ]; then AMBIGUOS=("${hits[@]}"); return 2; fi
+# 4) usuario sin distinguir mayúsculas
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 es_hwid "$u" && continue
@@ -363,7 +376,7 @@ banner; echo -e " \e[1;38;5;141mELIMINAR USUARIO${N}\n"
 if [ ! -s "$DB" ]; then msg_err "No hay usuarios registrados"; pausa; return; fi
 lista_para_borrar
 echo; echo -e " $L"
-read -rp " Escribí usuario o HWID para borrar: " q
+read -rp " Número, usuario o HWID para borrar: " q
 q="${q#"${q%%[![:space:]]*}"}"; q="${q%"${q##*[![:space:]]}"}"
 [ -z "$q" ] && return
 buscar_usuario "$q"; rc=$?

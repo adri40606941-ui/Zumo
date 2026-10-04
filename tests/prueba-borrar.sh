@@ -9,7 +9,7 @@ set -u
 AQUI=$(cd "$(dirname "$0")/.." && pwd)
 T=$(mktemp -d /tmp/zumo-borrar.XXXXXX)
 FALLOS=0
-USERS="zbpedro zbjuan zbana HWIDAAAA1111 HWIDBBBB2222 HWIDCCCC3333"
+USERS="zbpedro zbjuan zbana zbn1 zbn2 HWIDAAAA1111 HWIDBBBB2222 HWIDCCCC3333"
 
 limpiar() { for u in $USERS; do userdel "$u" 2>/dev/null; done; rm -rf "$T"; }
 trap limpiar EXIT
@@ -46,6 +46,7 @@ echo "1) La lista muestra comunes y HWID juntos"
 SAL=$(lista_para_borrar | sed 's/\x1b\[[0-9;]*m//g')
 chequear "aparece zbpedro" "si" "$(grep -q 'zbpedro' <<<"$SAL" && echo si || echo no)"
 chequear "aparece cliente Carlos (HWID)" "si" "$(grep -q 'Carlos (HWID)' <<<"$SAL" && echo si || echo no)"
+chequear "la lista está numerada [1] y [2]" "si" "$(grep -q '\[1\]' <<<"$SAL" && grep -q '\[2\]' <<<"$SAL" && echo si || echo no)"
 chequear "aparece su HWID debajo" "si" "$(grep -q 'HWIDAAAA1111' <<<"$SAL" && echo si || echo no)"
 
 echo "2) Escribir el usuario común y Enter lo borra (y Enter vacío vuelve)"
@@ -77,6 +78,19 @@ printf 'zbjuan\nzbana\n\n' | eliminar_usuario >/dev/null
 chequear "zbjuan borrado" "no" "$(en_db zbjuan)"
 chequear "zbana borrado" "no" "$(en_db zbana)"
 chequear "zbana fuera de temporales.db" "0" "$(grep -c '^zbana:' "$TEMPDB")"
+
+echo "7) Escribir el número de la lista borra a ese usuario"
+mk zbn1; mk zbn2
+printf 'zbn1:1:2099-01-01\nzbn2:1:2099-01-01\n' >> "$DB"
+# orden actual: 1 = HWIDCCCC3333, 2 = zbn1, 3 = zbn2
+printf '3\n\n' | eliminar_usuario >/dev/null
+chequear "el número 3 borró zbn2" "no" "$(en_db zbn2)"
+chequear "zbn1 sigue" "si" "$(en_db zbn1)"
+chequear "el cliente HWID sigue" "si" "$(en_db HWIDCCCC3333)"
+printf '99\n0\n\n' | eliminar_usuario >/dev/null
+chequear "un número fuera de la lista no borra nada" "si" "$(en_db zbn1)"
+SAL=$(lista_para_borrar | sed 's/\x1b\[[0-9;]*m//g')
+chequear "la lista se renumera sola" "si" "$(grep -q '\[2\].*zbn1' <<<"$SAL" && echo si || echo no)"
 
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi
