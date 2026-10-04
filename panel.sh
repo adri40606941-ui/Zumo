@@ -966,7 +966,7 @@ LC_ALL=C awk -v p="$1" 'BEGIN{ if (p >= 90) print "\033[1;31m"; else if (p >= 70
 # Los 5 procesos que más RAM y más CPU usan, con qué es cada uno, y al final el
 # uso real de RAM y CPU. La CPU se mide en vivo durante 1 segundo.
 procesos_top() {
-banner; echo -e " \e[1;38;5;141mPROCESOS QUE MÁS CONSUMEN${N}\n"
+banner; echo -e " \e[1;38;5;141mUSO DE CPU Y RAM${N}\n"
 echo -e " \e[2mMidiendo (1 segundo)...${N}\n"
 local tmp t0 t1 dt cores hz cpu_real mt mu ram_pct pid comm val d
 tmp=$(mktemp -d)
@@ -1016,7 +1016,7 @@ fi
 op 1 "⚡" "BBR"
 op 2 "🚀" "Test de velocidad"
 op 3 "🧹" "Liberar RAM y limpiar"
-op 4 "📊" "Procesos que más consumen"
+op 4 "📊" "Uso de CPU y RAM"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in

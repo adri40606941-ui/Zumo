@@ -22,7 +22,7 @@ zumo
 
 | Componente | Para qué sirve |
 |---|---|
-| **Panel** (`zumo`) | Crear/editar/borrar usuarios, ver quién está conectado, prender y apagar protocolos. En Herramientas: BBR, test de velocidad, limpieza de RAM y logs, y procesos que más consumen. |
+| **Panel** (`zumo`) | Crear/editar/borrar usuarios, ver quién está conectado, prender y apagar protocolos. En Herramientas: BBR, test de velocidad, limpieza de RAM y logs, y uso de CPU y RAM. |
 | **Limitador** (`zumo-limit`) | Cada 3 s corta las sesiones SSH que pasan el límite de cada usuario, corta a los vencidos y borra los temporales vencidos. |
 | **PDirect** | WebSocket en el puerto 80 → SSH local. |
 | **BadVPN** | UDPGW en el 7300 (para el tráfico UDP de las apps). |

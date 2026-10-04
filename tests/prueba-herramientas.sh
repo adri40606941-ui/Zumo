@@ -83,7 +83,7 @@ chequear "muestra RAM libre" "si" "$(grep -qE 'RAM libre: +[0-9]+ → [0-9]+ MB'
 chequear "muestra caché liberada (número, no negativo)" "si" "$(grep -qE 'Caché liberada: +[0-9]+ MB' <<<"$SAL" && echo si || echo no)"
 chequear "muestra disco libre" "si" "$(grep -qE 'Disco libre: +[0-9]+ → [0-9]+ MB' <<<"$SAL" && echo si || echo no)"
 
-echo "4) Procesos que más consumen"
+echo "4) Uso de CPU y RAM"
 chequear "sshd se describe como SSH" "si" "$(desc_proceso sshd | grep -q SSH && echo si || echo no)"
 chequear "badvpn-udpgw se describe como BadVPN" "si" "$(desc_proceso badvpn-udpgw | grep -q BadVPN && echo si || echo no)"
 chequear "zumo-limit se describe como Limitador" "si" "$(desc_proceso zumo-limit | grep -q Limitador && echo si || echo no)"
