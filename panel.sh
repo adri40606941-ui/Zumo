@@ -980,9 +980,10 @@ LC_ALL=C awk -v p="$1" 'BEGIN{ if (p >= 90) print "\033[1;31m"; else if (p >= 70
 # Los 5 procesos que más RAM y más CPU usan, con qué es cada uno, y al final el
 # uso real de RAM y CPU. La CPU se mide en vivo durante 1 segundo.
 procesos_top() {
-banner; echo -e " \e[1;38;5;141mUSO DE CPU Y RAM${N}\n"
-echo -e " \e[2mMidiendo (1 segundo)...${N}\n"
-local tmp t0 t1 dt cores hz cpu_real mt mu ram_pct pid comm val d
+local tmp t0 t1 dt cores hz cpu_real mt mu ram_pct pid comm val d rc primera=1 buf
+while true; do
+[ "$primera" = 1 ] && { banner; echo -e " \e[1;38;5;141mUSO DE CPU Y RAM${N}\n"; echo -e " \e[2mMidiendo...${N}"; }
+primera=0
 tmp=$(mktemp -d)
 cores=$(nproc 2>/dev/null || echo 1)
 hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
@@ -993,6 +994,7 @@ dt=$(LC_ALL=C awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
 cpu_real=$(LC_ALL=C awk 'NR==FNR{for(i=2;i<=9;i++)a+=$i; i0=$5+$6; next}
 {for(i=2;i<=9;i++)b+=$i; i1=$5+$6}
 END{dt=b-a; di=i1-i0; if(dt<=0) print "0.0"; else printf "%.1f", (dt-di)*100/dt}' "$tmp/s0" "$tmp/s1")
+buf=$(
 
 echo -e " \e[1;38;5;208mMás RAM:${N}"
 printf ' \e[2m%6s %-15s %5s  %s\e[0m\n' "PID" "PROCESO" "%RAM" "DE QUÉ ES"
@@ -1008,7 +1010,6 @@ while read -r pid comm val; do
 printf ' %6s %-15s %5s  \e[2m%s\e[0m\n' "$pid" "${comm:0:15}" "$val" "$(desc_proceso "$comm")"
 done < <(LC_ALL=C awk -v dt="$dt" -v hz="$hz" -v c="$cores" 'NR==FNR{a[$1]=$3; next}
 ($1 in a){ printf "%d %s %.1f\n", $1, $2, ($3-a[$1])/hz/dt*100/c }' "$tmp/p0" "$tmp/p1" | sort -k3 -nr | head -n 5)
-rm -rf "$tmp"
 
 read -r mt mu <<< "$(free -m | awk '/^Mem:/{print $2, $3}')"
 ram_pct=$(LC_ALL=C awk -v u="${mu:-0}" -v t="${mt:-1}" 'BEGIN{printf "%.1f", u*100/t}')
@@ -1016,7 +1017,15 @@ echo; echo -e " $L"
 echo -e " \e[1;38;5;208mUso real ahora:${N}"
 echo -e "   RAM: $(_col_pct "$ram_pct")${ram_pct}%\e[0m  (${mu} de ${mt} MB)"
 echo -e "   CPU: $(_col_pct "$cpu_real")${cpu_real}%\e[0m  (medido en 1 s, de todos los núcleos)"
-pausa
+
+)
+rm -rf "$tmp"
+banner; echo -e " \e[1;38;5;141mUSO DE CPU Y RAM${N}\n"
+printf '%s\n' "$buf"
+echo -e "\n Enter para volver..."
+read -rsn1 -t 1; rc=$?
+[ "$rc" -gt 128 ] || break
+done
 }
 
 _fmt_bytes() {
