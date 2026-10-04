@@ -14,7 +14,7 @@ trap limpiar EXIT
 
 N='\e[0m'; L='---'
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
-for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos; do
+for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
 	eval "$src"
@@ -110,6 +110,13 @@ chequear "ana en GB" "si" "$(grep -qE 'ana +1\.50 GB' <<<"$SAL" && echo si || ec
 chequear "beto en MB" "si" "$(grep -qE 'beto +5\.0 MB' <<<"$SAL" && echo si || echo no)"
 chequear "usuario sin datos en 0" "si" "$(grep -qE 'nuevo +0\.0 MB' <<<"$SAL" && echo si || echo no)"
 chequear "total de los 3 usuarios" "si" "$(grep -qE 'Total \(3 usuarios\): +1\.50 GB' <<<"$SAL" && echo si || echo no)"
+echo "6) Renovar pone el contador en 0; cambiar HWID lo traslada"
+export ZUMO_DATOS_LOCK="$T/lock"
+datos_rename ana ana2
+chequear "rename traslada los datos" "1610612736" "$(datos_de ana2)"
+datos_reset ana2
+chequear "renovar deja en 0" "" "$(datos_de ana2)"
+chequear "los demás no se tocan" "5242880" "$(datos_de beto)"
 unset ZUMO_DATOS
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi

@@ -431,6 +431,17 @@ msg_ok "${#VENC[@]} usuario(s) vencido(s) eliminado(s)"; pausa ;;
 esac
 }
 
+datos_de() { awk -F: -v u="$1" '$1==u{print $2}' "${ZUMO_DATOS:-/etc/zumo/datos.db}" 2>/dev/null; }
+# datos_reset USUARIO = poner el contador en 0 (al renovar); datos_rename VIEJO NUEVO
+datos_reset() {
+local f="${ZUMO_DATOS:-/etc/zumo/datos.db}"
+( flock -w 5 9; [ -f "$f" ] && awk -F: -v u="$1" '$1!=u' "$f" > "$f.tmp" && mv -f "$f.tmp" "$f" ) 9>"${ZUMO_DATOS_LOCK:-/etc/zumo/datos.lock}" 2>/dev/null
+}
+datos_rename() {
+local f="${ZUMO_DATOS:-/etc/zumo/datos.db}"
+( flock -w 5 9; [ -f "$f" ] && awk -F: -v a="$1" -v b="$2" -v OFS=: '$1==a{$1=b}1' "$f" > "$f.tmp" && mv -f "$f.tmp" "$f" ) 9>"${ZUMO_DATOS_LOCK:-/etc/zumo/datos.lock}" 2>/dev/null
+}
+
 editar_usuario() {
 banner; echo -e " \e[1;38;5;141mEDITAR USUARIO${N}\n"
 elegir_usuario || { pausa; return; }
@@ -443,7 +454,8 @@ banner; echo -e " \e[1;38;5;141mEDITAR USUARIO: $SEL${N}\n"
 echo -e "   Límite actual:      \e[1;38;5;214m$lim${N}"
 echo -e "   Vencimiento actual: \e[1;38;5;214m$exp ($(dias "$exp"))${N}\n"
 local estado_bloq="desbloqueado"; esta_bloqueado "$SEL" && estado_bloq="bloqueado"
-echo -e "   Estado:             \e[1;38;5;214m$estado_bloq${N}\n"
+echo -e "   Estado:             \e[1;38;5;214m$estado_bloq${N}"
+echo -e "   Datos gastados:     \e[1;38;5;51m$(_fmt_bytes "$(datos_de "$SEL" | grep . || echo 0)")${N}\n"
 op 1 "✎" "Cambiar contraseña"
 op 2 "⚙" "Cambiar límite de conexiones"
 op 3 "⏱" "Cambiar días (vencimiento)"
@@ -465,7 +477,8 @@ msg_ok "Límite de $SEL ahora es $nl"; sleep 1 ;;
 nexp=$(date -d "+$nd days" +%F)
 usermod -e "$nexp" "$SEL" 2>/dev/null
 zumo_db_set "$SEL" 3 "$nexp"
-msg_ok "Vencimiento de $SEL ahora: $nexp ($(dias "$nexp"))"; sleep 1 ;;
+datos_reset "$SEL"
+msg_ok "Vencimiento de $SEL ahora: $nexp ($(dias "$nexp")). Contador de datos en 0"; sleep 1 ;;
 4) if esta_bloqueado "$SEL"; then
 usermod -U "$SEL" 2>/dev/null; msg_ok "$SEL desbloqueado"
 else
@@ -480,6 +493,7 @@ pkill -9 -u "$SEL" 2>/dev/null
 if usermod --badname -l "$nh" "$SEL" 2>/dev/null; then
 echo "$nh:$nh" | chpasswd
 zumo_db_rename "$SEL" "$nh"
+datos_rename "$SEL" "$nh"
 SEL="$nh"
 msg_ok "HWID cambiado a $nh"
 else
