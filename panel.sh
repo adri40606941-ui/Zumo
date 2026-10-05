@@ -1070,7 +1070,7 @@ echo -e " \e[1;31m● El contador no está activo (actualizá con actualizar.sh)
 fi
 hh=$(awk -F: -v h="$hoy" '$1==h{d[$2]+=$3} END{for(u in d) printf "%s %.0f\n", u, d[u]}' "$HIST" 2>/dev/null)
 total=0; totd=0; n=0
-printf " \e[1;38;5;208m%-10s %9s %9s %9s${N}\n" "USUARIO" "HOY" "MES" "TOTAL"
+printf " \e[1;38;5;208m%-10s %9s %9s${N}\n" "USUARIO" "HOY" "TOTAL"
 while IFS=: read -r u _; do
 [ -z "$u" ] && continue
 b=$(awk -F: -v u="$u" '$1==u{print $2}' "$DATOS" 2>/dev/null); b=${b:-0}
