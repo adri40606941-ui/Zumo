@@ -20,6 +20,11 @@ class SshTunnel(
 
     fun connect() {
         close()
+        SshDebug.limpiar()
+        JSch.setLogger(object : com.jcraft.jsch.Logger {
+            override fun isEnabled(level: Int) = true
+            override fun log(level: Int, message: String?) { SshDebug.add(message ?: "") }
+        })
         val tr = Transport.connect(cfg, etapa, proteger)
         try {
             etapa("Iniciando sesión SSH")
@@ -57,7 +62,8 @@ class SshTunnel(
             session = s
         } catch (e: Exception) {
             try { tr.socket.close() } catch (_: Exception) {}
-            throw e
+            val detalle = SshDebug.ultimas()
+            throw Exception((e.message ?: e.javaClass.simpleName) + if (detalle.isBlank()) "" else "\n\n[ssh] $detalle", e)
         }
     }
 
