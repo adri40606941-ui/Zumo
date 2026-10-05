@@ -98,26 +98,13 @@ elif [ "$h" -gt 0 ]; then echo "${h}h ${m}m"
 else echo "${m}m"; fi
 }
 
-# Si el usuario fue creado en modo HWID, devuelve el nombre del cliente
-# (guardado en el campo GECOS como "hwid,<cliente>"); si no, el username tal cual.
-etiqueta_de() {
-local gecos
-gecos=$(getent passwd "$1" 2>/dev/null | awk -F: '{print $5}')
-case "$gecos" in
-hwid,*) echo "${gecos#hwid,}" ;;
-*) echo "$1" ;;
-esac
-}
-
-es_hwid() {
-case "$(getent passwd "$1" 2>/dev/null | awk -F: '{print $5}')" in hwid,*) return 0 ;; *) return 1 ;; esac
-}
+# Nombre a mostrar de un usuario (todos son usuarios normales: es el username).
+etiqueta_de() { echo "$1"; }
 
 # Contraseñas guardadas para mostrarlas en "Ver usuarios" (archivo solo root, modo 600).
 # El sistema solo guarda el hash, por eso el panel anota la clave al crear/cambiar.
 CLAVES="${ZUMO_CLAVES:-/etc/zumo/claves.db}"
 clave_get() {
-if es_hwid "$1"; then echo "$1"; return; fi
 [ -f "$CLAVES" ] && awk -F: -v u="$1" '$1==u{print substr($0,length(u)+2); exit}' "$CLAVES"
 }
 clave_del() { [ -f "$CLAVES" ] && { awk -F: -v u="$1" '$1!=u' "$CLAVES" > "$CLAVES.tmp" && cat "$CLAVES.tmp" > "$CLAVES"; rm -f "$CLAVES.tmp"; }; return 0; }
@@ -127,6 +114,27 @@ clave_del "$1"
 ( umask 077; printf '%s:%s\n' "$1" "$2" >> "$CLAVES" )
 }
 clave_rename() { [ -f "$CLAVES" ] && awk -F: -v a="$1" -v b="$2" -v OFS=: '$1==a{$1=b}1' "$CLAVES" > "$CLAVES.tmp" && cat "$CLAVES.tmp" > "$CLAVES"; rm -f "$CLAVES.tmp"; return 0; }
+
+# Token del dispositivo (12 hex que la app muestra en "Tu token"). Un usuario con
+# token solo puede conectar desde el teléfono que lo tiene (lo aplica zumo-limit).
+# Archivo solo root, modo 600, líneas "usuario:TOKEN".
+TOKENS="${ZUMO_TOKENS:-/etc/zumo/tokens.db}"
+token_get() { [ -f "$TOKENS" ] && awk -F: -v u="$1" '$1==u{print $2; exit}' "$TOKENS"; return 0; }
+token_del() { [ -f "$TOKENS" ] && { awk -F: -v u="$1" '$1!=u' "$TOKENS" > "$TOKENS.tmp" && cat "$TOKENS.tmp" > "$TOKENS"; rm -f "$TOKENS.tmp"; }; return 0; }
+token_set() { # usuario TOKEN
+( umask 077; touch "$TOKENS"; chmod 600 "$TOKENS" 2>/dev/null )
+token_del "$1"
+( umask 077; printf '%s:%s\n' "$1" "${2^^}" >> "$TOKENS" )
+}
+token_rename() { [ -f "$TOKENS" ] && awk -F: -v a="$1" -v b="$2" -v OFS=: '$1==a{$1=b}1' "$TOKENS" > "$TOKENS.tmp" && cat "$TOKENS.tmp" > "$TOKENS"; rm -f "$TOKENS.tmp"; return 0; }
+# Token válido: 8 a 32 letras/números (la app muestra 12). Se normaliza a mayúsculas.
+token_valido() { [[ "$1" =~ ^[A-Za-z0-9]{8,32}$ ]]; }
+# Pide el token (obligatorio). Resultado en $TOKEN_NUEVO; devuelve 1 si vacío/inválido.
+pedir_token() {
+leer_alnum "Token del dispositivo (lo ves en la app, ☰ > Tu token): " 32; TOKEN_NUEVO="${REPLY_ALNUM^^}"
+if ! token_valido "$TOKEN_NUEVO"; then msg_err "Token inválido (obligatorio: 8 a 32 letras/números; la app muestra 12)"; return 1; fi
+return 0
+}
 
 en_linea() { ps -u "$1" -o comm= 2>/dev/null | grep -c '^sshd$'; }
 
@@ -159,9 +167,9 @@ printf '\n'
 REPLY_ALNUM="$buf"
 }
 
-# Usuarios.db ordenado alfabéticamente (HWID por el nombre del cliente), sin distinguir mayúsculas.
+# Usuarios.db ordenado alfabéticamente, sin distinguir mayúsculas.
 db_orden() {
-awk -F: 'NR==FNR{ if($5 ~ /^hwid,/) l[$1]=substr($5,6); next } NF{ k=($1 in l)?l[$1]:$1; print tolower(k) "\t" $0 }' "${ZUMO_PASSWD:-/etc/passwd}" "$DB" | LC_ALL=C sort -s -t "$(printf '\t')" -k1,1 | cut -f2-
+awk -F: 'NF{ print tolower($1) "\t" $0 }' "$DB" | LC_ALL=C sort -s -t "$(printf '\t')" -k1,1 | cut -f2-
 }
 
 esta_bloqueado() {
@@ -175,21 +183,13 @@ mapfile -t USERS < <(db_orden | cut -d: -f1 | sed '/^$/d')
 if [ ${#USERS[@]} -eq 0 ]; then msg_err "No hay usuarios registrados"; return 1; fi
 for i in "${!USERS[@]}"; do
 local etiq="$(etiqueta_de "${USERS[$i]}")"
-if es_hwid "${USERS[$i]}"; then etiq="$etiq (HWID)"; fi
 echo -e " \e[1;38;5;208m[$((i+1))]\e[0m \e[1;32m${etiq}\e[0m"
 done
 echo; read -rp " Número o nombre de usuario: " n
 n="${n#"${n%%[![:space:]]*}"}"; n="${n%"${n##*[![:space:]]}"}"
 [ -z "$n" ] && { msg_err "Opción inválida"; return 1; }
-local rc h
-buscar_usuario "$n"; rc=$?
-case $rc in
-0) return 0 ;;
-2) msg_err "Hay varios clientes con el nombre \"$n\". Escribí el HWID:"
-for h in "${AMBIGUOS[@]}"; do echo -e "     \e[1;38;5;214m$h${N}"; done
-return 1 ;;
-*) msg_err "No existe: $n"; return 1 ;;
-esac
+buscar_usuario "$n" && return 0
+msg_err "No existe: $n"; return 1
 }
 
 ip_publica() {
@@ -212,18 +212,15 @@ echo "$out"
 
 # mensaje_cliente USUARIO CLAVE VENCE_TEXTO — bloque listo para copiar y mandar.
 mensaje_cliente() {
-local u="$1" clave="$2" vence="$3" lim
+local u="$1" clave="$2" vence="$3" lim tok
 lim=$(zumo_db_campo "$u" 2)
 echo -e " $L"
 echo -e " \e[1;38;5;141mDATOS PARA EL CLIENTE${N}"
 echo -e " \e[1;38;5;208mServidor:\e[0m     \e[1;38;5;214m$(ip_publica)${N}"
-if es_hwid "$u"; then
-echo -e " \e[1;38;5;208mCliente:\e[0m      \e[1;38;5;214m$(etiqueta_de "$u")${N}"
-echo -e " \e[1;38;5;208mUsuario y clave:\e[0m \e[1;38;5;214m$u${N}"
-else
 echo -e " \e[1;38;5;208mUsuario:\e[0m      \e[1;38;5;214m$u${N}"
 echo -e " \e[1;38;5;208mContraseña:\e[0m   \e[1;38;5;214m${clave:-(la que le diste)}${N}"
-fi
+tok=$(token_get "$u")
+[ -n "$tok" ] && echo -e " \e[1;38;5;208mToken:\e[0m        \e[1;38;5;214m$tok${N}"
 echo -e " \e[1;38;5;208mVence:\e[0m        \e[1;38;5;214m$vence${N}"
 echo -e " \e[1;38;5;208mConexiones:\e[0m   \e[1;38;5;214m${lim:-1}${N}"
 echo -e " \e[1;38;5;208mPuertos:\e[0m      \e[1;38;5;214m$(puertos_activos)${N}"
@@ -233,88 +230,38 @@ echo -e " $L"
 # Mensaje corto para usuarios comunes: usuario, contraseña, fecha (dd/mm),
 # dispositivos y el banner del 101 (el de PDirect).
 mensaje_comun() {
-local u="$1" clave="$2" fecha="$3" lim ban
+local u="$1" clave="$2" fecha="$3" lim ban tok
 lim=$(zumo_db_campo "$u" 2); lim=${lim:-1}
 ban=$(grep -m1 '^PDIRECT_BANNER=' "${ZUMO_PDIRECT_ENV:-/etc/zumo/pdirect.env}" 2>/dev/null | cut -d= -f2-)
 ban=${ban:-ZUMO}
 echo
 echo -e " 👤 \e[1;38;5;214m$u${N}"
 echo -e " 🔒 \e[1;38;5;214m$clave${N}"
+tok=$(token_get "$u")
+[ -n "$tok" ] && echo -e " 🪪 Token: \e[1;38;5;214m$tok${N}"
 echo -e " 📅 \e[1;38;5;214m$fecha${N}"
 if [ "$lim" -eq 1 ]; then echo -e " 🔌 \e[1;38;5;214m1 dispositivo${N}"; else echo -e " 🔌 \e[1;38;5;214m$lim dispositivos${N}"; fi
 echo -e " 📄 \e[1;38;5;214m$ban${N}"
 echo
 }
 
-# Mensaje para usuarios HWID: el "Usuario" es el nombre del cliente y la
-# "Máquina" es el banner del 101 (el de PDirect).
-mensaje_hwid() {
-local u="$1" vence="$2" ban nombre
-ban=$(grep -m1 '^PDIRECT_BANNER=' "${ZUMO_PDIRECT_ENV:-/etc/zumo/pdirect.env}" 2>/dev/null | cut -d= -f2-)
-ban=${ban:-ZUMO}
-nombre=$(etiqueta_de "$u")
-echo
-echo -e " 🔐 \e[1;38;5;214mDATOS DE ACCESO${N}"
-echo -e " ├ ☁️ Plan: \e[1;38;5;214mPrivado${N}"
-echo -e " ├ ⚙️ Máquina: \e[1;38;5;214m$ban${N}"
-echo -e " ├ 👤 Usuario: \e[1;38;5;214m$nombre${N}"
-echo -e " ├ ⏳ Vence: \e[1;38;5;214m$vence${N}"
-echo
-}
-
 # Mismo mensaje para el cliente que al crear el usuario, pero con el nuevo vencimiento.
 mensaje_renovacion() { # usuario vencimiento(AAAA-MM-DD)
 local u="$1" exp="$2" clave
-if es_hwid "$u"; then mensaje_hwid "$u" "$(date -d "$exp" +%d/%m/%Y)"
-else
 clave="$(clave_get "$u")"; [ -n "$clave" ] || clave="(su clave)"
 mensaje_comun "$u" "$clave" "$(date -d "$exp" +%d/%m)"
-fi
 }
 
 
 crear_usuario() {
 banner; echo -e " \e[1;38;5;141mCREAR USUARIO${N}\n"
-op 1 "●" "Normal"
-op 2 "🔑" "HWID"
-op 0 "◂" "Volver"
-echo; read -rp " Modo [1]: " modo; modo=${modo:-1}
-case "$modo" in
-0) return ;;
-1|2) ;;
-*) msg_err "Opción inválida"; sleep 1; return ;;
-esac
-echo
-
-if [ "$modo" = "2" ]; then
-read -rp " Nombre del cliente (solo para identificarlo en el panel): " etiqueta
-etiqueta=$(zumo_limpiar_etiqueta "$etiqueta")
-leer_alnum "Pegá el HWID del cliente (8 a 32 caracteres): " 32; hwid="$REPLY_ALNUM"
-if [ ${#hwid} -lt 8 ] || [ ${#hwid} -gt 32 ]; then
-msg_err "HWID inválido (8 a 32 caracteres alfanuméricos; quedaron ${#hwid})"; pausa; return
-fi
-id "$hwid" &>/dev/null && { msg_err "Ese HWID ya está registrado"; pausa; return; }
-read -rp " Días de duración: " d
-[[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
-read -rp " Límite de conexiones [2]: " lim; lim=${lim:-2}
-[[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido (mínimo 1)"; pausa; return; }
-exp=$(date -d "+$d days" +%F)
-if ! useradd --badname -M -s /bin/false -e "$(fecha_cuenta "$exp")" -c "hwid,$etiqueta" "$hwid" 2>/dev/null; then
-msg_err "No se pudo crear el usuario (probá con otro HWID)"; pausa; return
-fi
-echo "$hwid:$hwid" | chpasswd
-zumo_db_add "$hwid" "$lim" "$exp"
-echo; msg_ok "Usuario HWID creado"
-mensaje_hwid "$hwid" "$(date -d "$exp" +%d/%m/%Y)"
-pausa
-return
-fi
-
 leer_alnum "Usuario: " 10; u="$REPLY_ALNUM"
 nombre_valido "$u" || { msg_err "Usuario inválido (debe empezar con letra)"; pausa; return; }
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
 leer_alnum "Contraseña: " 10; p="$REPLY_ALNUM"
 clave_valida "$p" || { msg_err "Contraseña inválida (no puede estar vacía)"; pausa; return; }
+pedir_token || { pausa; return; }
+tk="$TOKEN_NUEVO"
 read -rp " Días de duración: " d
 [[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
 read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
@@ -325,6 +272,7 @@ msg_err "No se pudo crear el usuario"; pausa; return
 fi
 echo "$u:$p" | chpasswd
 clave_set "$u" "$p"
+token_set "$u" "$tk"
 zumo_db_add "$u" "$lim" "$exp"
 echo; msg_ok "Usuario creado"
 mensaje_comun "$u" "$p" "$(date -d "$exp" +%d/%m)"
@@ -344,6 +292,7 @@ u="$1"
 pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 if command -v zumo_db_del >/dev/null 2>&1; then zumo_db_del "$u"; else sed -i "/^$u:/d" /etc/zumo/usuarios.db 2>/dev/null; fi
+for f in /etc/zumo/claves.db /etc/zumo/tokens.db; do [ -f "$f" ] && { grep -v "^$u:" "$f" > "$f.tmp" 2>/dev/null; cat "$f.tmp" > "$f"; rm -f "$f.tmp"; }; done
 if [ -f /etc/zumo/temporales.db ]; then grep -v "^$u:" /etc/zumo/temporales.db > /etc/zumo/temporales.db.tmp 2>/dev/null && mv /etc/zumo/temporales.db.tmp /etc/zumo/temporales.db; fi
 exit 0
 BORRARTEMP
@@ -360,45 +309,13 @@ systemd-run --quiet --collect --unit="zumo-temp-$u" --on-active="${min}min" \
 
 crear_temporal() {
 banner; echo -e " \e[1;38;5;141mUSUARIO TEMPORAL${N}\n"
-op 1 "●" "Común"
-op 2 "🔑" "HWID"
-op 0 "◂" "Volver"
-echo; read -rp " Modo [1]: " modo; modo=${modo:-1}
-case "$modo" in
-0) return ;;
-1|2) ;;
-*) msg_err "Opción inválida"; sleep 1; return ;;
-esac
-echo
-
-if [ "$modo" = "2" ]; then
-read -rp " Nombre del cliente: " etiqueta
-etiqueta=$(zumo_limpiar_etiqueta "$etiqueta")
-leer_alnum "Pegá el HWID del cliente (8 a 32 caracteres): " 32; hwid="$REPLY_ALNUM"
-if [ ${#hwid} -lt 8 ] || [ ${#hwid} -gt 32 ]; then
-msg_err "HWID inválido (8 a 32 caracteres alfanuméricos; quedaron ${#hwid})"; pausa; return
-fi
-id "$hwid" &>/dev/null && { msg_err "Ese HWID ya está registrado"; pausa; return; }
-read -rp " Minutos de duración: " min
-[[ "$min" =~ ^[0-9]+$ ]] && [ "$min" -ge 1 ] || { msg_err "Minutos inválidos"; pausa; return; }
-exp=$(date -d "+2 days" +%F)
-if ! useradd --badname -M -s /bin/false -e "$(fecha_cuenta "$exp")" -c "hwid,$etiqueta" "$hwid" 2>/dev/null; then
-msg_err "No se pudo crear el usuario temporal"; pausa; return
-fi
-echo "$hwid:$hwid" | chpasswd
-zumo_db_add "$hwid" 1 "$exp"
-programar_borrado_temp "$hwid" "$min"
-echo; msg_ok "Usuario HWID temporal creado"
-mensaje_hwid "$hwid" "$( [ "$min" -eq 1 ] && echo "1 minuto" || echo "$min minutos" )"
-pausa
-return
-fi
-
 leer_alnum "Usuario: " 10; u="$REPLY_ALNUM"
 nombre_valido "$u" || { msg_err "Usuario inválido (debe empezar con letra)"; pausa; return; }
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
 leer_alnum "Contraseña: " 10; p="$REPLY_ALNUM"
 clave_valida "$p" || { msg_err "Contraseña inválida (no puede estar vacía)"; pausa; return; }
+pedir_token || { pausa; return; }
+tk="$TOKEN_NUEVO"
 read -rp " Minutos de duración: " min
 [[ "$min" =~ ^[0-9]+$ ]] && [ "$min" -ge 1 ] || { msg_err "Minutos inválidos"; pausa; return; }
 read -rp " Conexiones permitidas [1]: " lim; lim=${lim:-1}
@@ -409,6 +326,7 @@ msg_err "No se pudo crear el usuario temporal"; pausa; return
 fi
 echo "$u:$p" | chpasswd
 clave_set "$u" "$p"
+token_set "$u" "$tk"
 zumo_db_add "$u" "$lim" "$exp"
 programar_borrado_temp "$u" "$min"
 echo; msg_ok "Usuario temporal creado"
@@ -416,34 +334,24 @@ mensaje_comun "$u" "$p" "$( [ "$min" -eq 1 ] && echo "1 minuto" || echo "$min mi
 pausa
 }
 
-# Lista todos los usuarios juntos (comunes y HWID). Los HWID muestran el nombre
-# del cliente y, debajo, su HWID. Verde = conectado.
+# Lista todos los usuarios. Verde = conectado.
 lista_para_borrar() {
-local u lim exp on col lab i=0
+local u lim exp on col i=0
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 i=$((i+1))
 on=$(en_linea "$u")
 if [ "${on:-0}" -gt 0 ]; then col='\e[1;32m●\e[0m'; else col='\e[2m○\e[0m'; fi
-if es_hwid "$u"; then
-lab=$(etiqueta_de "$u")
-printf ' \e[1;38;5;208m[%d]\e[0m %b \e[1;38;5;214m%s\e[0m \e[2m(HWID)\e[0m\n' "$i" "$col" "$lab"
-printf '      \e[2m%s\e[0m\n' "$u"
-else
 printf ' \e[1;38;5;208m[%d]\e[0m %b \e[1;38;5;214m%s\e[0m\n' "$i" "$col" "$u"
-fi
 done < <(db_orden)
 }
 
-# Busca lo que escribió la persona: usuario o HWID exacto, número de la lista,
-# nombre del cliente (HWID) o usuario sin distinguir mayúsculas. El resultado queda en $SEL (siempre sale de
-# la base, nunca del texto escrito). Devuelve 1 si no existe y 2 si el nombre
-# coincide con varios clientes HWID (quedan en AMBIGUOS).
+# Busca lo que escribió la persona: usuario exacto, número de la lista o usuario
+# sin distinguir mayúsculas. El resultado queda en $SEL (siempre sale de la base,
+# nunca del texto escrito). Devuelve 1 si no existe.
 buscar_usuario() {
-local q="$1" u lim exp lab i=0
-local -a hits=()
-AMBIGUOS=()
-# 1) usuario o HWID exacto
+local q="$1" u lim exp i=0
+# 1) usuario exacto
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 if [ "$u" = "$q" ]; then SEL="$u"; return 0; fi
@@ -457,19 +365,9 @@ if [ "$i" -eq "$((10#$q))" ]; then SEL="$u"; return 0; fi
 done < <(db_orden)
 return 1
 fi
-# 3) nombre del cliente (HWID)
+# 3) usuario sin distinguir mayúsculas
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
-es_hwid "$u" || continue
-lab=$(etiqueta_de "$u")
-[ "${lab,,}" = "${q,,}" ] && hits+=("$u")
-done < <(db_orden)
-if [ ${#hits[@]} -eq 1 ]; then SEL="${hits[0]}"; return 0; fi
-if [ ${#hits[@]} -gt 1 ]; then AMBIGUOS=("${hits[@]}"); return 2; fi
-# 4) usuario sin distinguir mayúsculas
-while IFS=: read -r u lim exp; do
-[ -z "$u" ] && continue
-es_hwid "$u" && continue
 if [ "${u,,}" = "${q,,}" ]; then SEL="$u"; return 0; fi
 done < <(db_orden)
 return 1
@@ -482,6 +380,7 @@ pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 zumo_db_del "$u"
 clave_del "$u"
+token_del "$u"
 ( flock -w 5 9; [ -f /etc/zumo/datos.db ] && awk -F: -v u="$u" '$1!=u' /etc/zumo/datos.db > /etc/zumo/datos.db.tmp && mv -f /etc/zumo/datos.db.tmp /etc/zumo/datos.db ) 9>/etc/zumo/datos.lock 2>/dev/null
 ( flock -w 5 9; [ -f /etc/zumo/datos-hist.db ] && awk -F: -v u="$u" '$2!=u' /etc/zumo/datos-hist.db > /etc/zumo/datos-hist.db.tmp && mv -f /etc/zumo/datos-hist.db.tmp /etc/zumo/datos-hist.db ) 9>/etc/zumo/datos.lock 2>/dev/null
 systemctl stop "zumo-temp-$u.timer" 2>/dev/null
@@ -491,25 +390,22 @@ fi
 }
 
 eliminar_usuario() {
-local q rc nombre h
+local q nombre
 while true; do
 banner; echo -e " \e[1;38;5;141mELIMINAR USUARIO${N}\n"
 if [ ! -s "$DB" ]; then msg_err "No hay usuarios registrados"; pausa; return; fi
 lista_para_borrar
 echo; echo -e " $L"
-read -rp " Número, usuario o HWID para borrar: " q
+read -rp " Número o usuario para borrar: " q
 q="${q#"${q%%[![:space:]]*}"}"; q="${q%"${q##*[![:space:]]}"}"
 [ -z "$q" ] && return
-buscar_usuario "$q"; rc=$?
-case $rc in
-0) nombre="$(etiqueta_de "$SEL")"
+if buscar_usuario "$q"; then
+nombre="$(etiqueta_de "$SEL")"
 borrar_usuario_completo "$SEL"
-msg_ok "Usuario $nombre eliminado"; sleep 1 ;;
-2) msg_err "Hay varios clientes con el nombre \"$q\". Escribí el HWID:"
-for h in "${AMBIGUOS[@]}"; do echo -e "     \e[1;38;5;214m$h${N}"; done
-pausa ;;
-*) msg_err "No existe: $q"; sleep 1 ;;
-esac
+msg_ok "Usuario $nombre eliminado"; sleep 1
+else
+msg_err "No existe: $q"; sleep 1
+fi
 done
 }
 
@@ -522,7 +418,7 @@ while IFS=: read -r u lim exp; do
 vencido_ya "$exp" && VENC+=("$u|$exp")
 done < <(db_orden)
 if [ ${#VENC[@]} -eq 0 ]; then msg_ok "No hay usuarios vencidos"; pausa; return; fi
-printf " \e[1;38;5;208m%-4s %-16s %s${N}\n" "" "USUARIO/CLIENTE" "VENCIÓ"
+printf " \e[1;38;5;208m%-4s %-16s %s${N}\n" "" "USUARIO" "VENCIÓ"
 local n=0
 for item in "${VENC[@]}"; do
 n=$((n+1))
@@ -542,6 +438,7 @@ pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 zumo_db_del "$u"
 clave_del "$u"
+token_del "$u"
 done
 msg_ok "${#VENC[@]} usuario(s) vencido(s) eliminado(s)"; pausa ;;
 2) local nr nd nexp ur
@@ -586,12 +483,13 @@ banner; echo -e " \e[1;38;5;141mEDITAR USUARIO: $SEL${N}\n"
 echo -e "   Límite actual:      \e[1;38;5;214m$lim${N}"
 echo -e "   Vencimiento actual: \e[1;38;5;214m$exp ($(dias "$exp"))${N}\n"
 local estado_bloq="desbloqueado"; esta_bloqueado "$SEL" && estado_bloq="bloqueado"
-echo -e "   Estado:             \e[1;38;5;214m$estado_bloq${N}\n"
+echo -e "   Estado:             \e[1;38;5;214m$estado_bloq${N}"
+echo -e "   Token:              \e[1;38;5;214m$(token_get "$SEL" | grep . || echo "(sin token)")${N}\n"
 op 1 "✎" "Cambiar contraseña"
 op 2 "⚙" "Cambiar límite de conexiones"
 op 3 "⏱" "Cambiar días (vencimiento)"
 if esta_bloqueado "$SEL"; then op 4 "🔓" "Desbloquear"; else op 4 "🔒" "Bloquear"; fi
-es_hwid "$SEL" && op 5 "🔑" "Cambiar HWID"
+op 5 "🪪" "Cambiar token"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " eo
 case $eo in
@@ -617,22 +515,9 @@ usermod -U "$SEL" 2>/dev/null; msg_ok "$SEL desbloqueado"
 else
 usermod -L "$SEL" 2>/dev/null; pkill -9 -u "$SEL" 2>/dev/null; msg_ok "$SEL bloqueado"
 fi; sleep 1 ;;
-5) es_hwid "$SEL" || { msg_err "Ese usuario no es de modo HWID"; sleep 1; continue; }
-read -rp " HWID nuevo (8 a 32 alfanuméricos): " nhraw
-nh=$(echo "$nhraw" | tr -cd 'A-Za-z0-9')
-if [ ${#nh} -lt 8 ] || [ ${#nh} -gt 32 ]; then msg_err "HWID inválido"; sleep 1; continue; fi
-id "$nh" &>/dev/null && { msg_err "Ya existe un usuario con ese HWID"; sleep 1; continue; }
-pkill -9 -u "$SEL" 2>/dev/null
-if usermod --badname -l "$nh" "$SEL" 2>/dev/null; then
-echo "$nh:$nh" | chpasswd
-zumo_db_rename "$SEL" "$nh"
-clave_rename "$SEL" "$nh"
-datos_rename "$SEL" "$nh"
-SEL="$nh"
-msg_ok "HWID cambiado a $nh"
-else
-msg_err "No se pudo cambiar el HWID"
-fi; sleep 1 ;;
+5) pedir_token || { sleep 1; continue; }
+token_set "$SEL" "$TOKEN_NUEVO"
+msg_ok "Token de $SEL actualizado a $TOKEN_NUEVO"; sleep 1 ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
@@ -647,15 +532,15 @@ if [ "$d" -gt 0 ]; then echo "${d}d ${h}h"; elif [ "$h" -gt 0 ]; then echo "${h}
 }
 
 _ficha_usuario() { # n usuario límite vencimiento
-local n="$1" u="$2" lim="$3" exp="$4" on dot venc venc_col tc nombre clave con="" esw=0 esT=0
+local n="$1" u="$2" lim="$3" exp="$4" on dot venc venc_col tc nombre clave tok con="" esT=0
 [ -n "${_SEP:-}" ] || _SEP=$(printf '─%.0s' $(seq 1 40))
 echo -e " \e[38;5;60m${_SEP}${N}"
 if [ -n "${_PRE:-}" ]; then
 on=${_ON[$u]:-0}; tc=""; [ "$on" -gt 0 ] && tc=$(_fmt_secs "${_TS[$u]:-0}")
-[[ -v _GE[$u] ]] && esw=1; [[ -v _TM[$u] ]] && esT=1
+[[ -v _TM[$u] ]] && esT=1
 else
 on=$(en_linea "$u"); tc=""; [ "$on" -gt 0 ] && tc=$(tiempo_conectado "$u")
-es_hwid "$u" && esw=1; es_temporal "$u" && esT=1
+es_temporal "$u" && esT=1
 fi
 if [ "$on" -gt 0 ]; then
 dot="\e[1;32m●${N}"
@@ -678,55 +563,35 @@ esac
 venc="${exp:8:2}/${exp:5:2}/${exp:0:4}"
 fi
 if [ -n "${_PRE:-}" ]; then
-if [ "$esw" -eq 1 ]; then nombre="${_GE[$u]}"; clave="$u"; else nombre="$u"; clave="${_CL[$u]:-}"; fi
+nombre="$u"; clave="${_CL[$u]:-}"; tok="${_TK[$u]:-}"
 else
-nombre="$(etiqueta_de "$u")"; clave="$(clave_get "$u")"
+nombre="$(etiqueta_de "$u")"; clave="$(clave_get "$u")"; tok="$(token_get "$u")"
 fi
 [ -n "$clave" ] || clave="-"
-if [ "$esw" -eq 1 ]; then
-echo -e " \e[1;38;5;208m[$n]${N} $dot \e[1;97m$nombre${N}"
-echo -e "      \e[2mHWID:${N} \e[1;38;5;214m$u${N}"
-else
 echo -e " \e[1;38;5;208m[$n]${N} $dot \e[1;97m$nombre${N}  \e[2m·${N} \e[1;96m$clave${N}"
-fi
-if [ "$esw" -eq 1 ]; then
-echo -e "      \e[2mVence:${N} ${venc_col}${venc}${N}$con"   # HWID: sin límite a la vista
-else
+[ -n "$tok" ] && echo -e "      \e[2mToken:${N} \e[1;38;5;214m$tok${N}"
 echo -e "      \e[2mVence:${N} ${venc_col}${venc}${N}  \e[2mLímite:${N} \e[1;97m${on}/${lim}${N}$con"
-fi
 }
 
 listar_usuarios() {
 if [ ! -s "$DB" ]; then banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"; msg_err "No hay usuarios"; pausa; return; fi
-# Se prepara todo de una vez (sesiones, HWID, claves, temporales) y se dibuja la lista entera junta.
-declare -gA _ON=() _TS=() _GE=() _CL=() _TM=() _DC=()
+# Se prepara todo de una vez (sesiones, claves, tokens, temporales) y se dibuja la lista entera junta.
+declare -gA _ON=() _TS=() _TK=() _CL=() _TM=() _DC=()
 local k a b l
 while read -r k a b; do _ON[$k]=$a; _TS[$k]=$b; done < <(ps -eo user:32=,comm=,etimes= 2>/dev/null | awk '$2=="sshd"{c[$1]++; if($3>m[$1])m[$1]=$3} END{for(u in c) print u, c[u], m[u]}')
-while IFS=$'\t' read -r k a; do _GE[$k]=$a; done < <(awk -F: '$5 ~ /^hwid,/{print $1 "\t" substr($5,6)}' "${ZUMO_PASSWD:-/etc/passwd}")
 [ -f "$CLAVES" ] && while IFS= read -r l; do [ -n "$l" ] && _CL[${l%%:*}]=${l#*:}; done < "$CLAVES"
+[ -f "$TOKENS" ] && while IFS=: read -r k a; do [ -n "$k" ] && _TK[$k]=$a; done < "$TOKENS"
 [ -f "$TEMPDB" ] && while IFS=: read -r k a; do [ -n "$k" ] && _TM[$k]=$a; done < "$TEMPDB"
 _PRE=1
 local out
 out=$(
 echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"
-local u lim exp hay_comun=0 hay_hwid=0 n=0
-echo -e " \e[1;38;5;141m━━━ COMÚN ━━━${N}\n"
+local u lim exp n=0
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
-[[ -v _GE[$u] ]] && continue
-hay_comun=1; n=$((n+1))
+n=$((n+1))
 _ficha_usuario "$n" "$u" "$lim" "$exp"
 done < <(db_orden)
-[ "$hay_comun" -eq 0 ] && echo -e " \e[2m(sin usuarios comunes)${N}\n"
-echo -e " \e[1;38;5;141m━━━ HWID ━━━${N}\n"
-n=0
-while IFS=: read -r u lim exp; do
-[ -z "$u" ] && continue
-[[ -v _GE[$u] ]] || continue
-hay_hwid=1; n=$((n+1))
-_ficha_usuario "$n" "$u" "$lim" "$exp"
-done < <(db_orden)
-[ "$hay_hwid" -eq 0 ] && echo -e " \e[2m(sin usuarios HWID)${N}\n"
 echo -e " $L"
 )
 _PRE=""
@@ -1282,6 +1147,7 @@ done < "$DB"
 cp "$DB" "$w/usuarios.db"
 [ -f "$TEMPDB" ] && cp "$TEMPDB" "$w/temporales.db"
 [ -f "$CLAVES" ] && cp "$CLAVES" "$w/claves.db"
+[ -f "$TOKENS" ] && cp "$TOKENS" "$w/tokens.db"
 [ -f "${ZUMO_DATOS:-/etc/zumo/datos.db}" ] && cp "${ZUMO_DATOS:-/etc/zumo/datos.db}" "$w/datos.db"
 [ -f "${ZUMO_HIST:-/etc/zumo/datos-hist.db}" ] && cp "${ZUMO_HIST:-/etc/zumo/datos-hist.db}" "$w/datos-hist.db"
 [ -f "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}" ] && cp "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}" "$w/limit.conf"
@@ -1321,7 +1187,7 @@ existentes=$((existentes+1))
 else
 args=(-M -s /bin/false -e "$(fecha_cuenta "$exp")")
 [ -n "$gecos" ] && args+=(-c "$gecos")
-case "$gecos" in hwid,*) args+=(--badname) ;; esac
+[[ "$u" =~ ^[a-z][a-z0-9]*$ ]] || args+=(--badname)
 if useradd "${args[@]}" "$u" 2>/dev/null; then
 echo "$u:$hash" | chpasswd -e 2>/dev/null
 nuevos=$((nuevos+1))
@@ -1338,6 +1204,7 @@ fi
 done < "$w/cuentas.txt"
 _merge_por_usuario "${ZUMO_DATOS:-/etc/zumo/datos.db}" "$w/datos.db" 1 "$us"
 [ -s "$w/claves.db" ] && { ( umask 077; _merge_por_usuario "$CLAVES" "$w/claves.db" 1 "$us" ); chmod 600 "$CLAVES" 2>/dev/null; }
+[ -s "$w/tokens.db" ] && { ( umask 077; _merge_por_usuario "$TOKENS" "$w/tokens.db" 1 "$us" ); chmod 600 "$TOKENS" 2>/dev/null; }
 _merge_por_usuario "${ZUMO_HIST:-/etc/zumo/datos-hist.db}" "$w/datos-hist.db" 2 "$us"
 [ -f "$w/limit.conf" ] && [ -w "$(dirname "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}")" ] && cp "$w/limit.conf" "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}"
 rm -rf "$w"

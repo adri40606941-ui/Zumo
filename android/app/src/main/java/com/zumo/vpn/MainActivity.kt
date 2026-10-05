@@ -37,8 +37,7 @@ class MainActivity : Activity() {
     private lateinit var btn: Button
     private lateinit var etUser: EditText
     private lateinit var etPass: EditText
-    private lateinit var swHwid: Switch
-    private lateinit var tvHwid: TextView
+    private lateinit var tvToken: TextView
     private lateinit var boxLogin: LinearLayout
     private lateinit var puntoEstado: View
     private lateinit var tvVelocidad: TextView
@@ -223,18 +222,13 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
-    /** Pantalla de configuración (servidor, login, HWID, batería) detrás del botón ☰ de la esquina. */
+    /** Pantalla de configuración (servidor, login, token, batería) detrás del botón ☰ de la esquina. */
     private fun abrirMenu() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         // login
         val cLogin = tarjeta()
         seccion(cLogin, "🔐", "Cuenta")
-        swHwid = Switch(this).apply {
-            text = "Modo HWID (sin usuario ni clave)"; setTextColor(Color.WHITE); isChecked = prefs.useHwid
-            setOnCheckedChangeListener { _, on -> prefs.useHwid = on; refrescarLogin() }
-        }
-        cLogin.addView(swHwid)
         boxLogin = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
@@ -258,14 +252,14 @@ class MainActivity : Activity() {
         cCfg.addView(botonSecundario("📤  Compartir configuración") { compartir() })
         col.addView(cCfg)
 
-        // HWID en su propio cuadro, grande y con botón de copiar (para que no haya error al pasarlo)
-        val cHwid = tarjeta()
-        seccion(cHwid, "🪪", "Tu HWID")
-        texto("Fijo para este teléfono. Pásaselo a quien te da el servicio.", 12f, TEXTO_SUAVE).apply {
+        // Token en su propio cuadro, grande y con botón de copiar (para que no haya error al pasarlo)
+        val cToken = tarjeta()
+        seccion(cToken, "🪪", "Tu token")
+        texto("Es propio de este teléfono y no cambia al reinstalar. Pásaselo a quien te da el servicio: tu cuenta queda atada a este token.", 12f, TEXTO_SUAVE).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
-        }.also { cHwid.addView(it) }
-        val valorHwid = Hwid.get(this)
-        tvHwid = texto(valorHwid, 19f, Color.WHITE, true).apply {
+        }.also { cToken.addView(it) }
+        val valorToken = Token.get(this)
+        tvToken = texto(valorToken, 19f, Color.WHITE, true).apply {
             setTextIsSelectable(true)
             gravity = Gravity.CENTER
             typeface = Typeface.MONOSPACE
@@ -274,13 +268,13 @@ class MainActivity : Activity() {
             setPadding(dp(14), dp(14), dp(14), dp(14))
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
-        cHwid.addView(tvHwid)
-        cHwid.addView(botonPrimario("📋  Copiar HWID", ACENTO) {
+        cToken.addView(tvToken)
+        cToken.addView(botonPrimario("📋  Copiar token", ACENTO) {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("HWID", valorHwid))
-            aviso("HWID copiado")
+            cm.setPrimaryClip(ClipData.newPlainText("Token", valorToken))
+            aviso("Token copiado")
         })
-        col.addView(cHwid)
+        col.addView(cToken)
 
         // perfil completo (servidor + inicio de sesión) en un archivo para enviar por WhatsApp
         val cPerfil = tarjeta()
@@ -303,14 +297,7 @@ class MainActivity : Activity() {
 
         val sv = ScrollView(this).apply { addView(col) }
         dialogo("Configuración", sv).setPositiveButton("Cerrar", null).mostrar()
-        refrescarLogin()
         refrescar()
-    }
-
-    private fun refrescarLogin() {
-        if (!::swHwid.isInitialized || !::boxLogin.isInitialized) return
-        val on = swHwid.isChecked
-        boxLogin.visibility = if (on) View.GONE else View.VISIBLE
     }
 
     private fun guardarCampos() {
@@ -366,7 +353,7 @@ class MainActivity : Activity() {
         }
         val c = prefs.config
         if (c == null || !c.valida()) { aviso("Primero pega o edita la configuración del servidor"); return }
-        if (!prefs.useHwid && (prefs.user.isBlank() || prefs.pass.isBlank())) { aviso("Escribe tu usuario y contraseña, o activa el modo HWID"); return }
+        if (prefs.user.isBlank() || prefs.pass.isBlank()) { aviso("Escribe tu usuario y contraseña"); return }
         // La primera vez, se pide quedar fuera del ahorro de batería antes de conectar (si no, el
         // sistema puede cerrar la VPN sola al rato, sobre todo en Tecno, Xiaomi y similares).
         if (!prefs.pidioBateria && !PowerGuide.sinOptimizar(this)) {
@@ -430,15 +417,12 @@ class MainActivity : Activity() {
         refrescar()
     }
 
-    /** Guarda un perfil completo (servidor + usuario/clave o HWID) y actualiza la pantalla de login. */
+    /** Guarda un perfil completo (servidor + usuario y clave) y actualiza la pantalla de login. */
     private fun importarPerfil(p: Perfil) {
         prefs.config = p.cfg
-        prefs.useHwid = p.useHwid
-        if (!p.useHwid) { prefs.user = p.user; prefs.pass = p.pass }
-        if (::swHwid.isInitialized) swHwid.isChecked = prefs.useHwid
+        prefs.user = p.user; prefs.pass = p.pass
         if (::etUser.isInitialized) { etUser.setText(prefs.user); etPass.setText(prefs.pass) }
-        refrescarLogin()
-        aviso("Configuración \"${p.cfg.name}\" guardada" + if (p.useHwid) " (modo HWID)" else "")
+        aviso("Configuración \"${p.cfg.name}\" guardada")
         refrescar()
     }
 
@@ -446,15 +430,14 @@ class MainActivity : Activity() {
     private fun borrarDatos() {
         AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Borrar datos")
-            .setMessage("Se borra el servidor, el usuario/clave guardados y los archivos de configuración exportados. El HWID de este teléfono no cambia. Vas a tener que configurar todo de nuevo.")
+            .setMessage("Se borra el servidor, el usuario/clave guardados y los archivos de configuración exportados. El token de este teléfono no cambia. Vas a tener que configurar todo de nuevo.")
             .setPositiveButton("Borrar") { _, _ ->
                 if (ZumoVpnService.corriendo) { prefs.wanted = false; ZumoVpnService.detener(this) }
                 prefs.config = null
-                prefs.user = ""; prefs.pass = ""; prefs.useHwid = false
+                prefs.user = ""; prefs.pass = ""
                 try { File(cacheDir, "config").deleteRecursively() } catch (_: Exception) {}
-                if (::swHwid.isInitialized) swHwid.isChecked = false
                 if (::etUser.isInitialized) { etUser.setText(""); etPass.setText("") }
-                refrescarLogin(); refrescar()
+                refrescar()
                 aviso("Datos borrados")
             }.setNegativeButton("Cancelar", null).show()
     }
@@ -477,23 +460,10 @@ class MainActivity : Activity() {
         guardarCampos()
         val c = prefs.config
         if (c == null || !c.valida()) { aviso("Primero configurá el servidor"); return }
-        val cbHwid = CheckBox(this).apply {
-            text = "Usar el HWID de este teléfono como usuario (compatible con el panel)"
-            setTextColor(Color.WHITE)
-            isChecked = prefs.useHwid
-        }
-        val cont = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); addView(cbHwid) }
-        dialogo("Guardar configuración", cont)
-            .setPositiveButton("Guardar en Descargas/Zumo") { _, _ ->
-                val p = if (cbHwid.isChecked) Perfil(c, useHwid = true)
-                else Perfil(c, user = prefs.user, pass = prefs.pass, useHwid = false)
-                guardarEnDescargas(p)
-            }
-            .setNeutralButton("Compartir (WhatsApp, etc.)") { _, _ ->
-                val p = if (cbHwid.isChecked) Perfil(c, useHwid = true)
-                else Perfil(c, user = prefs.user, pass = prefs.pass, useHwid = false)
-                exportarArchivo(p)
-            }
+        val p = Perfil(c, user = prefs.user, pass = prefs.pass)
+        dialogo("Guardar configuración", View(this))
+            .setPositiveButton("Guardar en Descargas/Zumo") { _, _ -> guardarEnDescargas(p) }
+            .setNeutralButton("Compartir (WhatsApp, etc.)") { _, _ -> exportarArchivo(p) }
             .setNegativeButton("Cancelar", null).mostrar()
     }
 

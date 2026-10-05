@@ -13,8 +13,9 @@ limpiar() { [ -n "$SRV_PID" ] && kill "$SRV_PID" 2>/dev/null; rm -rf "$T"; }
 trap limpiar EXIT
 
 N='\e[0m'; L='---'
+TOKENS="$T/tokens.db"; CLAVES="$T/claves.db"
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
-for f in _red_iface _red_bytes _red_calc _red_fmt_bytes _red_capacidad control_red mensaje_renovacion clave_get db_orden op msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente mensaje_comun mensaje_hwid es_hwid hora_corte vencido_ya fecha_cuenta vencidos bhttp_port hcr_port dias es_temporal temp_restante; do
+for f in _red_iface _red_bytes _red_calc _red_fmt_bytes _red_capacidad control_red mensaje_renovacion clave_get db_orden op msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente mensaje_comun token_get token_set token_del token_rename token_valido hora_corte vencido_ya fecha_cuenta vencidos bhttp_port hcr_port dias es_temporal temp_restante; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
 	eval "$src"
@@ -117,7 +118,7 @@ chequear "beto: hoy 5.0 MB, total 5.0 MB" "si" "$(grep -qE 'beto +5\.0 MB +5\.0 
 chequear "usuario sin datos en 0" "si" "$(grep -qE 'nuevo +0\.0 MB +0\.0 MB' <<<"$SAL" && echo si || echo no)"
 chequear "total de los 3 usuarios" "si" "$(grep -qE 'TOTAL\(3\) +6\.0 MB +1\.50 GB' <<<"$SAL" && echo si || echo no)"
 
-echo "6) Renovar pone el contador en 0; cambiar HWID lo traslada"
+echo "6) Renovar pone el contador en 0; renombrar usuario lo traslada"
 export ZUMO_DATOS_LOCK="$T/lock"
 datos_rename ana ana2
 chequear "rename traslada los datos" "1610612736" "$(datos_de ana2)"
@@ -150,16 +151,13 @@ chequear "1 dispositivo (singular)" "si" "$(grep -q '🔌 1 dispositivo$' <<<"$S
 export ZUMO_PDIRECT_ENV="$T/no-existe"
 chequear "sin config usa ZUMO" "si" "$(mensaje_comun beto x "01/01" | limpio | grep -q '📄 ZUMO' && echo si || echo no)"
 unset ZUMO_PDIRECT_ENV
-printf 'PDIRECT_BANNER=MiBanner\n' > "$T/pd.env"; export ZUMO_PDIRECT_ENV="$T/pd.env"
-etiqueta_de() { [ "$1" = "HWIDX1234" ] && echo "lucrecia" || echo "$1"; }
-SAL=$(mensaje_hwid HWIDX1234 "20/08/2026" | limpio)
-chequear "hwid: título" "si" "$(grep -q '🔐 DATOS DE ACCESO' <<<"$SAL" && echo si || echo no)"
-chequear "hwid: plan" "si" "$(grep -q '├ ☁️ Plan: Privado' <<<"$SAL" && echo si || echo no)"
-chequear "hwid: máquina = banner del 101" "si" "$(grep -q '├ ⚙️ Máquina: MiBanner' <<<"$SAL" && echo si || echo no)"
-chequear "hwid: usuario = nombre del cliente" "si" "$(grep -q '├ 👤 Usuario: lucrecia' <<<"$SAL" && echo si || echo no)"
-chequear "hwid: vence" "si" "$(grep -q '├ ⏳ Vence: 20/08/2026' <<<"$SAL" && echo si || echo no)"
-SAL=$(mensaje_hwid HWIDX1234 "10 minutos" | limpio)
-chequear "hwid temporal: vence en minutos" "si" "$(grep -q 'Vence: 10 minutos' <<<"$SAL" && echo si || echo no)"
+# Token en el mensaje del cliente
+TOKENS="$T/tokens.db"; rm -f "$TOKENS"
+chequear "sin token no hay línea de token" "no" "$(mensaje_comun ana x "01/01" | limpio | grep -q 'Token' && echo si || echo no)"
+token_set ana a1b2c3d4e5f6
+chequear "mensaje_comun muestra 🪪 Token en mayúsculas" "si" "$(mensaje_comun ana x "01/01" | limpio | grep -q '🪪 Token: A1B2C3D4E5F6' && echo si || echo no)"
+chequear "mensaje_cliente muestra el token" "si" "$(mensaje_cliente ana x "30 días" | limpio | grep -q 'Token: *A1B2C3D4E5F6' && echo si || echo no)"
+TOKENS="$T/tokens.db"
 unset ZUMO_PDIRECT_ENV
 
 echo "9) Vencimiento a las 21:00"
@@ -196,7 +194,7 @@ unset ZUMO_LIMCONF
 unset -f usermod
 
 echo "5) Usuario compartido"
-for f in usuario_compartido etiqueta_de es_hwid; do src=$(extraer "$f"); eval "$src"; done
+for f in usuario_compartido etiqueta_de; do src=$(extraer "$f"); eval "$src"; done
 export ZUMO_EXCESOS="$T/excesos.log"
 : > "$DB"; printf 'ana:1:2030-01-01\nbob:2:2030-01-01\n' > "$DB"
 SAL=$(usuario_compartido </dev/null | limpio)
@@ -238,22 +236,53 @@ chequear "muestra uso del enlace con capacidad" "si" "$(grep -q 'Uso del enlace 
 chequear "sale sola si no hay teclado (EOF)" "ok" "$(timeout 10 bash -c 'true'; ( control_red </dev/null >/dev/null 2>&1 & p=$!; for i in 1 2 3 4 5 6; do sleep 0.5; kill -0 $p 2>/dev/null || { echo ok; exit; }; done; kill $p 2>/dev/null; echo cuelga ))"
 unset ZUMO_NETDEV
 
-echo "7) Usuarios HWID en línea y límite 2"
-chequear "Ver usuarios lee nombres largos (HWID de 32) sin recortar" "si" "$(grep -q 'ps -eo user:32=,comm=,etimes=' "$AQUI/panel.sh" && echo si || echo no)"
-chequear "HWID nuevo: límite por defecto 2" "si" "$(sed -n '/Pegá el HWID del cliente/,/zumo_db_add "\$hwid" "\$lim"/p' "$AQUI/panel.sh" | grep -q 'lim=\${lim:-2}' && echo si || echo no)"
-chequear "actualizar pasa HWID de límite 1 a 2 una sola vez" "si" "$(grep -q 'hwid-limite2' "$AQUI/actualizar.sh" && echo si || echo no)"
+echo "7) Tokens: almacenamiento y validación"
+TOKENS="$T/tok.db"; rm -f "$TOKENS"
+chequear "token_get sin archivo devuelve vacío" "" "$(token_get ana)"
+token_set ana a1b2c3d4e5f6
+chequear "token_set guarda en mayúsculas" "ana:A1B2C3D4E5F6" "$(cat "$TOKENS")"
+chequear "token_get lo devuelve" "A1B2C3D4E5F6" "$(token_get ana)"
+chequear "archivo modo 600" "600" "$(stat -c %a "$TOKENS")"
+token_set beto 111122223333
+token_set ana ffffeeeedddd
+chequear "token_set reemplaza (una sola línea de ana)" "1" "$(grep -c '^ana:' "$TOKENS")"
+chequear "ana con el nuevo token" "FFFFEEEEDDDD" "$(token_get ana)"
+chequear "beto intacto" "111122223333" "$(token_get beto)"
+token_rename ana ana2
+chequear "rename: ana2 tiene el token" "FFFFEEEEDDDD" "$(token_get ana2)"
+chequear "rename: ana ya no" "" "$(token_get ana)"
+token_del ana2
+chequear "token_del borra" "" "$(token_get ana2)"
+chequear "token_del no toca a beto" "111122223333" "$(token_get beto)"
+chequear "no confunde prefijos (be/beto)" "" "$(token_get be)"
+chequear "token_del de inexistente no falla" "0" "$(token_del nadie; echo $?)"
+chequear "válido: 12 hex" "si" "$(token_valido A1B2C3D4E5F6 && echo si || echo no)"
+chequear "válido: minúsculas" "si" "$(token_valido a1b2c3d4e5f6 && echo si || echo no)"
+chequear "inválido: vacío" "no" "$(token_valido '' && echo si || echo no)"
+chequear "inválido: corto (7)" "no" "$(token_valido A1B2C3D && echo si || echo no)"
+chequear "inválido: largo (33)" "no" "$(token_valido "$(printf 'A%.0s' $(seq 33))" && echo si || echo no)"
+chequear "inválido: símbolo" "no" "$(token_valido 'A1B2C3D4E5-6' && echo si || echo no)"
+chequear "crear_usuario pide el token después de la contraseña" "si" "$(sed -n '/^crear_usuario() {/,/^}/p' "$AQUI/panel.sh" | grep -n 'pedir_token\|token_set\|clave_valida' | awk -F: '/clave_valida/{a=$1} /pedir_token/{b=$1} /token_set/{c=$1} END{exit !(a<b && b<c)}' && echo si || echo no)"
+chequear "crear_temporal exige token" "si" "$(sed -n '/^crear_temporal() {/,/^}/p' "$AQUI/panel.sh" | grep -q 'pedir_token || ' && echo si || echo no)"
+src=$(extraer pedir_token); eval "$src"
+leer_alnum() { REPLY_ALNUM="$LEER"; }
+LEER=""; chequear "pedir_token rechaza vacío" "1" "$(pedir_token >/dev/null; echo $?)"
+LEER="abc"; chequear "pedir_token rechaza corto" "1" "$(pedir_token >/dev/null; echo $?)"
+LEER="a1b2c3d4e5f6"; pedir_token >/dev/null; chequear "pedir_token acepta y normaliza" "A1B2C3D4E5F6" "$TOKEN_NUEVO"
+chequear "borrar usuario limpia tokens" "si" "$(sed -n '/^borrar_usuario_completo() {/,/^}/p' "$AQUI/panel.sh" | grep -q 'token_del' && echo si || echo no)"
+TOKENS="$T/tokens.db"
 
-echo "8) Ficha HWID sin límite a la vista"
+echo "8) Ficha de usuario con token"
 for f in _ficha_usuario _fmt_secs dias; do src=$(extraer "$f"); eval "$src"; done
 N=$'\e[0m'; export LC_ALL=C.UTF-8
-declare -gA _ON=() _TS=() _GE=() _CL=() _TM=() _DC=(); _PRE=1; _SEP="---"
-_GE[hwidaaaa1111]="cliente1"; _ON[hwidaaaa1111]=1; _TS[hwidaaaa1111]=300
-_CL[normal]="clave1"; _ON[normal]=1; _TS[normal]=300
-SAL=$(_ficha_usuario 1 hwidaaaa1111 2 2030-01-01 | limpio)
-chequear "HWID muestra vencimiento y tiempo conectado" "si" "$(grep -q 'Vence: 01/01/2030 *5m' <<<"$SAL" && echo si || echo no)"
-chequear "HWID no muestra el límite" "no" "$(grep -q 'Límite' <<<"$SAL" && echo si || echo no)"
-SAL=$(_ficha_usuario 2 normal 1 2030-01-01 | limpio)
-chequear "usuario común sigue mostrando Límite 1/1" "si" "$(grep -q 'Límite: 1/1' <<<"$SAL" && echo si || echo no)"
+declare -gA _ON=() _TS=() _TK=() _CL=() _TM=() _DC=(); _PRE=1; _SEP="---"
+_CL[normal]="clave1"; _TK[normal]="A1B2C3D4E5F6"; _ON[normal]=1; _TS[normal]=300
+_CL[viejo]="clave2"; _ON[viejo]=0
+SAL=$(_ficha_usuario 1 normal 1 2030-01-01 | limpio)
+chequear "ficha: Límite 1/1" "si" "$(grep -q 'Límite: 1/1' <<<"$SAL" && echo si || echo no)"
+chequear "ficha: muestra el token" "si" "$(grep -q 'Token: A1B2C3D4E5F6' <<<"$SAL" && echo si || echo no)"
+SAL=$(_ficha_usuario 2 viejo 1 2030-01-01 | limpio)
+chequear "ficha sin token no muestra la línea" "no" "$(grep -q 'Token' <<<"$SAL" && echo si || echo no)"
 unset _PRE
 
 echo

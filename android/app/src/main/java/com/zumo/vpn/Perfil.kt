@@ -3,7 +3,7 @@ package com.zumo.vpn
 import org.json.JSONObject
 
 /**
- * Un "perfil" exportable: la configuración del servidor + cómo iniciar sesión (usuario/clave o HWID).
+ * Un "perfil" exportable: la configuración del servidor + cómo iniciar sesión (usuario y clave).
  * Es lo que se guarda en el archivo .zumoconf para mandarlo por WhatsApp u otra app y que, al abrirlo,
  * la app quede lista para conectar sin tener que tipear nada.
  */
@@ -11,13 +11,11 @@ data class Perfil(
     val cfg: Config,
     val user: String = "",
     val pass: String = "",
-    val useHwid: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("cfg", cfg.toJson())
         .put("user", user)
         .put("pass", pass)
-        .put("hwid", useHwid)
 
     companion object {
         fun fromJson(j: JSONObject): Perfil? = try {
@@ -26,7 +24,6 @@ data class Perfil(
                 cfg = c,
                 user = j.optString("user", ""),
                 pass = j.optString("pass", ""),
-                useHwid = j.optBoolean("hwid", false),
             )
         } catch (e: Exception) {
             null

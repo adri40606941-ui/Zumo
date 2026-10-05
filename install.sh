@@ -188,13 +188,17 @@ cat > "$WORK/pdirect.c" <<'ZUMO_PDIRECT_C'
  * el limitador pueda contar por IP real aunque sshd vea todo como 127.0.0.1. */
 #define PMAP_DIR "/run/zumo/pmap"
 
-static void pmap_write(int port, const char *ip)
+static void pmap_write(int port, const char *ip, const char *tok)
 {
 	if (port <= 0) return;
 	char p[64];
 	snprintf(p, sizeof(p), PMAP_DIR "/%d", port);
 	FILE *f = fopen(p, "w");
-	if (f) { fputs(ip, f); fputc('\n', f); fclose(f); }
+	if (f) {
+		fputs(ip, f); fputc('\n', f);
+		if (tok && tok[0]) { fputs(tok, f); fputc('\n', f); }
+		fclose(f);
+	}
 }
 
 static void pmap_del(int port)
@@ -286,6 +290,7 @@ typedef struct {
 	int counted;      /* 1 = esta conexión suma en los contadores */
 	int uport;        /* puerto local de la conexión al SSH (lo ve sshd como peer) */
 	char ip[46];
+	char tok[40];     /* token del dispositivo (cabecera X-Zumo-Token), "" si no vino */
 } Conn;
 
 static void read_cb(struct bufferevent *bev, void *arg);
@@ -313,6 +318,27 @@ static int header_present(const char *h, const char *name)
 	for (const char *p = h; *p; p++)
 		if (strncasecmp(p, name, nl) == 0) return 1;
 	return 0;
+}
+
+/* Saca el valor de X-Zumo-Token (solo letras y números, hasta 32) de un bloque
+ * de cabeceras. Debe estar al comienzo de una línea. */
+static void get_token(const char *h, char *out, size_t outsz)
+{
+	static const char name[] = "X-Zumo-Token:";
+	out[0] = '\0';
+	for (const char *p = h; *p; ) {
+		if (strncasecmp(p, name, sizeof(name) - 1) == 0) {
+			p += sizeof(name) - 1;
+			while (*p == ' ' || *p == '\t') p++;
+			size_t n = 0;
+			while (isalnum((unsigned char)*p) && n < outsz - 1 && n < 32) out[n++] = *p++;
+			out[n] = '\0';
+			return;
+		}
+		const char *nl = strchr(p, '\n');
+		if (!nl) break;
+		p = nl + 1;
+	}
 }
 
 static void close_conn(Conn *c)
@@ -425,6 +451,7 @@ static void read_cb(struct bufferevent *bev, void *arg)
 	if (!headers) { close_conn(c); return; }
 	memcpy(headers, data, hlen);
 	headers[hlen] = '\0';
+	get_token(headers, c->tok, sizeof(c->tok));
 	int split = header_present(headers, "X-Split");
 	int allowed = valid_host(headers);
 	free(headers);
@@ -491,7 +518,7 @@ void upstream_event_cb(struct bufferevent *bev, short events, void *arg)
 			socklen_t ll = sizeof(la);
 			if (getsockname(ufd, (struct sockaddr *)&la, &ll) == 0) {
 				c->uport = ntohs(la.sin_port);
-				pmap_write(c->uport, c->ip);
+				pmap_write(c->uport, c->ip, c->tok);
 			}
 		}
 		bufferevent_setcb(c->client, read_cb, write_cb, NULL, c);

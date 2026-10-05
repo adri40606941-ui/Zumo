@@ -102,8 +102,8 @@ class ZumoVpnService : VpnService() {
     private fun encender() {
         val prefs = Prefs(this)
         val cfg = prefs.config
-        val user = if (prefs.useHwid) Hwid.get(this) else prefs.user
-        val pass = if (prefs.useHwid) Hwid.get(this) else prefs.pass
+        val user = prefs.user
+        val pass = prefs.pass
         crearCanal()
         startForeground(NOTI_ID, notificacion("Conectando..."))
         if (cfg == null || !cfg.valida() || user.isBlank() || pass.isBlank()) {
@@ -215,7 +215,7 @@ class ZumoVpnService : VpnService() {
     private fun bucle(cfg: Config, user: String, pass: String) {
         var espera = 2000L
         while (activo) {
-            val t = SshTunnel(cfg, user, pass, etapa = { etapaActual = it }, proteger = { sock -> protect(sock) })
+            val t = SshTunnel(cfg, user, pass, token = Token.get(this), etapa = { etapaActual = it }, proteger = { sock -> protect(sock) })
             try {
                 estado = "Conectando..."; conectado = false; actualizarNoti()
                 t.connect()

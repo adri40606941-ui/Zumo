@@ -19,10 +19,6 @@ class Prefs(ctx: Context) {
         get() = sp.getString("pass", "") ?: ""
         set(v) { sp.edit().putString("pass", v).apply() }
 
-    var useHwid: Boolean
-        get() = sp.getBoolean("hwid", false)
-        set(v) { sp.edit().putBoolean("hwid", v).apply() }
-
     var autoStart: Boolean
         get() = sp.getBoolean("auto", true)
         set(v) { sp.edit().putBoolean("auto", v).apply() }

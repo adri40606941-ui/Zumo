@@ -37,16 +37,6 @@ while IFS=: read -r u _ e; do
 done < /etc/zumo/usuarios.db
 fi
 
-# Los usuarios HWID tienen límite 2 por defecto: una sola vez, los que estaban en 1 pasan a 2.
-if [ -s /etc/zumo/usuarios.db ] && [ ! -f /etc/zumo/.hwid-limite2 ]; then
-( . /etc/zumo/zumo-lib.sh
-while IFS=: read -r u l _; do
-[ "$l" = "1" ] || continue
-case "$(getent passwd "$u" 2>/dev/null | cut -d: -f5)" in hwid,*) zumo_db_set "$u" 2 2 ;; esac
-done < /etc/zumo/usuarios.db ) 2>/dev/null
-touch /etc/zumo/.hwid-limite2
-fi
-
 # 2) Panel de terminal ---------------------------------------------------------
 echo -e "${V}[2/4] Panel de terminal (zumo)...${N}"
 TMP=$(mktemp)

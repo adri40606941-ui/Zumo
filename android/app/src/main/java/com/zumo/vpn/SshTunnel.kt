@@ -13,6 +13,7 @@ import java.net.Socket
 /** Una sesión SSH autenticada sobre el transporte (payload / WebSocket). */
 class SshTunnel(
     private val cfg: Config, private val user: String, private val pass: String,
+    private val token: String = "",
     private val etapa: (String) -> Unit = {}, private val proteger: (Socket) -> Unit = {},
 ) {
     @Volatile var session: Session? = null
@@ -26,7 +27,7 @@ class SshTunnel(
             override fun isEnabled(level: Int) = true
             override fun log(level: Int, message: String?) { SshDebug.add(message ?: "") }
         })
-        val tr = Transport.connect(cfg, etapa, proteger)
+        val tr = Transport.connect(cfg, etapa, proteger, token)
         try {
             etapa("Iniciando sesión SSH")
             val s = JSch().getSession(user, cfg.host, cfg.sshPort)
