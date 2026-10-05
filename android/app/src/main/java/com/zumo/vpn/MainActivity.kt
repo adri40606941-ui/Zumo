@@ -217,6 +217,7 @@ class MainActivity : Activity() {
         }
         cHwid.addView(tvHwid)
         cHwid.addView(botonSecundario("💾  Guardar config (archivo para WhatsApp)") { guardarConfigArchivo() })
+        cHwid.addView(botonSecundario("🗑  Borrar datos", ROJO) { borrarDatos() })
         cHwid.addView(botonSecundario("📥  Importar config (desde archivo)") { importarConfigArchivo() })
         col.addView(cHwid)
 
@@ -355,12 +356,41 @@ class MainActivity : Activity() {
         refrescar()
     }
 
-    private fun confirmarImportarPerfil(p: Perfil) {
-        val conLogin = p.useHwid || p.user.isNotBlank()
+    /** Borra el servidor, usuario/clave y cualquier .zumoconf exportado: vuelve la app a como estaba recién instalada. */
+    private fun borrarDatos() {
         AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
-            .setTitle("Importar configuración")
-            .setMessage("¿Guardar esta configuración de \"${p.cfg.name}\"?" + if (conLogin) "\n\nTambién reemplaza tu usuario/clave actual." else "")
-            .setPositiveButton("Sí") { _, _ -> importarPerfil(p) }.setNegativeButton("No", null).show()
+            .setTitle("Borrar datos")
+            .setMessage("Se borra el servidor, el usuario/clave guardados y los archivos de configuración exportados. El HWID de este teléfono no cambia. Vas a tener que configurar todo de nuevo.")
+            .setPositiveButton("Borrar") { _, _ ->
+                if (ZumoVpnService.corriendo) { prefs.wanted = false; ZumoVpnService.detener(this) }
+                prefs.config = null
+                prefs.user = ""; prefs.pass = ""; prefs.useHwid = false
+                try { File(cacheDir, "config").deleteRecursively() } catch (_: Exception) {}
+                swHwid.isChecked = false
+                etUser.setText(""); etPass.setText("")
+                refrescarLogin(); refrescar()
+                aviso("Datos borrados")
+            }.setNegativeButton("Cancelar", null).show()
+    }
+
+    private fun confirmarImportarPerfil(p: Perfil) {
+        val c = p.cfg
+        val detalle = StringBuilder()
+            .append("Servidor: ${c.host}:${c.sshPort}\n")
+            .append("Payload: " + if (c.payload.isBlank()) "ninguno (SSH directo)" else "sí\n\n${c.payload}")
+            .append(if (c.tls) "\n\nTLS: sí" + (if (c.sni.isNotBlank()) " (SNI: ${c.sni})" else "") else "")
+            .append("\n\nInicio de sesión: " + if (p.useHwid) "HWID de este teléfono" else if (p.user.isNotBlank()) "usuario \"${p.user}\"" else "sin cambios")
+        val tv = texto(detalle.toString(), 13f, Color.WHITE).apply { setTextIsSelectable(true) }
+        val sv = ScrollView(this).apply {
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(20), dp(8), dp(20), 0)
+                addView(tv)
+            })
+        }
+        dialogo("Importar \"${c.name}\"", sv)
+            .setPositiveButton("Guardar") { _, _ -> importarPerfil(p) }
+            .setNegativeButton("Cancelar", null).mostrar()
     }
 
     private fun importarDesdeIntent(i: Intent?) {
