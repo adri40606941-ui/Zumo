@@ -26,7 +26,11 @@ class SshTunnel(
             val s = JSch().getSession(user, cfg.host, cfg.sshPort)
             s.setPassword(pass)
             s.setConfig("StrictHostKeyChecking", "no")
-            s.setConfig("PreferredAuthentications", "password,keyboard-interactive")
+            // keyboard-interactive primero: en paneles tipo SSHPlus el método "password" se rechaza
+            // directo (solo aceptan el desafío PAM), y cada intento rechazado cuenta para el límite
+            // "MaxAuthTries" del servidor. Si probamos "password" primero, gastamos un intento de más
+            // y el servidor corta con "Too many authentication failures" antes de llegar al método que sí sirve.
+            s.setConfig("PreferredAuthentications", "keyboard-interactive,password")
             // Muchos paneles (SSHPlus y similares) validan límite de conexiones/vencimiento con PAM
             // usando keyboard-interactive en vez de "password" puro. Sin esto, JSch no responde el
             // desafío y el login falla aunque el usuario/clave sean correctos (HTTP Custom sí lo hace).
