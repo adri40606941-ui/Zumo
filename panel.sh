@@ -131,8 +131,8 @@ clave_rename() { [ -f "$CLAVES" ] && awk -F: -v a="$1" -v b="$2" -v OFS=: '$1==a
 en_linea() { ps -u "$1" -o comm= 2>/dev/null | grep -c '^sshd$'; }
 
 # Validación de usuario/contraseña: solo letras y números, máximo 10, sin
-# espacios ni símbolos. El usuario además empieza con letra (minúscula).
-nombre_valido() { [[ "$1" =~ ^[a-z][a-z0-9]{0,9}$ ]]; }
+# espacios ni símbolos. El usuario además empieza con letra (mayúscula o minúscula).
+nombre_valido() { [[ "$1" =~ ^[A-Za-z][A-Za-z0-9]{0,9}$ ]]; }
 clave_valida() { [[ "$1" =~ ^[A-Za-z0-9]{1,10}$ ]]; }
 
 # Lee entrada en vivo aceptando SOLO letras y números: el espacio o cualquier
@@ -290,7 +290,7 @@ pausa
 return
 fi
 
-leer_alnum "Usuario: " 10 lower; u="$REPLY_ALNUM"
+leer_alnum "Usuario: " 10; u="$REPLY_ALNUM"
 nombre_valido "$u" || { msg_err "Usuario inválido (debe empezar con letra)"; pausa; return; }
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
 leer_alnum "Contraseña: " 10; p="$REPLY_ALNUM"
@@ -300,7 +300,7 @@ read -rp " Días de duración: " d
 read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
 [[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido (mínimo 1)"; pausa; return; }
 exp=$(date -d "+$d days" +%F)
-if ! useradd -M -s /bin/false -e "$(fecha_cuenta "$exp")" "$u" 2>/dev/null; then
+if ! useradd $([[ "$u" =~ ^[a-z][a-z0-9]*$ ]] || echo --badname) -M -s /bin/false -e "$(fecha_cuenta "$exp")" "$u" 2>/dev/null; then
 msg_err "No se pudo crear el usuario"; pausa; return
 fi
 echo "$u:$p" | chpasswd
@@ -374,7 +374,7 @@ pausa
 return
 fi
 
-leer_alnum "Usuario: " 10 lower; u="$REPLY_ALNUM"
+leer_alnum "Usuario: " 10; u="$REPLY_ALNUM"
 nombre_valido "$u" || { msg_err "Usuario inválido (debe empezar con letra)"; pausa; return; }
 id "$u" &>/dev/null && { msg_err "El usuario ya existe"; pausa; return; }
 leer_alnum "Contraseña: " 10; p="$REPLY_ALNUM"
@@ -384,7 +384,7 @@ read -rp " Minutos de duración: " min
 read -rp " Conexiones permitidas [1]: " lim; lim=${lim:-1}
 [[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido"; pausa; return; }
 exp=$(date -d "+2 days" +%F)
-if ! useradd -M -s /bin/false -e "$(fecha_cuenta "$exp")" "$u" 2>/dev/null; then
+if ! useradd $([[ "$u" =~ ^[a-z][a-z0-9]*$ ]] || echo --badname) -M -s /bin/false -e "$(fecha_cuenta "$exp")" "$u" 2>/dev/null; then
 msg_err "No se pudo crear el usuario temporal"; pausa; return
 fi
 echo "$u:$p" | chpasswd
