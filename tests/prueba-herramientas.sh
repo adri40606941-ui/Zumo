@@ -112,10 +112,10 @@ printf 'ana:1610612736\nbeto:5242880\n' > "$ZUMO_DATOS"
 HOY=$(date +%F); MES=${HOY:0:7}
 printf '%s:ana:1048576\n%s-01:ana:2097152\n%s:beto:5242880\n2020-01-05:ana:9999999\n' "$HOY" "$MES" "$HOY" > "$ZUMO_HIST"
 SAL=$(uso_datos </dev/null | limpio)
-chequear "ana: hoy 1.0 MB, mes 3.0 MB, total 1.50 GB" "si" "$(grep -qE 'ana +1\.0 MB +3\.0 MB +1\.50 GB' <<<"$SAL" && echo si || echo no)"
-chequear "beto: hoy 5.0 MB, mes 5.0 MB, total 5.0 MB" "si" "$(grep -qE 'beto +5\.0 MB +5\.0 MB +5\.0 MB' <<<"$SAL" && echo si || echo no)"
-chequear "usuario sin datos en 0" "si" "$(grep -qE 'nuevo +0\.0 MB +0\.0 MB +0\.0 MB' <<<"$SAL" && echo si || echo no)"
-chequear "total de los 3 usuarios" "si" "$(grep -qE 'TOTAL\(3\) +6\.0 MB +8\.0 MB +1\.50 GB' <<<"$SAL" && echo si || echo no)"
+chequear "ana: hoy 1.0 MB, total 1.50 GB" "si" "$(grep -qE 'ana +1\.0 MB +1\.50 GB' <<<"$SAL" && echo si || echo no)"
+chequear "beto: hoy 5.0 MB, total 5.0 MB" "si" "$(grep -qE 'beto +5\.0 MB +5\.0 MB' <<<"$SAL" && echo si || echo no)"
+chequear "usuario sin datos en 0" "si" "$(grep -qE 'nuevo +0\.0 MB +0\.0 MB' <<<"$SAL" && echo si || echo no)"
+chequear "total de los 3 usuarios" "si" "$(grep -qE 'TOTAL\(3\) +6\.0 MB +1\.50 GB' <<<"$SAL" && echo si || echo no)"
 
 echo "6) Renovar pone el contador en 0; cambiar HWID lo traslada"
 export ZUMO_DATOS_LOCK="$T/lock"

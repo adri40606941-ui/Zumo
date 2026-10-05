@@ -1060,31 +1060,28 @@ awk -v b="$1" 'BEGIN{ if (b>=1073741824) printf "%.2f GB", b/1073741824; else pr
 
 uso_datos() {
 local DATOS="${ZUMO_DATOS:-/etc/zumo/datos.db}" HIST="${ZUMO_HIST:-/etc/zumo/datos-hist.db}"
-local u b d m total totd totm n rc k hoy mes hh
+local u b d total totd n rc k hoy hh
 if [ ! -s "$DB" ]; then msg_err "No hay usuarios registrados"; pausa; return; fi
 while true; do
-hoy=$(date +%F); mes=${hoy:0:7}
+hoy=$(date +%F)
 banner; echo -e " \e[1;38;5;141mUSO DE DATOS${N}\n"
 if ! systemctl is-active --quiet zumo-datos 2>/dev/null; then
 echo -e " \e[1;31m● El contador no está activo (actualizá con actualizar.sh)${N}\n"
 fi
-hh=$(awk -F: -v h="$hoy" -v m="$mes" '{ if ($1==h) d[$2]+=$3; if (substr($1,1,7)==m) s[$2]+=$3 }
-END { for (u in s) printf "%s %.0f %.0f\n", u, d[u]+0, s[u]; for (u in d) if (!(u in s)) printf "%s %.0f 0\n", u, d[u] }' "$HIST" 2>/dev/null)
-total=0; totd=0; totm=0; n=0
+hh=$(awk -F: -v h="$hoy" '$1==h{d[$2]+=$3} END{for(u in d) printf "%s %.0f\n", u, d[u]}' "$HIST" 2>/dev/null)
+total=0; totd=0; n=0
 printf " \e[1;38;5;208m%-10s %9s %9s %9s${N}\n" "USUARIO" "HOY" "MES" "TOTAL"
 while IFS=: read -r u _; do
 [ -z "$u" ] && continue
 b=$(awk -F: -v u="$u" '$1==u{print $2}' "$DATOS" 2>/dev/null); b=${b:-0}
-read -r d m <<< "$(awk -v u="$u" '$1==u{print $2, $3}' <<<"$hh")"
-d=${d:-0}; m=${m:-0}
+d=$(awk -v u="$u" '$1==u{print $2}' <<<"$hh"); d=${d:-0}
 total=$(awk -v a="$total" -v b="$b" 'BEGIN{printf "%.0f", a+b}')
 totd=$(awk -v a="$totd" -v b="$d" 'BEGIN{printf "%.0f", a+b}')
-totm=$(awk -v a="$totm" -v b="$m" 'BEGIN{printf "%.0f", a+b}')
 n=$((n+1))
-printf " \e[1;32m%-10s\e[0m \e[1;38;5;51m%9s %9s %9s${N}\n" "$(etiqueta_de "$u" | cut -c1-10)" "$(_fmt_bytes "$d")" "$(_fmt_bytes "$m")" "$(_fmt_bytes "$b")"
+printf " \e[1;32m%-10s\e[0m \e[1;38;5;51m%9s %9s${N}\n" "$(etiqueta_de "$u" | cut -c1-10)" "$(_fmt_bytes "$d")" "$(_fmt_bytes "$b")"
 done < "$DB"
 echo; echo -e " $L"
-printf " \e[1;38;5;214m%-10s\e[0m \e[1;38;5;51m%9s %9s %9s${N}\n" "TOTAL($n)" "$(_fmt_bytes "$totd")" "$(_fmt_bytes "$totm")" "$(_fmt_bytes "$total")"
+printf " \e[1;38;5;214m%-10s\e[0m \e[1;38;5;51m%9s %9s${N}\n" "TOTAL($n)" "$(_fmt_bytes "$totd")" "$(_fmt_bytes "$total")"
 echo -e "\n Enter para volver..."
 read -rsn1 -t 2 k; rc=$?
 [ "$rc" -gt 128 ] && continue
