@@ -54,7 +54,10 @@ class ZumoVpnService : VpnService() {
     @Volatile private var tunel: SshTunnel? = null
     @Volatile private var activo = false
     @Volatile private var forzarReconexion = false
+    @Volatile private var cfgActual: Config? = null
+    @Volatile private var velocidadTxt: String = ""
     private var hilo: Thread? = null
+    private var monitor: Thread? = null
     private var wake: PowerManager.WakeLock? = null
     private var wifi: WifiManager.WifiLock? = null
     private var cb: ConnectivityManager.NetworkCallback? = null
@@ -108,8 +111,52 @@ class ZumoVpnService : VpnService() {
             estado = "Error"; prefs.wanted = false
             apagar(); stopSelf(); return
         }
+        cfgActual = cfg
         vigilarRed()
         hilo = Thread({ bucle(cfg, user, pass) }, "zumo-ssh").also { it.start() }
+        monitor = Thread({ vigilar(cfg) }, "zumo-monitor").also { it.start() }
+    }
+
+    /**
+     * Corre aparte de la conexión SSH: actualiza la velocidad en la notificación y, cada 20
+     * segundos, prueba si el túnel realmente responde (no solo si "parece" conectado). Esto
+     * detecta el caso típico de una red móvil que corta en silencio: la sesión SSH queda sin
+     * avisar que murió y la app se queda "conectada" sin pasar datos.
+     */
+    private fun vigilar(cfg: Config) {
+        var txAnt = 0L; var rxAnt = 0L; var t0 = System.currentTimeMillis()
+        var tick = 0
+        var fallos = 0
+        while (activo) {
+            Thread.sleep(2000)
+            if (!activo) break
+            val st = try { tproxy?.TProxyGetStats() } catch (_: Throwable) { null }
+            if (st != null && st.size >= 4 && conectado) {
+                val t1 = System.currentTimeMillis()
+                val dt = ((t1 - t0).coerceAtLeast(1)) / 1000.0
+                val tx = st[1]; val rx = st[3]
+                val subMbps = (tx - txAnt).coerceAtLeast(0) * 8 / dt / 1_000_000
+                val bajMbps = (rx - rxAnt).coerceAtLeast(0) * 8 / dt / 1_000_000
+                velocidadTxt = "↓ %.1f  ↑ %.1f Mbps".format(bajMbps, subMbps)
+                txAnt = tx; rxAnt = rx; t0 = t1
+                actualizarNoti()
+            }
+            tick++
+            if (tick % 10 == 0 && conectado) {   // cada ~20s
+                val t = tunel
+                val viva = t != null && probarSalud(t, cfg)
+                if (viva) fallos = 0 else {
+                    fallos++
+                    if (fallos >= 2) { forzarReconexion = true; fallos = 0 }
+                }
+            }
+        }
+    }
+
+    /** Abre un canal de prueba hacia el propio servidor: si no responde, el túnel está muerto aunque parezca activo. */
+    private fun probarSalud(t: SshTunnel, cfg: Config): Boolean {
+        val ch = try { t.abrirCanal(cfg.host, cfg.sshPort) } catch (_: Exception) { return false } ?: return false
+        return try { ch.connect(8000); true } catch (_: Exception) { false } finally { try { ch.disconnect() } catch (_: Exception) {} }
     }
 
     private fun abrirTun() {
@@ -224,6 +271,8 @@ class ZumoVpnService : VpnService() {
         try { (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(cb!!) } catch (_: Exception) {}
         cb = null
         hilo?.interrupt(); hilo = null
+        monitor?.interrupt(); monitor = null
+        velocidadTxt = ""
         try { tunel?.close() } catch (_: Exception) {}
         tunel = null
         try { socks?.stop() } catch (_: Exception) {}
@@ -250,7 +299,8 @@ class ZumoVpnService : VpnService() {
             this, 1, Intent(this, ZumoVpnService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE
         )
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL) else @Suppress("DEPRECATION") Notification.Builder(this)
-        return b.setContentTitle("Zumo VPN").setContentText(txt)
+        val cuerpo = if (conectado && velocidadTxt.isNotBlank()) "$txt  ·  $velocidadTxt" else txt
+        return b.setContentTitle("Zumo VPN").setContentText(cuerpo)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentIntent(abrir).setOngoing(true)
             .addAction(Notification.Action.Builder(null, "Desconectar", parar).build())
