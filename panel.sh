@@ -1479,6 +1479,43 @@ esac
 done
 }
 
+# Usuario compartido: quiénes intentaron conectar más sesiones de las permitidas
+# (el limitador anota cada intento en excesos.log).
+usuario_compartido() {
+local f="${ZUMO_EXCESOS:-/etc/zumo/excesos.log}" k ep nom n=0 cnt last ips u lim sep resp
+sep=$(printf '─%.0s' $(seq 1 40))
+while true; do
+banner; echo -e " \e[1;38;5;141mUSUARIO COMPARTIDO${N}"
+echo -e " \e[2mQuienes intentaron conectar más de su límite${N}\n"
+n=0
+local datos
+datos=$(awk -F'|' 'NR==FNR{split($0,d,":"); lim[d[1]]=d[2]; next}
+($2 in lim){c[$2]++; if($1>l[$2])l[$2]=$1; if(!(($2,$3) in seen)){seen[$2,$3]=1; ip[$2]++}}
+END{for(u in c) print c[u] "\t" l[u] "\t" ip[u] "\t" u "\t" lim[u]}' "$DB" <(cat "$f.1" "$f" 2>/dev/null) | sort -t$'\t' -k1,1nr -k2,2nr)
+if [ -z "$datos" ]; then
+echo -e " \e[1;32m✔ Todavía no hubo intentos por encima del límite.${N}"
+else
+while IFS=$'\t' read -r cnt last ips u lim; do
+[ -z "$u" ] && continue
+n=$((n+1))
+nom="$(etiqueta_de "$u")"
+echo -e " \e[38;5;60m${sep}${N}"
+echo -e " \e[1;38;5;208m[$n]${N} \e[1;97m$nom${N}  \e[2m·${N} \e[1;31m${cnt} intento$([ "$cnt" -ne 1 ] && echo s)${N}"
+echo -e "      \e[2mÚltima:${N} \e[1;97m$(date -d "@$last" +'%d/%m %H:%M')${N}  \e[2mIPs:${N} \e[1;97m${ips}${N}  \e[2mLímite:${N} \e[1;97m${lim}${N}"
+done <<< "$datos"
+fi
+echo -e " $L"
+echo -e "\n \e[1;38;5;208m[V]${N} Vaciar historial     \e[2mEnter para volver...${N}"
+read -rsn1 k
+if [[ "$k" =~ ^[vV]$ ]]; then
+read -rp " ¿Vaciar el historial? (s/N): " resp
+if [[ "$resp" =~ ^[sS]$ ]]; then rm -f "$f" "$f.1"; msg_ok "Historial vaciado"; sleep 1; fi
+continue
+fi
+return
+done
+}
+
 menu_herramientas() {
 while true; do
 banner; echo -e " \e[1;38;5;141mHERRAMIENTAS${N}\n"
@@ -1490,12 +1527,14 @@ fi
 op 1 "⚡" "BBR"
 op 2 "🚀" "Test de velocidad"
 op 3 "📊" "Uso de CPU y RAM"
+op 4 "👥" "Usuario compartido"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) menu_bbr ;;
 2) test_velocidad ;;
 3) procesos_top ;;
+4) usuario_compartido ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac

@@ -192,5 +192,22 @@ chequear "y la cuenta de Linux vence un día después" "usermod -e $(date -d "$N
 unset ZUMO_LIMCONF
 unset -f usermod
 
+echo "5) Usuario compartido"
+for f in usuario_compartido etiqueta_de es_hwid; do src=$(extraer "$f"); eval "$src"; done
+export ZUMO_EXCESOS="$T/excesos.log"
+: > "$DB"; printf 'ana:1:2030-01-01\nbob:2:2030-01-01\n' > "$DB"
+SAL=$(usuario_compartido </dev/null | limpio)
+chequear "sin intentos lo dice" "si" "$(grep -q 'Todavía no hubo' <<<"$SAL" && echo si || echo no)"
+NOW=$(date +%s)
+printf '%s|ana|1.1.1.1|2|1\n%s|ana|2.2.2.2|2|1\n%s|ana|1.1.1.1|2|1\n%s|bob|3.3.3.3|3|2\n%s|fantasma|9.9.9.9|2|1\n' "$NOW" "$NOW" "$NOW" "$NOW" "$NOW" > "$ZUMO_EXCESOS"
+SAL=$(usuario_compartido </dev/null | limpio)
+chequear "ana aparece primero con 3 intentos" "si" "$(grep -q '\[1\] ana.*3 intentos' <<<"$SAL" && echo si || echo no)"
+chequear "cuenta 2 IPs distintas para ana" "si" "$(grep -q 'IPs: 2' <<<"$SAL" && echo si || echo no)"
+chequear "bob con 1 intento (singular)" "si" "$(grep -q '\[2\] bob.*1 intento$' <<<"$SAL" && echo si || echo no)"
+chequear "no muestra usuarios que ya no existen" "no" "$(grep -q fantasma <<<"$SAL" && echo si || echo no)"
+printf 'vs\n' | usuario_compartido >/dev/null 2>&1
+chequear "vaciar historial borra el archivo" "no" "$([ -f "$ZUMO_EXCESOS" ] && echo si || echo no)"
+unset ZUMO_EXCESOS
+
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi

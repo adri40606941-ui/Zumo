@@ -67,6 +67,9 @@
 #define USERMOD_PATH "/usr/sbin/usermod"
 #endif
 #ifndef RUN_DIR
+#ifndef EXCESOS_PATH
+#define EXCESOS_PATH "/etc/zumo/excesos.log" /* intentos por encima del límite (usuario compartido) */
+#endif
 #define RUN_DIR "/run/zumo"
 #endif
 #define PMAP_DIR RUN_DIR "/pmap"
@@ -391,11 +394,29 @@ static int cmp_sess(const void *a, const void *b) {
     return 0;
 }
 
+/* Anota un intento por encima del límite: epoch|usuario|ip|sesiones|limite.
+ * Si el archivo pasa de 512 KB se rota (queda el anterior como .1). */
+static void log_exceso(const Sess *s, const UserLim *u, int total) {
+    struct stat st;
+    if (stat(EXCESOS_PATH, &st) == 0 && st.st_size > 512 * 1024) {
+        char old[256];
+        snprintf(old, sizeof(old), "%s.1", EXCESOS_PATH);
+        rename(EXCESOS_PATH, old);
+    }
+    FILE *f = fopen(EXCESOS_PATH, "a");
+    if (!f) return;
+    fprintf(f, "%ld|%s|%s|%d|%d\n", (long)time(NULL), u->name, s->ip[0] ? s->ip : "?", total, u->limit);
+    fclose(f);
+}
+
 static void cut(const Sess *s, const UserLim *u, const char *motivo, int total) {
     fprintf(stderr, "zumo-limit: %susuario=%s pid=%d ip=%s motivo=%s sesiones=%d limite=%d\n",
             g_dry_run ? "[dry-run] " : "", u->name, (int)s->pid,
             s->ip[0] ? s->ip : "?", motivo, total, u->limit);
-    if (!g_dry_run) kill(s->pid, SIGKILL);
+    if (!g_dry_run) {
+        if (!strcmp(motivo, "excede-limite")) log_exceso(s, u, total);
+        kill(s->pid, SIGKILL);
+    }
 }
 
 /* ------------------------------------------------------------ temporales */

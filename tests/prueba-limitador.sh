@@ -22,7 +22,7 @@ mkdir -p "$T/run"
 gcc -O2 -Wall -Wextra \
 	-DDB_PATH="\"$T/usuarios.db\"" -DCONF_PATH="\"$T/limit.conf\"" \
 	-DTEMP_DB_PATH="\"$T/temporales.db\"" -DTEMP_SCRIPT="\"$T/borrar.sh\"" \
-	-DRUN_DIR="\"$T/run\"" -DVENC_LOCK_PATH="\"$T/vencidos.lock\"" -o "$T/zumo-limit" "$AQUI/zumo-limit.c" || { echo "no compila"; exit 1; }
+	-DRUN_DIR="\"$T/run\"" -DVENC_LOCK_PATH="\"$T/vencidos.lock\"" -DEXCESOS_PATH="\"$T/excesos.log\"" -o "$T/zumo-limit" "$AQUI/zumo-limit.c" || { echo "no compila"; exit 1; }
 
 for u in ztest1 ztest2 ztest3 ztest4 ztest5 ztest6; do id "$u" >/dev/null 2>&1 || useradd -M -s /bin/false "$u"; done
 for u in ztest1 ztest2 ztest3 ztest4 ztest5 ztest6; do echo "$u:Prueba1" | chpasswd; done   # con contraseña, como los reales
@@ -65,6 +65,9 @@ timeout 20 "$T/zumo-limit" --once 2>"$T/real.log"; sleep 0.3
 chequear "ztest1 límite 1 (vieja, media, nueva)" "vivo cortado cortado" "$(estado $A1 $A2 $A3)"
 chequear "ztest2 límite 2 (ambas se quedan)" "vivo vivo" "$(estado $B1 $B2)"
 chequear "ztest3 vencido" "cortado" "$(estado $C1)"
+chequear "el exceso de ztest1 queda anotado (2 intentos)" "2" "$(grep -c '^[0-9]*|ztest1|' "$T/excesos.log" 2>/dev/null)"
+chequear "no anota al vencido ni al que está dentro del límite" "0" "$(grep -cE '\|ztest[23]\|' "$T/excesos.log" 2>/dev/null)"
+chequear "el dry-run no anota nada (se vio antes: solo hay 2 líneas)" "2" "$(wc -l < "$T/excesos.log")"
 chequear "el temporal vencido se borra; el vencido común NO (se puede renovar)" "ztest4" "$(sort "$T/borrados.txt" 2>/dev/null | uniq | tr '\n' ' ' | sed 's/ $//')"
 
 echo "3) Una sesión nueva del mismo usuario se corta en la siguiente vuelta"
