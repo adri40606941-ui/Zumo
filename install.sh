@@ -446,7 +446,14 @@ static void read_cb(struct bufferevent *bev, void *arg)
 		}
 		return;
 	}
-	evbuffer_drain(in, n);
+	/* OJO: antes era "evbuffer_drain(in, n)" (todo el buffer). Si el cliente ya
+	 * mandó más de un pedido señuelo sin usar X-Split (payloads con varios GET/
+	 * COPY seguidos, como el de la app Zumo), y esos bytes llegaron juntos en la
+	 * misma lectura que el primer "\r\n\r\n", acá se descartaban en silencio en
+	 * vez de pasarlos al relay. Hay que sacar solo el primer pedido (hlen); lo
+	 * que venga después (otro señuelo, o ya el protocolo SSH real) se queda en
+	 * el buffer y lo relay normal lo manda al SSH en cuanto arranca. */
+	evbuffer_drain(in, hlen);
 	start_upstream(c);
 }
 
