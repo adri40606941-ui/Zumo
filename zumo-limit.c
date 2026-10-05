@@ -12,7 +12,8 @@
  *      KICK=newest se conserva la más vieja y se corta la nueva.
  *   3. Corta todas las sesiones de los usuarios vencidos. Un usuario vence el
  *      día de su fecha a las 21:00 (hora de la VPS; se cambia con EXPIRE_HOUR);
- *      el usuario queda sin conexión y se puede renovar (EXPIRE_DELETE=1 lo borra).
+ *      el usuario se bloquea (usermod -L) y se desbloquea solo al renovarlo
+ *      (EXPIRE_DELETE=1 lo borra en vez de bloquearlo).
  *   4. Borra los usuarios temporales cuyo tiempo ya pasó (por si el timer de
  *      systemd se perdió con un reinicio).
  *
@@ -21,7 +22,7 @@
  *   GRACE=0           segundos que una sesión extra puede vivir antes de cortarla
  *   KICK=oldest       oldest = corta la vieja; newest = corta la nueva
  *   EXPIRE_HOUR=21    hora (0 a 23) del día de vencimiento en que se corta
- *   EXPIRE_DELETE=0   1 = al vencer se borra el usuario, 0 = solo se corta (por defecto)
+ *   EXPIRE_DELETE=0   0 = al vencer se bloquea (por defecto), 1 = se borra
  *   TEMP_CLEANUP=1    1 = borrar temporales vencidos, 0 = no
  *
  * Opciones de línea de comandos:
@@ -35,6 +36,7 @@
 #include <arpa/inet.h>
 #include <dirent.h>
 #include <pwd.h>
+#include <shadow.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -57,6 +59,12 @@
 #endif
 #ifndef TEMP_SCRIPT
 #define TEMP_SCRIPT "/etc/zumo/borrar-temporal.sh"
+#endif
+#ifndef VENC_LOCK_PATH
+#define VENC_LOCK_PATH "/etc/zumo/vencidos.lock" /* usuarios bloqueados por vencimiento */
+#endif
+#ifndef USERMOD_PATH
+#define USERMOD_PATH "/usr/sbin/usermod"
 #endif
 #ifndef RUN_DIR
 #define RUN_DIR "/run/zumo"
@@ -466,27 +474,99 @@ static void export_online(const UserLim *users, int nusers, const Sess *sess, in
 
 /* ------------------------------------------------------------------ vuelta */
 
-/* Borra (con el script de borrado) los usuarios que ya vencieron. */
-static void delete_expired(const UserLim *users, int nusers, const char *hoy, int hora, const Conf *cf) {
-    if (!cf->expire_delete || access(TEMP_SCRIPT, X_OK) != 0) return;
-    int borrados = 0;
-    for (int k = 0; k < nusers && borrados < 50; k++) {
-        const UserLim *u = &users[k];
-        if (!u->exp[0] || !valid_login(u->name)) continue;
-        int cmp_exp = strcmp(u->exp, hoy);
-        if (!(cmp_exp < 0 || (cmp_exp == 0 && hora >= cf->expire_hour))) continue;
-        fprintf(stderr, "zumo-limit: %susuario vencido, se borra: %s (vencía %s)\n",
-                g_dry_run ? "[dry-run] " : "", u->name, u->exp);
-        borrados++;
-        if (g_dry_run) continue;
-        pid_t p = fork();
-        if (p == 0) {
-            execl(TEMP_SCRIPT, TEMP_SCRIPT, u->name, (char *)NULL);
-            _exit(127);
+static void run_prog(const char *prog, const char *a1, const char *a2) {
+    pid_t p = fork();
+    if (p == 0) {
+        execl(prog, prog, a1, a2, (char *)NULL);
+        _exit(127);
+    }
+    if (p > 0) {
+        int st;
+        waitpid(p, &st, 0);
+    }
+}
+
+static int is_expired(const UserLim *u, const char *hoy, int hora, const Conf *cf) {
+    if (!u->exp[0]) return 0;
+    int c = strcmp(u->exp, hoy);
+    return c < 0 || (c == 0 && hora >= cf->expire_hour);
+}
+
+/* La cuenta ya tiene la contraseña bloqueada (la bloqueó otra persona). */
+static int already_locked(const char *name) {
+    struct spwd *sp = getspnam(name);
+    return sp && sp->sp_pwdp && sp->sp_pwdp[0] == '!';
+}
+
+/* Usuarios vencidos: se bloquean (usermod -L) para que no puedan conectarse hasta
+ * renovarlos; al renovar (la fecha deja de estar vencida) se desbloquean solos.
+ * La lista de los que bloqueó el limitador queda en VENC_LOCK_PATH, así no se
+ * desbloquea a quien bloqueó el administrador a mano. Con EXPIRE_DELETE=1 en vez
+ * de bloquear se borra el usuario. */
+static void handle_expired(const UserLim *users, int nusers, const char *hoy, int hora, const Conf *cf) {
+    static char marks[MAX_USERS][40];
+    int nm = 0, changed = 0;
+    FILE *f = fopen(VENC_LOCK_PATH, "r");
+    if (f) {
+        char line[80];
+        while (fgets(line, sizeof(line), f) && nm < MAX_USERS) {
+            trim(line);
+            if (valid_login(line)) snprintf(marks[nm++], sizeof(marks[0]), "%.39s", line);
         }
-        if (p > 0) {
-            int st;
-            waitpid(p, &st, 0);
+        fclose(f);
+    }
+    int acciones = 0;
+    for (int k = 0; k < nusers && acciones < 50; k++) {
+        const UserLim *u = &users[k];
+        if (!valid_login(u->name)) continue;
+        int mi = -1;
+        for (int m = 0; m < nm; m++)
+            if (!strcmp(marks[m], u->name)) { mi = m; break; }
+        if (is_expired(u, hoy, hora, cf)) {
+            if (cf->expire_delete) {
+                if (access(TEMP_SCRIPT, X_OK) != 0) continue;
+                fprintf(stderr, "zumo-limit: %susuario vencido, se borra: %s (vencía %s)\n",
+                        g_dry_run ? "[dry-run] " : "", u->name, u->exp);
+                acciones++;
+                if (!g_dry_run) run_prog(TEMP_SCRIPT, u->name, NULL);
+            } else if (mi < 0 && !already_locked(u->name)) {
+                fprintf(stderr, "zumo-limit: %susuario vencido, se bloquea: %s (vencía %s)\n",
+                        g_dry_run ? "[dry-run] " : "", u->name, u->exp);
+                acciones++;
+                if (!g_dry_run) {
+                    run_prog(USERMOD_PATH, "-L", u->name);
+                    if (nm < MAX_USERS) snprintf(marks[nm++], sizeof(marks[0]), "%s", u->name);
+                    changed = 1;
+                }
+            }
+        } else if (mi >= 0) {
+            fprintf(stderr, "zumo-limit: %susuario renovado, se desbloquea: %s\n",
+                    g_dry_run ? "[dry-run] " : "", u->name);
+            acciones++;
+            if (!g_dry_run) {
+                run_prog(USERMOD_PATH, "-U", u->name);
+                marks[mi][0] = '\0';
+                changed = 1;
+            }
+        }
+    }
+    /* sacar de la lista a los que ya no están en la base */
+    for (int m = 0; m < nm; m++) {
+        if (!marks[m][0]) continue;
+        int found = 0;
+        for (int k = 0; k < nusers; k++)
+            if (!strcmp(users[k].name, marks[m])) { found = 1; break; }
+        if (!found && !g_dry_run) { marks[m][0] = '\0'; changed = 1; }
+    }
+    if (changed) {
+        char tmp[sizeof(VENC_LOCK_PATH) + 8];
+        snprintf(tmp, sizeof(tmp), "%s.tmp", VENC_LOCK_PATH);
+        FILE *o = fopen(tmp, "w");
+        if (o) {
+            for (int m = 0; m < nm; m++)
+                if (marks[m][0]) fprintf(o, "%s\n", marks[m]);
+            fclose(o);
+            rename(tmp, VENC_LOCK_PATH);
         }
     }
 }
@@ -533,7 +613,7 @@ static void run_cycle(const Conf *cf) {
             }
             i = j;
         }
-        delete_expired(g_users, nusers, hoy, tmv.tm_hour, cf);
+        handle_expired(g_users, nusers, hoy, tmv.tm_hour, cf);
         export_online(g_users, nusers, g_sess, ns);
     }
     if (cf->temp_cleanup) cleanup_temps(time(NULL));

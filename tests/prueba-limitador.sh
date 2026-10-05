@@ -22,9 +22,10 @@ mkdir -p "$T/run"
 gcc -O2 -Wall -Wextra \
 	-DDB_PATH="\"$T/usuarios.db\"" -DCONF_PATH="\"$T/limit.conf\"" \
 	-DTEMP_DB_PATH="\"$T/temporales.db\"" -DTEMP_SCRIPT="\"$T/borrar.sh\"" \
-	-DRUN_DIR="\"$T/run\"" -o "$T/zumo-limit" "$AQUI/zumo-limit.c" || { echo "no compila"; exit 1; }
+	-DRUN_DIR="\"$T/run\"" -DVENC_LOCK_PATH="\"$T/vencidos.lock\"" -o "$T/zumo-limit" "$AQUI/zumo-limit.c" || { echo "no compila"; exit 1; }
 
 for u in ztest1 ztest2 ztest3 ztest4 ztest5 ztest6; do id "$u" >/dev/null 2>&1 || useradd -M -s /bin/false "$u"; done
+for u in ztest1 ztest2 ztest3 ztest4 ztest5 ztest6; do echo "$u:Prueba1" | chpasswd; done   # con contraseña, como los reales
 cp /bin/sleep "$T/sshd"   # proceso con nombre "sshd"
 
 printf 'ztest1:1:2099-01-01\nztest2:2:2099-01-01\nztest3:1:2020-01-01\nztest4:1:2099-01-01\n' > "$T/usuarios.db"
@@ -89,33 +90,50 @@ rm -f "$T/limit.conf"
 timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
 chequear "ztest1 fuera de la base: sin cambios" "vivo vivo" "$(estado $N2 $N3)"
 
-echo "5) Vence el día indicado a la hora de corte (EXPIRE_HOUR)"
+echo "7) Vence el día indicado a la hora de corte: se bloquea (y se desbloquea al renovar)"
 HOY=$(date +%F); HORA=$(date +%-H)
+est() { passwd -S "$1" 2>/dev/null | awk '{print $2}'; }
 printf 'ztest5:1:%s\nztest6:1:%s\n' "$HOY" "$HOY" > "$T/usuarios.db"
-: > "$T/temporales.db"
-rm -f "$T/borrados.txt"
+: > "$T/temporales.db"; rm -f "$T/borrados.txt" "$T/vencidos.lock"
 abrir ztest5; V1=$NUEVO_PID; abrir ztest6; V2=$NUEVO_PID; sleep 0.3
 printf 'EXPIRE_HOUR=%s\n' "$HORA" > "$T/limit.conf"
 timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
-chequear "pasada la hora de corte, el día de vencimiento se corta" "cortado cortado" "$(estado $V1 $V2)"
-chequear "por defecto NO se borra (queda para renovar)" "" "$(cat "$T/borrados.txt" 2>/dev/null)"
-printf 'EXPIRE_HOUR=%s\nEXPIRE_DELETE=1\n' "$HORA" > "$T/limit.conf"
+chequear "pasada la hora de corte, se cortan las sesiones" "cortado cortado" "$(estado $V1 $V2)"
+chequear "y las cuentas quedan bloqueadas" "L L" "$(est ztest5) $(est ztest6)"
+chequear "no se borra nada" "" "$(cat "$T/borrados.txt" 2>/dev/null)"
+chequear "quedan anotadas como bloqueadas por vencimiento" "ztest5 ztest6" "$(sort "$T/vencidos.lock" | tr '\n' ' ' | sed 's/ $//')"
+echo "   renovar ztest5 (fecha futura)"
+printf 'ztest5:1:2099-01-01\nztest6:1:%s\n' "$HOY" > "$T/usuarios.db"
 timeout 20 "$T/zumo-limit" --once 2>/dev/null
-chequear "con EXPIRE_DELETE=1 se manda a borrar a los dos" "ztest5 ztest6" "$(sort "$T/borrados.txt" | uniq | tr '\n' ' ' | sed 's/ $//')"
-if [ "$HORA" -lt 23 ]; then
-abrir ztest5; V3=$NUEVO_PID; sleep 0.3
-printf 'EXPIRE_HOUR=%s\nEXPIRE_DELETE=1\n' "$((HORA+1))" > "$T/limit.conf"
-timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
-chequear "antes de la hora de corte el mismo día sigue conectado" "vivo" "$(estado $V3)"
-rm -f "$T/borrados.txt"; timeout 20 "$T/zumo-limit" --once 2>/dev/null
-chequear "y no se borra todavía" "" "$(cat "$T/borrados.txt" 2>/dev/null)"
-else echo "  (se omite: son las 23 h)"; fi
+chequear "ztest5 se desbloquea solo" "P" "$(est ztest5)"
+chequear "ztest6 sigue bloqueado" "L" "$(est ztest6)"
+chequear "la lista queda solo con ztest6" "ztest6" "$(cat "$T/vencidos.lock")"
+echo "   un usuario bloqueado a mano no se desbloquea al renovar"
+usermod -L ztest5
 printf 'ztest5:1:%s\n' "$(date -d yesterday +%F)" > "$T/usuarios.db"
-abrir ztest5; V4=$NUEVO_PID; sleep 0.3
-printf 'EXPIRE_HOUR=23\n' > "$T/limit.conf"
-timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
-chequear "un día anterior se corta siempre" "cortado" "$(estado $V4)"
+timeout 20 "$T/zumo-limit" --once 2>/dev/null
+chequear "no se anota (lo bloqueó el administrador)" "0" "$(grep -c ztest5 "$T/vencidos.lock")"
+printf 'ztest5:1:2099-01-01\n' > "$T/usuarios.db"
+timeout 20 "$T/zumo-limit" --once 2>/dev/null
+chequear "sigue bloqueado tras renovar" "L" "$(est ztest5)"
+chequear "los que ya no están en la base salen de la lista" "0" "$(grep -c ztest6 "$T/vencidos.lock")"
+usermod -U ztest5
 
+echo "8) Antes de la hora de corte del mismo día no pasa nada"
+if [ "$HORA" -lt 23 ]; then
+printf 'ztest5:1:%s\n' "$HOY" > "$T/usuarios.db"
+abrir ztest5; V3=$NUEVO_PID; sleep 0.3
+printf 'EXPIRE_HOUR=%s\n' "$((HORA+1))" > "$T/limit.conf"
+timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
+chequear "sigue conectado y sin bloquear" "vivo P" "$(estado $V3) $(est ztest5)"
+else echo "  (se omite: son las 23 h)"; fi
+
+echo "9) EXPIRE_DELETE=1 borra en vez de bloquear"
+printf 'ztest5:1:%s\n' "$(date -d yesterday +%F)" > "$T/usuarios.db"
+printf 'EXPIRE_HOUR=23\nEXPIRE_DELETE=1\n' > "$T/limit.conf"; rm -f "$T/borrados.txt" "$T/vencidos.lock"
+timeout 20 "$T/zumo-limit" --once 2>/dev/null
+chequear "se manda a borrar" "ztest5" "$(sort -u "$T/borrados.txt" 2>/dev/null)"
+chequear "y no queda bloqueado" "P" "$(est ztest5)"
 
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi
