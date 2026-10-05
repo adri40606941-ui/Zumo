@@ -56,6 +56,7 @@ android {
 
 dependencies {
     implementation("com.github.mwiede:jsch:0.2.20")
+    implementation("androidx.core:core:1.13.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.apache.sshd:sshd-core:2.12.1")
     testImplementation("org.slf4j:slf4j-simple:1.7.36")

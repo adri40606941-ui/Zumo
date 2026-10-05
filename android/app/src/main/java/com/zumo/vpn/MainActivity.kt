@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
@@ -19,6 +20,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
+import androidx.core.content.FileProvider
+import java.io.File
 
 class MainActivity : Activity() {
 
@@ -181,11 +184,6 @@ class MainActivity : Activity() {
             setOnCheckedChangeListener { _, on -> prefs.useHwid = on; refrescarLogin() }
         }
         cLogin.addView(swHwid)
-        tvHwid = texto("", 12.5f, TEXTO_SUAVE).apply {
-            setTextIsSelectable(true)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) }
-        }
-        cLogin.addView(tvHwid)
         boxLogin = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
@@ -209,6 +207,19 @@ class MainActivity : Activity() {
         cCfg.addView(botonSecundario("📤  Compartir configuración") { compartir() })
         col.addView(cCfg)
 
+        // HWID + perfil completo (servidor + inicio de sesión) en un archivo para enviar por WhatsApp
+        val cHwid = tarjeta()
+        seccion(cHwid, "🪪", "HWID y perfil")
+        tvHwid = texto("", 12.5f, TEXTO_SUAVE).apply {
+            setTextIsSelectable(true)
+            text = "Tu HWID (fijo para este teléfono, pásaselo a quien te da el servicio):\n" + Hwid.get(this@MainActivity)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        cHwid.addView(tvHwid)
+        cHwid.addView(botonSecundario("💾  Guardar config (archivo para WhatsApp)") { guardarConfigArchivo() })
+        cHwid.addView(botonSecundario("📥  Importar config (desde archivo)") { importarConfigArchivo() })
+        col.addView(cHwid)
+
         // estabilidad de la conexión
         val cEst = tarjeta()
         seccion(cEst, "⚙️", "Evitar desconexiones")
@@ -227,8 +238,6 @@ class MainActivity : Activity() {
     private fun refrescarLogin() {
         val on = swHwid.isChecked
         boxLogin.visibility = if (on) View.GONE else View.VISIBLE
-        tvHwid.visibility = if (on) View.VISIBLE else View.GONE
-        tvHwid.text = "Tu HWID (pásaselo a quien te da el servicio):\n" + Hwid.get(this)
     }
 
     private fun guardarCampos() {
@@ -296,6 +305,7 @@ class MainActivity : Activity() {
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
         if (req == 1 && res == RESULT_OK) ZumoVpnService.iniciar(this)
+        if (req == 2 && res == RESULT_OK) data?.data?.let { leerArchivoConfig(it) }
     }
 
     private fun aviso(t: String) = Toast.makeText(this, t, Toast.LENGTH_LONG).show()
@@ -333,12 +343,92 @@ class MainActivity : Activity() {
         refrescar()
     }
 
-    private fun importarDesdeIntent(i: Intent?) {
-        val d = i?.dataString ?: return
-        if (!d.startsWith("zumo://")) return
+    /** Guarda un perfil completo (servidor + usuario/clave o HWID) y actualiza la pantalla de login. */
+    private fun importarPerfil(p: Perfil) {
+        prefs.config = p.cfg
+        prefs.useHwid = p.useHwid
+        if (!p.useHwid) { prefs.user = p.user; prefs.pass = p.pass }
+        if (::swHwid.isInitialized) swHwid.isChecked = prefs.useHwid
+        if (::etUser.isInitialized) { etUser.setText(prefs.user); etPass.setText(prefs.pass) }
+        refrescarLogin()
+        aviso("Configuración \"${p.cfg.name}\" guardada" + if (p.useHwid) " (modo HWID)" else "")
+        refrescar()
+    }
+
+    private fun confirmarImportarPerfil(p: Perfil) {
+        val conLogin = p.useHwid || p.user.isNotBlank()
         AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
-            .setTitle("Importar configuración").setMessage("¿Guardar esta configuración de servidor?")
-            .setPositiveButton("Sí") { _, _ -> importar(d) }.setNegativeButton("No", null).show()
+            .setTitle("Importar configuración")
+            .setMessage("¿Guardar esta configuración de \"${p.cfg.name}\"?" + if (conLogin) "\n\nTambién reemplaza tu usuario/clave actual." else "")
+            .setPositiveButton("Sí") { _, _ -> importarPerfil(p) }.setNegativeButton("No", null).show()
+    }
+
+    private fun importarDesdeIntent(i: Intent?) {
+        val uri = i?.data ?: return
+        when (uri.scheme) {
+            "zumo" -> {
+                val d = i.dataString ?: return
+                AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+                    .setTitle("Importar configuración").setMessage("¿Guardar esta configuración de servidor?")
+                    .setPositiveButton("Sí") { _, _ -> importar(d) }.setNegativeButton("No", null).show()
+            }
+            "content", "file" -> leerArchivoConfig(uri)
+        }
+    }
+
+    /** Arma un archivo .zumoconf (servidor + login) para mandar por WhatsApp u otra app. */
+    private fun guardarConfigArchivo() {
+        guardarCampos()
+        val c = prefs.config
+        if (c == null || !c.valida()) { aviso("Primero configurá el servidor"); return }
+        val cbHwid = CheckBox(this).apply {
+            text = "Usar el HWID de este teléfono como usuario (compatible con el panel)"
+            setTextColor(Color.WHITE)
+            isChecked = prefs.useHwid
+        }
+        val cont = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); addView(cbHwid) }
+        dialogo("Guardar configuración", cont)
+            .setPositiveButton("Guardar y compartir") { _, _ ->
+                val p = if (cbHwid.isChecked) Perfil(c, useHwid = true)
+                else Perfil(c, user = prefs.user, pass = prefs.pass, useHwid = false)
+                exportarArchivo(p)
+            }
+            .setNegativeButton("Cancelar", null).mostrar()
+    }
+
+    private fun exportarArchivo(p: Perfil) {
+        try {
+            val dir = File(cacheDir, "config").apply { mkdirs() }
+            val nombre = p.cfg.name.ifBlank { "zumo" }.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".zumoconf"
+            val f = File(dir, nombre)
+            f.writeText(p.toJson().toString())
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
+            val i = Intent(Intent.ACTION_SEND).setType("application/x-zumoconfig")
+                .putExtra(Intent.EXTRA_STREAM, uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(Intent.createChooser(i, "Compartir configuración"))
+        } catch (e: Exception) {
+            aviso("No se pudo crear el archivo: ${e.message}")
+        }
+    }
+
+    private fun importarConfigArchivo() {
+        try {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), 2)
+        } catch (e: Exception) {
+            aviso("No se pudo abrir el selector de archivos")
+        }
+    }
+
+    private fun leerArchivoConfig(uri: Uri) {
+        try {
+            val texto = contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+            val p = texto?.let { Perfil.desdeTexto(it) }
+            if (p == null) { aviso("El archivo no es una configuración válida de Zumo VPN"); return }
+            confirmarImportarPerfil(p)
+        } catch (e: Exception) {
+            aviso("No se pudo leer el archivo: ${e.message}")
+        }
     }
 
     private fun compartir() {
