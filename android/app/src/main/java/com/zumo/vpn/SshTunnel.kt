@@ -36,6 +36,16 @@ class SshTunnel(
             // "MaxAuthTries" del servidor. Si probamos "password" primero, gastamos un intento de más
             // y el servidor corta con "Too many authentication failures" antes de llegar al método que sí sirve.
             s.setConfig("PreferredAuthentications", "keyboard-interactive,password")
+            // Algunos servidores ofrecen cifrados/MAC modernos que JSch no puede instanciar en
+            // Android (la clase correspondiente no existe en el proveedor de cifrado del sistema).
+            // En vez de descartar ese algoritmo con elegancia, JSch tira un NullPointerException
+            // ("Cipher.isCBC() on a null object reference") durante la negociación, cortando la
+            // conexión antes de llegar siquiera a pedir usuario/clave. Limitamos la lista a
+            // algoritmos clásicos que sí están disponibles en Android para evitar ese choque.
+            s.setConfig("cipher.s2c", "aes128-ctr,aes192-ctr,aes256-ctr,aes128-cbc,aes192-cbc,aes256-cbc,3des-cbc")
+            s.setConfig("cipher.c2s", "aes128-ctr,aes192-ctr,aes256-ctr,aes128-cbc,aes192-cbc,aes256-cbc,3des-cbc")
+            s.setConfig("mac.s2c", "hmac-sha2-256,hmac-sha2-512,hmac-sha1")
+            s.setConfig("mac.c2s", "hmac-sha2-256,hmac-sha2-512,hmac-sha1")
             // Muchos paneles (SSHPlus y similares) validan límite de conexiones/vencimiento con PAM
             // usando keyboard-interactive en vez de "password" puro. Sin esto, JSch no responde el
             // desafío y el login falla aunque el usuario/clave sean correctos (HTTP Custom sí lo hace).
