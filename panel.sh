@@ -618,27 +618,50 @@ done
 }
 
 # Dos líneas por usuario: [n] ● nombre + clave; debajo vencimiento, límite y tiempo conectado.
+_fmt_secs() { # segundos -> 5m / 1h 5m / 2d 3h
+local s="$1" d h m
+d=$(( s/86400 )); h=$(( (s%86400)/3600 )); m=$(( (s%3600)/60 ))
+if [ "$d" -gt 0 ]; then echo "${d}d ${h}h"; elif [ "$h" -gt 0 ]; then echo "${h}h ${m}m"; else echo "${m}m"; fi
+}
+
 _ficha_usuario() { # n usuario límite vencimiento
-local n="$1" u="$2" lim="$3" exp="$4" on dot venc venc_col tc nombre clave con=""
-echo -e " \e[38;5;60m$(printf '─%.0s' $(seq 1 40))${N}"
-on=$(en_linea "$u")
+local n="$1" u="$2" lim="$3" exp="$4" on dot venc venc_col tc nombre clave con="" esw=0 esT=0
+[ -n "${_SEP:-}" ] || _SEP=$(printf '─%.0s' $(seq 1 40))
+echo -e " \e[38;5;60m${_SEP}${N}"
+if [ -n "${_PRE:-}" ]; then
+on=${_ON[$u]:-0}; tc=""; [ "$on" -gt 0 ] && tc=$(_fmt_secs "${_TS[$u]:-0}")
+[[ -v _GE[$u] ]] && esw=1; [[ -v _TM[$u] ]] && esT=1
+else
+on=$(en_linea "$u"); tc=""; [ "$on" -gt 0 ] && tc=$(tiempo_conectado "$u")
+es_hwid "$u" && esw=1; es_temporal "$u" && esT=1
+fi
 if [ "$on" -gt 0 ]; then
 dot="\e[1;32m●${N}"
-tc=$(tiempo_conectado "$u"); [ -n "$tc" ] && con="  \e[1;32m${tc}${N}"
+[ -n "$tc" ] && con="  \e[1;32m${tc}${N}"
 else dot="\e[1;31m●${N}"; fi
-if es_temporal "$u"; then venc="$(temp_restante "$u")"; venc_col="\e[1;38;5;214m"
+if [ "$esT" -eq 1 ]; then
+if [ -n "${_PRE:-}" ]; then local m=$(( (_TM[$u] - $(printf '%(%s)T' -1) + 59) / 60 )); if [ "$m" -le 0 ]; then venc="venció"; else venc="${m}m restantes"; fi
+else venc="$(temp_restante "$u")"; fi
+venc_col="\e[1;38;5;214m"
 else
-venc="$(dias "$exp")"
+if [ -n "${_PRE:-}" ]; then
+[[ -v _DC[$exp] ]] || _DC[$exp]=$(dias "$exp")
+venc="${_DC[$exp]}"
+else venc="$(dias "$exp")"; fi
 case "$venc" in
 vencido) venc_col="\e[1;31m" ;;
 "vence hoy"|"vence 1 día"|"vence 2 días"|"vence 3 días") venc_col="\e[1;38;5;214m" ;;
 *) venc_col="\e[1;32m" ;;
 esac
-venc="$(date -d "$exp" +%d/%m/%Y 2>/dev/null || echo "$exp")"
+venc="${exp:8:2}/${exp:5:2}/${exp:0:4}"
 fi
-nombre="$(etiqueta_de "$u")"
-clave="$(clave_get "$u")"; [ -n "$clave" ] || clave="-"
-if es_hwid "$u"; then
+if [ -n "${_PRE:-}" ]; then
+if [ "$esw" -eq 1 ]; then nombre="${_GE[$u]}"; clave="$u"; else nombre="$u"; clave="${_CL[$u]:-}"; fi
+else
+nombre="$(etiqueta_de "$u")"; clave="$(clave_get "$u")"
+fi
+[ -n "$clave" ] || clave="-"
+if [ "$esw" -eq 1 ]; then
 echo -e " \e[1;38;5;208m[$n]${N} $dot \e[1;97m$nombre${N}"
 echo -e "      \e[2mHWID:${N} \e[1;38;5;214m$u${N}"
 else
@@ -649,12 +672,22 @@ echo -e "      \e[2mVence:${N} ${venc_col}${venc}${N}  \e[2mLímite:${N} \e[1;97
 
 listar_usuarios() {
 if [ ! -s "$DB" ]; then banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"; msg_err "No hay usuarios"; pausa; return; fi
-banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"
+# Se prepara todo de una vez (sesiones, HWID, claves, temporales) y se dibuja la lista entera junta.
+declare -gA _ON=() _TS=() _GE=() _CL=() _TM=() _DC=()
+local k a b l
+while read -r k a b; do _ON[$k]=$a; _TS[$k]=$b; done < <(ps -eo user=,comm=,etimes= 2>/dev/null | awk '$2=="sshd"{c[$1]++; if($3>m[$1])m[$1]=$3} END{for(u in c) print u, c[u], m[u]}')
+while IFS=$'\t' read -r k a; do _GE[$k]=$a; done < <(awk -F: '$5 ~ /^hwid,/{print $1 "\t" substr($5,6)}' "${ZUMO_PASSWD:-/etc/passwd}")
+[ -f "$CLAVES" ] && while IFS= read -r l; do [ -n "$l" ] && _CL[${l%%:*}]=${l#*:}; done < "$CLAVES"
+[ -f "$TEMPDB" ] && while IFS=: read -r k a; do [ -n "$k" ] && _TM[$k]=$a; done < "$TEMPDB"
+_PRE=1
+local out
+out=$(
+echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"
 local u lim exp hay_comun=0 hay_hwid=0 n=0
 echo -e " \e[1;38;5;141m━━━ COMÚN ━━━${N}\n"
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
-es_hwid "$u" && continue
+[[ -v _GE[$u] ]] && continue
 hay_comun=1; n=$((n+1))
 _ficha_usuario "$n" "$u" "$lim" "$exp"
 done < <(db_orden)
@@ -663,12 +696,16 @@ echo -e " \e[1;38;5;141m━━━ HWID ━━━${N}\n"
 n=0
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
-es_hwid "$u" || continue
+[[ -v _GE[$u] ]] || continue
 hay_hwid=1; n=$((n+1))
 _ficha_usuario "$n" "$u" "$lim" "$exp"
 done < <(db_orden)
 [ "$hay_hwid" -eq 0 ] && echo -e " \e[2m(sin usuarios HWID)${N}\n"
 echo -e " $L"
+)
+_PRE=""
+banner
+printf '%s\n' "$out"
 echo -e "\n Enter para volver..."
 read -rsn1 _
 }
