@@ -337,7 +337,7 @@ echo "$u:$p" | chpasswd
 zumo_db_add "$u" "$lim" "$exp"
 programar_borrado_temp "$u" "$min"
 echo; msg_ok "Usuario temporal creado"
-mensaje_comun "$u" "$p" "$(date -d "+$min minutes" "+%d/%m %H:%M")"
+mensaje_comun "$u" "$p" "$( [ "$min" -eq 1 ] && echo "1 minuto" || echo "$min minutos" )"
 pausa
 }
 
