@@ -591,50 +591,54 @@ esac
 done
 }
 
+# Una ficha por usuario: nombre bien visible, estado y datos en líneas aparte.
+_ficha_usuario() { # usuario límite vencimiento
+local u="$1" lim="$2" exp="$3" on est_col est_txt venc venc_col tc nombre
+on=$(en_linea "$u")
+if [ "$on" -gt 0 ]; then
+est_txt="online ($on)"; est_col="\e[1;32m"
+tc=$(tiempo_conectado "$u"); [ -n "$tc" ] && est_txt+=" · hace $tc"
+else est_txt="offline"; est_col="\e[2m"; fi
+if es_temporal "$u"; then venc="$(temp_restante "$u")"; venc_col="\e[1;38;5;214m"
+else
+venc="$(dias "$exp")"
+case "$venc" in
+vencido) venc_col="\e[1;31m" ;;
+"vence hoy"|"vence 1 día"|"vence 2 días"|"vence 3 días") venc_col="\e[1;38;5;214m" ;;
+*) venc_col="\e[1;32m" ;;
+esac
+fi
+nombre="$(etiqueta_de "$u")"
+if [ "$on" -gt 0 ]; then echo -e " \e[1;32m●${N} \e[1;97m$nombre${N}"; else echo -e " \e[2m○${N} \e[1;97m$nombre${N}"; fi
+es_hwid "$u" && echo -e "   \e[2mHWID:${N} \e[1;38;5;214m$u${N}"
+echo -e "   ${est_col}${est_txt}${N}"
+echo -e "   \e[2mlímite${N} \e[1;97m$lim${N}   \e[2m·${N}   ${venc_col}${venc}${N}"
+echo
+}
+
 listar_usuarios() {
 if [ ! -s "$DB" ]; then banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"; msg_err "No hay usuarios"; pausa; return; fi
-while true; do
-banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}"
-echo
-
-local hay_comun=0 hay_hwid=0
-
-# ---------- Sección COMÚN ----------
-echo -e " \e[1;38;5;141m━━━ COMÚN ━━━${N}"
-printf " \e[1;38;5;208m%-18s %-14s %-8s %s${N}\n" "USUARIO" "ESTADO" "LÍMITE" "VENCIMIENTO"
+banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"
+local u lim exp hay_comun=0 hay_hwid=0
+echo -e " \e[1;38;5;141m━━━ COMÚN ━━━${N}\n"
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 es_hwid "$u" && continue
 hay_comun=1
-on=$(en_linea "$u")
-if [ "$on" -gt 0 ]; then est_txt="● online ($on)"; est_col="\e[1;32m"; else est_txt="○ offline"; est_col="\e[2m"; fi
-if es_temporal "$u"; then venc="⏳ $(temp_restante "$u")"; else venc="$(dias "$exp")"; fi
-printf " %-18s ${est_col}%-14s${N} %-8s %s\n" "$u" "$est_txt" "$lim" "$venc"
-if [ "$on" -gt 0 ]; then tc=$(tiempo_conectado "$u"); [ -n "$tc" ] && echo -e "    \e[2mconectado hace\e[0m \e[1;38;5;214m$tc${N}"; fi
+_ficha_usuario "$u" "$lim" "$exp"
 done < "$DB"
-[ "$hay_comun" -eq 0 ] && echo -e " \e[2m(sin usuarios comunes)${N}"
-
-# ---------- Sección HWID ----------
-echo; echo -e " \e[1;38;5;141m━━━ HWID ━━━${N}"
-printf " \e[1;38;5;208m%-18s %-14s %-8s %s${N}\n" "CLIENTE" "ESTADO" "LÍMITE" "VENCIMIENTO"
+[ "$hay_comun" -eq 0 ] && echo -e " \e[2m(sin usuarios comunes)${N}\n"
+echo -e " \e[1;38;5;141m━━━ HWID ━━━${N}\n"
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 es_hwid "$u" || continue
 hay_hwid=1
-on=$(en_linea "$u")
-if [ "$on" -gt 0 ]; then est_txt="● online ($on)"; est_col="\e[1;32m"; else est_txt="○ offline"; est_col="\e[2m"; fi
-if es_temporal "$u"; then venc="⏳ $(temp_restante "$u")"; else venc="$(dias "$exp")"; fi
-printf " %-18s ${est_col}%-14s${N} %-8s %s\n" "$(etiqueta_de "$u")" "$est_txt" "$lim" "$venc"
-echo -e "    \e[2mHWID:\e[0m \e[1;38;5;214m$u${N}"
-if [ "$on" -gt 0 ]; then tc=$(tiempo_conectado "$u"); [ -n "$tc" ] && echo -e "    \e[2mconectado hace\e[0m \e[1;38;5;214m$tc${N}"; fi
+_ficha_usuario "$u" "$lim" "$exp"
 done < "$DB"
-[ "$hay_hwid" -eq 0 ] && echo -e " \e[2m(sin usuarios HWID)${N}"
-
-echo; echo -e " $L"
+[ "$hay_hwid" -eq 0 ] && echo -e " \e[2m(sin usuarios HWID)${N}\n"
+echo -e " $L"
 echo -e "\n Enter para volver..."
 read -rsn1 _
-break
-done
 }
 
 menu_usuario() {
