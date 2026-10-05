@@ -11,7 +11,8 @@
  *      (que el servidor tarda ~30 s en notar) es la que se corta. Con
  *      KICK=newest se conserva la más vieja y se corta la nueva.
  *   3. Corta todas las sesiones de los usuarios vencidos. Un usuario vence el
- *      día de su fecha a las 21:00 (hora de la VPS; se cambia con EXPIRE_HOUR).
+ *      día de su fecha a las 21:00 (hora de la VPS; se cambia con EXPIRE_HOUR) y
+ *      se borra (EXPIRE_DELETE=0 para solo cortar y no borrar).
  *   4. Borra los usuarios temporales cuyo tiempo ya pasó (por si el timer de
  *      systemd se perdió con un reinicio).
  *
@@ -20,6 +21,7 @@
  *   GRACE=0           segundos que una sesión extra puede vivir antes de cortarla
  *   KICK=oldest       oldest = corta la vieja; newest = corta la nueva
  *   EXPIRE_HOUR=21    hora (0 a 23) del día de vencimiento en que se corta
+ *   EXPIRE_DELETE=1   1 = al vencer se borra el usuario, 0 = solo se corta
  *   TEMP_CLEANUP=1    1 = borrar temporales vencidos, 0 = no
  *
  * Opciones de línea de comandos:
@@ -71,6 +73,7 @@ typedef struct {
     int kick_newest;   /* 1 = corta la más nueva, 0 = corta la más vieja */
     int temp_cleanup;  /* 1 = borrar temporales vencidos */
     int expire_hour;   /* hora (0-23) del día de vencimiento en que se corta */
+    int expire_delete; /* 1 = borrar el usuario al vencer */
 } Conf;
 
 typedef struct {
@@ -117,6 +120,7 @@ static void load_conf(Conf *c) {
     c->kick_newest = 0;
     c->temp_cleanup = 1;
     c->expire_hour = 21;
+    c->expire_delete = 1;
     FILE *f = fopen(CONF_PATH, "r");
     if (!f) return;
     char line[160];
@@ -140,6 +144,8 @@ static void load_conf(Conf *c) {
         } else if (!strcmp(k, "EXPIRE_HOUR")) {
             int n = atoi(v);
             if (n >= 0 && n <= 23) c->expire_hour = n;
+        } else if (!strcmp(k, "EXPIRE_DELETE")) {
+            c->expire_delete = (atoi(v) != 0);
         } else if (!strcmp(k, "TEMP_CLEANUP")) {
             c->temp_cleanup = (atoi(v) != 0);
         }
@@ -460,6 +466,31 @@ static void export_online(const UserLim *users, int nusers, const Sess *sess, in
 
 /* ------------------------------------------------------------------ vuelta */
 
+/* Borra (con el script de borrado) los usuarios que ya vencieron. */
+static void delete_expired(const UserLim *users, int nusers, const char *hoy, int hora, const Conf *cf) {
+    if (!cf->expire_delete || access(TEMP_SCRIPT, X_OK) != 0) return;
+    int borrados = 0;
+    for (int k = 0; k < nusers && borrados < 50; k++) {
+        const UserLim *u = &users[k];
+        if (!u->exp[0] || !valid_login(u->name)) continue;
+        int cmp_exp = strcmp(u->exp, hoy);
+        if (!(cmp_exp < 0 || (cmp_exp == 0 && hora >= cf->expire_hour))) continue;
+        fprintf(stderr, "zumo-limit: %susuario vencido, se borra: %s (vencía %s)\n",
+                g_dry_run ? "[dry-run] " : "", u->name, u->exp);
+        borrados++;
+        if (g_dry_run) continue;
+        pid_t p = fork();
+        if (p == 0) {
+            execl(TEMP_SCRIPT, TEMP_SCRIPT, u->name, (char *)NULL);
+            _exit(127);
+        }
+        if (p > 0) {
+            int st;
+            waitpid(p, &st, 0);
+        }
+    }
+}
+
 static void run_cycle(const Conf *cf) {
     int nusers = load_users(g_users);
     if (nusers > 0) {
@@ -502,6 +533,7 @@ static void run_cycle(const Conf *cf) {
             }
             i = j;
         }
+        delete_expired(g_users, nusers, hoy, tmv.tm_hour, cf);
         export_online(g_users, nusers, g_sess, ns);
     }
     if (cf->temp_cleanup) cleanup_temps(time(NULL));
