@@ -253,6 +253,17 @@ echo -e " ├ ⏳ Vence: \e[1;38;5;214m$vence${N}"
 echo
 }
 
+# Mismo mensaje para el cliente que al crear el usuario, pero con el nuevo vencimiento.
+mensaje_renovacion() { # usuario vencimiento(AAAA-MM-DD)
+local u="$1" exp="$2" clave
+if es_hwid "$u"; then mensaje_hwid "$u" "$(date -d "$exp" +%d/%m/%Y)"
+else
+clave="$(clave_get "$u")"; [ -n "$clave" ] || clave="(su clave)"
+mensaje_comun "$u" "$clave" "$(date -d "$exp" +%d/%m)"
+fi
+}
+
+
 crear_usuario() {
 banner; echo -e " \e[1;38;5;141mCREAR USUARIO${N}\n"
 op 1 "●" "Normal"
@@ -534,7 +545,8 @@ nexp=$(date -d "+$nd days" +%F)
 usermod -e "$(fecha_cuenta "$nexp")" "$ur" 2>/dev/null
 zumo_db_set "$ur" 3 "$nexp"
 datos_reset "$ur"
-msg_ok "$(etiqueta_de "$ur") renovado hasta $nexp ($(dias "$nexp"))"; pausa ;;
+msg_ok "$(etiqueta_de "$ur") renovado hasta $nexp ($(dias "$nexp"))"
+mensaje_renovacion "$ur" "$nexp"; pausa ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
@@ -589,7 +601,8 @@ nexp=$(date -d "+$nd days" +%F)
 usermod -e "$(fecha_cuenta "$nexp")" "$SEL" 2>/dev/null
 zumo_db_set "$SEL" 3 "$nexp"
 datos_reset "$SEL"
-msg_ok "Vencimiento de $SEL ahora: $nexp ($(dias "$nexp")). Contador de datos en 0"; sleep 1 ;;
+msg_ok "Vencimiento de $SEL ahora: $nexp ($(dias "$nexp")). Contador de datos en 0"
+mensaje_renovacion "$SEL" "$nexp"; pausa ;;
 4) if esta_bloqueado "$SEL"; then
 usermod -U "$SEL" 2>/dev/null; msg_ok "$SEL desbloqueado"
 else

@@ -14,7 +14,7 @@ trap limpiar EXIT
 
 N='\e[0m'; L='---'
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
-for f in db_orden op msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente mensaje_comun mensaje_hwid es_hwid hora_corte vencido_ya fecha_cuenta vencidos bhttp_port hcr_port dias es_temporal temp_restante; do
+for f in mensaje_renovacion clave_get db_orden op msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente mensaje_comun mensaje_hwid es_hwid hora_corte vencido_ya fecha_cuenta vencidos bhttp_port hcr_port dias es_temporal temp_restante; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
 	eval "$src"
@@ -184,8 +184,11 @@ usermod() { echo "usermod $*" >> "$T/usermod.log"; }
 SAL=$(printf '0\n' | vencidos | limpio)
 chequear "lista numerada con los vencidos" "si" "$(grep -q '\[1\] viejo1' <<<"$SAL" && grep -q '\[2\] viejo2' <<<"$SAL" && echo si || echo no)"
 chequear "el vigente no aparece" "no" "$(grep -q vigente <<<"$SAL" && echo si || echo no)"
-printf '2\n2\n30\n\n' | vencidos >/dev/null
+CLAVES="$T/claves.db"; echo 'viejo2:pw2' > "$CLAVES"
+SALR=$(printf '2\n2\n30\n\n' | vencidos | limpio)
 NUEVA=$(date -d "+30 days" +%F)
+chequear "al renovar muestra el mensaje del cliente con usuario y clave" "si" "$(grep -q '👤 viejo2' <<<"$SALR" && grep -q '🔒 pw2' <<<"$SALR" && echo si || echo no)"
+chequear "y con la nueva fecha" "si" "$(grep -q "📅 $(date -d "$NUEVA" +%d/%m)" <<<"$SALR" && echo si || echo no)"
 chequear "renovar #2 cambia su vencimiento en la base" "viejo2:1:$NUEVA" "$(grep '^viejo2:' "$DB")"
 chequear "y deja viejo1 como estaba" "viejo1:1:2020-01-01" "$(grep '^viejo1:' "$DB")"
 chequear "y la cuenta de Linux vence un día después" "usermod -e $(date -d "$NUEVA +1 day" +%F) viejo2" "$(tail -1 "$T/usermod.log")"
