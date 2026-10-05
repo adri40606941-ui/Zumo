@@ -64,7 +64,7 @@ timeout 20 "$T/zumo-limit" --once 2>"$T/real.log"; sleep 0.3
 chequear "ztest1 límite 1 (vieja, media, nueva)" "vivo cortado cortado" "$(estado $A1 $A2 $A3)"
 chequear "ztest2 límite 2 (ambas se quedan)" "vivo vivo" "$(estado $B1 $B2)"
 chequear "ztest3 vencido" "cortado" "$(estado $C1)"
-chequear "vencido (ztest3) y temporal vencido (ztest4) se borran" "ztest3 ztest4" "$(sort "$T/borrados.txt" 2>/dev/null | uniq | tr '\n' ' ' | sed 's/ $//')"
+chequear "el temporal vencido se borra; el vencido común NO (se puede renovar)" "ztest4" "$(sort "$T/borrados.txt" 2>/dev/null | uniq | tr '\n' ' ' | sed 's/ $//')"
 
 echo "3) Una sesión nueva del mismo usuario se corta en la siguiente vuelta"
 abrir ztest1; N1=$NUEVO_PID; sleep 0.3
@@ -98,10 +98,13 @@ abrir ztest5; V1=$NUEVO_PID; abrir ztest6; V2=$NUEVO_PID; sleep 0.3
 printf 'EXPIRE_HOUR=%s\n' "$HORA" > "$T/limit.conf"
 timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
 chequear "pasada la hora de corte, el día de vencimiento se corta" "cortado cortado" "$(estado $V1 $V2)"
-chequear "y se manda a borrar a los dos" "ztest5 ztest6" "$(sort "$T/borrados.txt" | uniq | tr '\n' ' ' | sed 's/ $//')"
+chequear "por defecto NO se borra (queda para renovar)" "" "$(cat "$T/borrados.txt" 2>/dev/null)"
+printf 'EXPIRE_HOUR=%s\nEXPIRE_DELETE=1\n' "$HORA" > "$T/limit.conf"
+timeout 20 "$T/zumo-limit" --once 2>/dev/null
+chequear "con EXPIRE_DELETE=1 se manda a borrar a los dos" "ztest5 ztest6" "$(sort "$T/borrados.txt" | uniq | tr '\n' ' ' | sed 's/ $//')"
 if [ "$HORA" -lt 23 ]; then
 abrir ztest5; V3=$NUEVO_PID; sleep 0.3
-printf 'EXPIRE_HOUR=%s\n' "$((HORA+1))" > "$T/limit.conf"
+printf 'EXPIRE_HOUR=%s\nEXPIRE_DELETE=1\n' "$((HORA+1))" > "$T/limit.conf"
 timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
 chequear "antes de la hora de corte el mismo día sigue conectado" "vivo" "$(estado $V3)"
 rm -f "$T/borrados.txt"; timeout 20 "$T/zumo-limit" --once 2>/dev/null
@@ -112,9 +115,7 @@ abrir ztest5; V4=$NUEVO_PID; sleep 0.3
 printf 'EXPIRE_HOUR=23\n' > "$T/limit.conf"
 timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
 chequear "un día anterior se corta siempre" "cortado" "$(estado $V4)"
-printf 'EXPIRE_HOUR=0\nEXPIRE_DELETE=0\n' > "$T/limit.conf"; rm -f "$T/borrados.txt"
-timeout 20 "$T/zumo-limit" --once 2>/dev/null
-chequear "con EXPIRE_DELETE=0 no se borra" "" "$(cat "$T/borrados.txt" 2>/dev/null)"
+
 
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi

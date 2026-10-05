@@ -11,8 +11,8 @@
  *      (que el servidor tarda ~30 s en notar) es la que se corta. Con
  *      KICK=newest se conserva la más vieja y se corta la nueva.
  *   3. Corta todas las sesiones de los usuarios vencidos. Un usuario vence el
- *      día de su fecha a las 21:00 (hora de la VPS; se cambia con EXPIRE_HOUR) y
- *      se borra (EXPIRE_DELETE=0 para solo cortar y no borrar).
+ *      día de su fecha a las 21:00 (hora de la VPS; se cambia con EXPIRE_HOUR);
+ *      el usuario queda sin conexión y se puede renovar (EXPIRE_DELETE=1 lo borra).
  *   4. Borra los usuarios temporales cuyo tiempo ya pasó (por si el timer de
  *      systemd se perdió con un reinicio).
  *
@@ -21,7 +21,7 @@
  *   GRACE=0           segundos que una sesión extra puede vivir antes de cortarla
  *   KICK=oldest       oldest = corta la vieja; newest = corta la nueva
  *   EXPIRE_HOUR=21    hora (0 a 23) del día de vencimiento en que se corta
- *   EXPIRE_DELETE=1   1 = al vencer se borra el usuario, 0 = solo se corta
+ *   EXPIRE_DELETE=0   1 = al vencer se borra el usuario, 0 = solo se corta (por defecto)
  *   TEMP_CLEANUP=1    1 = borrar temporales vencidos, 0 = no
  *
  * Opciones de línea de comandos:
@@ -120,7 +120,7 @@ static void load_conf(Conf *c) {
     c->kick_newest = 0;
     c->temp_cleanup = 1;
     c->expire_hour = 21;
-    c->expire_delete = 1;
+    c->expire_delete = 0;
     FILE *f = fopen(CONF_PATH, "r");
     if (!f) return;
     char line[160];

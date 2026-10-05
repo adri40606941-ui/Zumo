@@ -479,12 +479,15 @@ while IFS=: read -r u lim exp; do
 vencido_ya "$exp" && VENC+=("$u|$exp")
 done < "$DB"
 if [ ${#VENC[@]} -eq 0 ]; then msg_ok "No hay usuarios vencidos"; pausa; return; fi
-printf " \e[1;38;5;208m%-16s %s${N}\n" "USUARIO/CLIENTE" "VENCIÓ"
+printf " \e[1;38;5;208m%-4s %-16s %s${N}\n" "" "USUARIO/CLIENTE" "VENCIÓ"
+local n=0
 for item in "${VENC[@]}"; do
-printf " \e[1;31m%-16s %s${N}\n" "$(etiqueta_de "${item%%|*}")" "${item#*|}"
+n=$((n+1))
+printf " \e[1;38;5;208m[%s]${N} \e[1;31m%-16s %s${N}\n" "$n" "$(etiqueta_de "${item%%|*}")" "${item#*|}"
 done
 echo; echo -e " $L"
 op 1 "✖" "Borrar usuarios vencidos"
+op 2 "↻" "Renovar un usuario"
 op 0 "◂" "Volver"
 echo; read -rp " Opción: " o
 case $o in
@@ -497,6 +500,17 @@ userdel "$u" 2>/dev/null
 zumo_db_del "$u"
 done
 msg_ok "${#VENC[@]} usuario(s) vencido(s) eliminado(s)"; pausa ;;
+2) local nr nd nexp ur
+read -rp " Número a renovar: " nr
+if ! [[ "$nr" =~ ^[0-9]+$ ]] || [ "$nr" -lt 1 ] || [ "$nr" -gt ${#VENC[@]} ]; then msg_err "Número inválido"; pausa; return; fi
+ur="${VENC[$((nr-1))]%%|*}"
+read -rp " Días desde hoy: " nd
+[[ "$nd" =~ ^[0-9]+$ ]] && [ "$nd" -ge 1 ] || { msg_err "Días inválidos"; pausa; return; }
+nexp=$(date -d "+$nd days" +%F)
+usermod -e "$(fecha_cuenta "$nexp")" "$ur" 2>/dev/null
+zumo_db_set "$ur" 3 "$nexp"
+datos_reset "$ur"
+msg_ok "$(etiqueta_de "$ur") renovado hasta $nexp ($(dias "$nexp"))"; pausa ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
