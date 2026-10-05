@@ -184,20 +184,6 @@ echo -e " \e[1;38;5;208mPuertos:\e[0m      \e[1;38;5;214m$(puertos_activos)${N}"
 echo -e " $L"
 }
 
-mensaje_para_cliente() {
-banner; echo -e " \e[1;38;5;141mMENSAJE PARA EL CLIENTE${N}\n"
-elegir_usuario || { pausa; return; }
-local clave="" exp v
-if ! es_hwid "$SEL"; then
-read -rp " Contraseña del cliente (Enter = no mostrarla): " clave
-fi
-if es_temporal "$SEL"; then v="$(temp_restante "$SEL")"
-else exp=$(zumo_db_campo "$SEL" 3); v="$exp ($(dias "$exp"))"; fi
-echo
-mensaje_cliente "$SEL" "$clave" "$v"
-pausa
-}
-
 crear_usuario() {
 banner; echo -e " \e[1;38;5;141mCREAR USUARIO${N}\n"
 op 1 "●" "Normal"
@@ -544,29 +530,6 @@ esac
 done
 }
 
-conectados() {
-local f=/run/zumo/online.db u on ips tc n ses rc
-while true; do
-banner; echo -e " \e[1;38;5;141mCONECTADOS AHORA${N}\n"
-n=0; ses=0
-while IFS=: read -r u _; do
-[ -z "$u" ] && continue
-on=$(en_linea "$u"); [ "$on" -gt 0 ] || continue
-n=$((n+1)); ses=$((ses+on))
-ips=$(awk -v u="$u" '$1==u{$1=""; sub(/^ /,""); print; exit}' "$f" 2>/dev/null)
-tc=$(tiempo_conectado "$u")
-printf " \e[1;32m● %-16s\e[0m \e[2mhace\e[0m \e[1;38;5;214m%s${N}\n" "$(etiqueta_de "$u") ($on)" "${tc:-?}"
-[ -n "$ips" ] && echo -e "    \e[2mIP:\e[0m \e[1;38;5;214m$ips${N}"
-done < "$DB"
-[ "$n" -eq 0 ] && echo -e " \e[2m(nadie conectado ahora)${N}"
-echo; echo -e " $L"
-echo -e " \e[1;38;5;214mUsuarios: $n   Sesiones: $ses${N}"
-echo -e "\n Enter para volver..."
-read -rsn1 -t 2; rc=$?
-[ "$rc" -gt 128 ] || break
-done
-}
-
 listar_usuarios() {
 if [ ! -s "$DB" ]; then banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"; msg_err "No hay usuarios"; pausa; return; fi
 while true; do
@@ -620,7 +583,6 @@ op 3 "✎" "Editar usuario"
 op 4 "▤" "Ver usuarios (en vivo)"
 op 5 "⚠" "Usuarios vencidos"
 op 6 "⏳" "Usuario temporal"
-op 7 "✉" "Mensaje para el cliente"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -630,7 +592,6 @@ case $o in
 4) listar_usuarios ;;
 5) vencidos ;;
 6) crear_temporal ;;
-7) mensaje_para_cliente ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
@@ -1403,30 +1364,6 @@ esac
 done
 }
 
-actualizar_zumo() {
-banner; echo -e " \e[1;38;5;141mACTUALIZAR ZUMO${N}\n"
-local api="${ZUMO_API:-https://api.github.com/repos/adri40606941-ui/Zumo/commits/main}"
-local raw="${ZUMO_RAW_BASE:-https://raw.githubusercontent.com/adri40606941-ui/Zumo}"
-local sha actual tmp
-actual=$(cat /etc/zumo/version 2>/dev/null)
-echo -e " \e[2mBuscando la última versión...${N}"
-sha=$(curl -fsSL --max-time 15 "$api" 2>/dev/null | grep -m1 '"sha"' | sed 's/.*"sha": *"\([0-9a-f]\{40\}\)".*/\1/')
-[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { msg_err "No se pudo consultar GitHub (¿hay internet?)"; pausa; return; }
-if [ "$sha" = "$actual" ]; then msg_ok "Ya tenés la última versión (${sha:0:7})"; pausa; return; fi
-echo -e " Instalada: \e[1;38;5;214m${actual:+${actual:0:7}}${actual:-desconocida}${N}"
-echo -e " Nueva:     \e[1;38;5;214m${sha:0:7}${N}\n"
-tmp=$(mktemp)
-if ! curl -fsSL --max-time 30 "$raw/$sha/actualizar.sh" -o "$tmp" || ! bash -n "$tmp" 2>/dev/null; then
-rm -f "$tmp"; msg_err "No se pudo bajar el actualizador"; pausa; return
-fi
-sed -i "s#/Zumo/main#/Zumo/$sha#g" "$tmp"
-bash "$tmp"
-rm -f "$tmp"
-echo; msg_ok "Reiniciando el panel..."
-sleep 2
-exec /usr/local/bin/zumo
-}
-
 menu_herramientas() {
 while true; do
 banner; echo -e " \e[1;38;5;141mHERRAMIENTAS${N}\n"
@@ -1440,8 +1377,7 @@ op 2 "🚀" "Test de velocidad"
 op 3 "🧹" "Liberar RAM y limpiar"
 op 4 "📊" "Uso de CPU y RAM"
 op 5 "📶" "Uso de datos"
-op 6 "⬆" "Actualizar Zumo"
-op 7 "💾" "Respaldo y restauración"
+op 6 "💾" "Respaldo y restauración"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -1450,8 +1386,7 @@ case $o in
 3) liberar_ram ;;
 4) procesos_top ;;
 5) uso_datos ;;
-6) actualizar_zumo ;;
-7) menu_respaldo ;;
+6) menu_respaldo ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
@@ -1464,14 +1399,12 @@ banner
 op 1 "●" "Usuario"
 op 2 "⚡" "Protocolos"
 op 3 "🛠" "Herramientas"
-op 4 "●" "Conectados ahora"
 op 0 "✖" "Salir"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) menu_usuario ;;
 2) menu_protocolos ;;
 3) menu_herramientas ;;
-4) conectados ;;
 0) clear; exit 0 ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac

@@ -130,6 +130,4 @@ if systemctl list-unit-files 2>/dev/null | grep -q '^zumo-web.service'; then
 fi
 
 echo
-# Versión instalada (el panel la compara con la última del repo).
-[[ "${BASE##*/}" =~ ^[0-9a-f]{40}$ ]] && echo "${BASE##*/}" > /etc/zumo/version
 ok "Actualización terminada. Abrí el panel con: zumo"

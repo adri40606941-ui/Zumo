@@ -14,7 +14,7 @@ trap limpiar EXIT
 
 N='\e[0m'; L='---'
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
-for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente conectados es_hwid en_linea tiempo_conectado actualizar_zumo bhttp_port hcr_port dias es_temporal temp_restante; do
+for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente es_hwid bhttp_port hcr_port dias es_temporal temp_restante; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
 	eval "$src"
@@ -131,7 +131,7 @@ chequear "renovar deja en 0" "" "$(datos_de ana2)"
 chequear "los demás no se tocan" "5242880" "$(datos_de beto)"
 unset ZUMO_DATOS ZUMO_HIST
 
-echo "7) Hora de la VPS, mensaje para el cliente, conectados, actualizar"
+echo "7) Hora de la VPS y datos del cliente al crear un usuario"
 chequear "hora VPS con día y hora" "si" "$(hora_vps | grep -qE '^(Dom|Lun|Mar|Mié|Jue|Vie|Sáb) [0-9]{2}/[0-9]{2}/[0-9]{4} +[0-9]{2}:[0-9]{2}:[0-9]{2}' && echo si || echo no)"
 ip_publica() { echo "1.2.3.4"; }
 puertos_activos() { echo "SSH 22 · WebSocket 80"; }
@@ -141,27 +141,5 @@ chequear "mensaje: usuario y contraseña" "si" "$(grep -q 'Usuario: *ana' <<<"$S
 chequear "mensaje: vence y puertos" "si" "$(grep -q 'Vence: *30 días' <<<"$SAL" && grep -q 'Puertos: *SSH 22' <<<"$SAL" && echo si || echo no)"
 SAL=$(mensaje_cliente ana "" "30 días" | limpio)
 chequear "mensaje sin clave avisa" "si" "$(grep -q 'la que le diste' <<<"$SAL" && echo si || echo no)"
-SAL=$(conectados </dev/null | limpio)
-chequear "conectados: pantalla y resumen" "si" "$(grep -q 'CONECTADOS AHORA' <<<"$SAL" && grep -qE 'Usuarios: [0-9]+ +Sesiones: [0-9]+' <<<"$SAL" && echo si || echo no)"
-# actualizar: API de mentira con un sha, y un raw con un actualizar.sh de mentira
-SHA=$(printf 'a%.0s' $(seq 40))
-mkdir -p "$T/web/api/commits" "$T/web/raw/$SHA"
-printf '{\n  "sha": "%s",\n  "commit": {"tree": {"sha": "%s"}}\n}\n' "$SHA" "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" > "$T/web/api/commits/main"
-printf '#!/bin/bash\necho EJECUTADO > "%s"\n' "$T/ejecutado" > "$T/web/raw/$SHA/actualizar.sh"
-( cd "$T/web" && python3 -m http.server "$((PORT+7))" --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > "$T/web.pid" ); sleep 1
-exec_orig=$(declare -f actualizar_zumo)
-export ZUMO_API="http://127.0.0.1:$((PORT+7))/api/commits/main" ZUMO_RAW_BASE="http://127.0.0.1:$((PORT+7))/raw"
-# se prueba sin el exec final del panel
-eval "${exec_orig/exec \/usr\/local\/bin\/zumo/echo REINICIA}"
-SAL=$(actualizar_zumo </dev/null | limpio)
-kill "$(cat "$T/web.pid")" 2>/dev/null
-chequear "actualizar encuentra la versión nueva" "si" "$(grep -q 'Nueva: *aaaaaaa' <<<"$SAL" && echo si || echo no)"
-chequear "actualizar corre el actualizador" "EJECUTADO" "$(cat "$T/ejecutado" 2>/dev/null)"
-chequear "actualizar reinicia el panel" "si" "$(grep -q REINICIA <<<"$SAL" && echo si || echo no)"
-export ZUMO_API="http://127.0.0.1:1/x"
-SAL=$(actualizar_zumo </dev/null | limpio)
-chequear "sin internet avisa" "si" "$(grep -q 'No se pudo consultar' <<<"$SAL" && echo si || echo no)"
-unset ZUMO_API ZUMO_RAW_BASE
-
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi
