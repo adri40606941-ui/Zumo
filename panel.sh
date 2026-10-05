@@ -113,6 +113,21 @@ es_hwid() {
 case "$(getent passwd "$1" 2>/dev/null | awk -F: '{print $5}')" in hwid,*) return 0 ;; *) return 1 ;; esac
 }
 
+# Contraseñas guardadas para mostrarlas en "Ver usuarios" (archivo solo root, modo 600).
+# El sistema solo guarda el hash, por eso el panel anota la clave al crear/cambiar.
+CLAVES="${ZUMO_CLAVES:-/etc/zumo/claves.db}"
+clave_get() {
+if es_hwid "$1"; then echo "$1"; return; fi
+[ -f "$CLAVES" ] && awk -F: -v u="$1" '$1==u{print substr($0,length(u)+2); exit}' "$CLAVES"
+}
+clave_del() { [ -f "$CLAVES" ] && { awk -F: -v u="$1" '$1!=u' "$CLAVES" > "$CLAVES.tmp" && cat "$CLAVES.tmp" > "$CLAVES"; rm -f "$CLAVES.tmp"; }; return 0; }
+clave_set() { # usuario clave
+( umask 077; touch "$CLAVES"; chmod 600 "$CLAVES" 2>/dev/null )
+clave_del "$1"
+( umask 077; printf '%s:%s\n' "$1" "$2" >> "$CLAVES" )
+}
+clave_rename() { [ -f "$CLAVES" ] && awk -F: -v a="$1" -v b="$2" -v OFS=: '$1==a{$1=b}1' "$CLAVES" > "$CLAVES.tmp" && cat "$CLAVES.tmp" > "$CLAVES"; rm -f "$CLAVES.tmp"; return 0; }
+
 en_linea() { ps -u "$1" -o comm= 2>/dev/null | grep -c '^sshd$'; }
 
 # Validación de usuario/contraseña: solo letras y números, máximo 10, sin
@@ -284,6 +299,7 @@ if ! useradd -M -s /bin/false -e "$(fecha_cuenta "$exp")" "$u" 2>/dev/null; then
 msg_err "No se pudo crear el usuario"; pausa; return
 fi
 echo "$u:$p" | chpasswd
+clave_set "$u" "$p"
 zumo_db_add "$u" "$lim" "$exp"
 echo; msg_ok "Usuario creado"
 mensaje_comun "$u" "$p" "$(date -d "$exp" +%d/%m)"
@@ -367,6 +383,7 @@ if ! useradd -M -s /bin/false -e "$(fecha_cuenta "$exp")" "$u" 2>/dev/null; then
 msg_err "No se pudo crear el usuario temporal"; pausa; return
 fi
 echo "$u:$p" | chpasswd
+clave_set "$u" "$p"
 zumo_db_add "$u" "$lim" "$exp"
 programar_borrado_temp "$u" "$min"
 echo; msg_ok "Usuario temporal creado"
@@ -439,6 +456,7 @@ local u="$1"
 pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 zumo_db_del "$u"
+clave_del "$u"
 ( flock -w 5 9; [ -f /etc/zumo/datos.db ] && awk -F: -v u="$u" '$1!=u' /etc/zumo/datos.db > /etc/zumo/datos.db.tmp && mv -f /etc/zumo/datos.db.tmp /etc/zumo/datos.db ) 9>/etc/zumo/datos.lock 2>/dev/null
 ( flock -w 5 9; [ -f /etc/zumo/datos-hist.db ] && awk -F: -v u="$u" '$2!=u' /etc/zumo/datos-hist.db > /etc/zumo/datos-hist.db.tmp && mv -f /etc/zumo/datos-hist.db.tmp /etc/zumo/datos-hist.db ) 9>/etc/zumo/datos.lock 2>/dev/null
 systemctl stop "zumo-temp-$u.timer" 2>/dev/null
@@ -498,6 +516,7 @@ u="${item%%|*}"
 pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 zumo_db_del "$u"
+clave_del "$u"
 done
 msg_ok "${#VENC[@]} usuario(s) vencido(s) eliminado(s)"; pausa ;;
 2) local nr nd nexp ur
@@ -553,6 +572,7 @@ case $eo in
 1) leer_alnum "Contraseña nueva para $SEL: " 10; np="$REPLY_ALNUM"
 clave_valida "$np" || { msg_err "Contraseña inválida (no puede estar vacía)"; sleep 1; continue; }
 echo "$SEL:$np" | chpasswd
+clave_set "$SEL" "$np"
 msg_ok "Contraseña de $SEL actualizada"; sleep 1 ;;
 2) read -rp " Nuevo límite para $SEL [$lim]: " nl; nl=${nl:-$lim}
 [[ "$nl" =~ ^[0-9]+$ ]] && [ "$nl" -ge 1 ] || { msg_err "Límite inválido"; sleep 1; continue; }
@@ -579,6 +599,7 @@ pkill -9 -u "$SEL" 2>/dev/null
 if usermod --badname -l "$nh" "$SEL" 2>/dev/null; then
 echo "$nh:$nh" | chpasswd
 zumo_db_rename "$SEL" "$nh"
+clave_rename "$SEL" "$nh"
 datos_rename "$SEL" "$nh"
 SEL="$nh"
 msg_ok "HWID cambiado a $nh"
@@ -591,14 +612,19 @@ esac
 done
 }
 
-# Una ficha por usuario: nombre bien visible, estado y datos en líneas aparte.
-_ficha_usuario() { # usuario límite vencimiento
-local u="$1" lim="$2" exp="$3" on est_col est_txt venc venc_col tc nombre
+_fila() { # texto_plano texto_coloreado (usa W y _BC de la ficha)
+local pad t="$1"; t=${t//í/i}; t=${t//●/o}; t=${t//○/o}; t=${t//·/.}; pad=$(( W - ${#t} )); [ "$pad" -lt 0 ] && pad=0
+echo -e " ${_BC}┃${N}$2$(printf '%*s' "$pad" '')${_BC}┃${N}"
+}
+
+# Una ficha (cuadro) por usuario, numerada: nombre, clave, estado, límite y vencimiento.
+_ficha_usuario() { # n usuario límite vencimiento
+local W n="$1" u="$2" lim="$3" exp="$4" on est_col est_txt venc venc_col tc nombre clave bc dot
 on=$(en_linea "$u")
 if [ "$on" -gt 0 ]; then
-est_txt="online ($on)"; est_col="\e[1;32m"
+est_txt="online ($on)"; est_col="\e[1;32m"; bc="\e[1;32m"; dot="●"
 tc=$(tiempo_conectado "$u"); [ -n "$tc" ] && est_txt+=" · hace $tc"
-else est_txt="offline"; est_col="\e[2m"; fi
+else est_txt="offline"; est_col="\e[2m"; bc="\e[1;38;5;141m"; dot="○"; fi
 if es_temporal "$u"; then venc="$(temp_restante "$u")"; venc_col="\e[1;38;5;214m"
 else
 venc="$(dias "$exp")"
@@ -609,31 +635,38 @@ vencido) venc_col="\e[1;31m" ;;
 esac
 fi
 nombre="$(etiqueta_de "$u")"
-if [ "$on" -gt 0 ]; then echo -e " \e[1;32m●${N} \e[1;97m$nombre${N}"; else echo -e " \e[2m○${N} \e[1;97m$nombre${N}"; fi
-es_hwid "$u" && echo -e "   \e[2mHWID:${N} \e[1;38;5;214m$u${N}"
-echo -e "   ${est_col}${est_txt}${N}"
-echo -e "   \e[2mlímite${N} \e[1;97m$lim${N}   \e[2m·${N}   ${venc_col}${venc}${N}"
+clave="$(clave_get "$u")"; [ -n "$clave" ] || clave="-"
+W=36; es_hwid "$u" && W=46; _BC="$bc"
+echo -e " ${bc}┏$(printf '━%.0s' $(seq 1 $W))┓${N}"
+_fila " [$n] $nombre  $dot" " ${bc}[$n]${N} \e[1;97m$nombre${N}  ${bc}${dot}${N}"
+es_hwid "$u" && _fila "   HWID      $u" "   \e[2mHWID${N}      \e[1;38;5;214m$u${N}"
+_fila "   Clave     $clave" "   \e[2mClave${N}     \e[1;96m$clave${N}"
+_fila "   Estado    $est_txt" "   \e[2mEstado${N}    ${est_col}${est_txt}${N}"
+_fila "   Límite    $lim" "   \e[2mLímite${N}    \e[1;97m$lim${N}"
+_fila "   Vence     $venc" "   \e[2mVence${N}     ${venc_col}${venc}${N}"
+echo -e " ${bc}┗$(printf '━%.0s' $(seq 1 $W))┛${N}"
 echo
 }
 
 listar_usuarios() {
 if [ ! -s "$DB" ]; then banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"; msg_err "No hay usuarios"; pausa; return; fi
 banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"
-local u lim exp hay_comun=0 hay_hwid=0
+local u lim exp hay_comun=0 hay_hwid=0 n=0
 echo -e " \e[1;38;5;141m━━━ COMÚN ━━━${N}\n"
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 es_hwid "$u" && continue
-hay_comun=1
-_ficha_usuario "$u" "$lim" "$exp"
+hay_comun=1; n=$((n+1))
+_ficha_usuario "$n" "$u" "$lim" "$exp"
 done < "$DB"
 [ "$hay_comun" -eq 0 ] && echo -e " \e[2m(sin usuarios comunes)${N}\n"
 echo -e " \e[1;38;5;141m━━━ HWID ━━━${N}\n"
+n=0
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 es_hwid "$u" || continue
-hay_hwid=1
-_ficha_usuario "$u" "$lim" "$exp"
+hay_hwid=1; n=$((n+1))
+_ficha_usuario "$n" "$u" "$lim" "$exp"
 done < "$DB"
 [ "$hay_hwid" -eq 0 ] && echo -e " \e[2m(sin usuarios HWID)${N}\n"
 echo -e " $L"
@@ -1185,6 +1218,7 @@ n=$((n+1))
 done < "$DB"
 cp "$DB" "$w/usuarios.db"
 [ -f "$TEMPDB" ] && cp "$TEMPDB" "$w/temporales.db"
+[ -f "$CLAVES" ] && cp "$CLAVES" "$w/claves.db"
 [ -f "${ZUMO_DATOS:-/etc/zumo/datos.db}" ] && cp "${ZUMO_DATOS:-/etc/zumo/datos.db}" "$w/datos.db"
 [ -f "${ZUMO_HIST:-/etc/zumo/datos-hist.db}" ] && cp "${ZUMO_HIST:-/etc/zumo/datos-hist.db}" "$w/datos-hist.db"
 [ -f "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}" ] && cp "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}" "$w/limit.conf"
@@ -1240,6 +1274,7 @@ min=$(( (TEMP[$u] - now + 59) / 60 ))
 fi
 done < "$w/cuentas.txt"
 _merge_por_usuario "${ZUMO_DATOS:-/etc/zumo/datos.db}" "$w/datos.db" 1 "$us"
+[ -s "$w/claves.db" ] && { ( umask 077; _merge_por_usuario "$CLAVES" "$w/claves.db" 1 "$us" ); chmod 600 "$CLAVES" 2>/dev/null; }
 _merge_por_usuario "${ZUMO_HIST:-/etc/zumo/datos-hist.db}" "$w/datos-hist.db" 2 "$us"
 [ -f "$w/limit.conf" ] && [ -w "$(dirname "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}")" ] && cp "$w/limit.conf" "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}"
 rm -rf "$w"
