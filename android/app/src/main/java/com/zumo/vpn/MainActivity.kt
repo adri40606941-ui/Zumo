@@ -248,7 +248,7 @@ class MainActivity : Activity() {
         cLogin.addView(boxLogin)
         col.addView(cLogin)
 
-        // configuración del servidor
+        // configuración del servidor (sin mostrar el host/payload reales: solo si está configurado o no)
         val cCfg = tarjeta()
         seccion(cCfg, "🌐", "Servidor")
         tvConfig = texto("", 13.5f, TEXTO_SUAVE)
@@ -258,19 +258,37 @@ class MainActivity : Activity() {
         cCfg.addView(botonSecundario("📤  Compartir configuración") { compartir() })
         col.addView(cCfg)
 
-        // HWID + perfil completo (servidor + inicio de sesión) en un archivo para enviar por WhatsApp
+        // HWID en su propio cuadro, grande y con botón de copiar (para que no haya error al pasarlo)
         val cHwid = tarjeta()
-        seccion(cHwid, "🪪", "HWID y perfil")
-        tvHwid = texto("", 12.5f, TEXTO_SUAVE).apply {
+        seccion(cHwid, "🪪", "Tu HWID")
+        texto("Fijo para este teléfono. Pásaselo a quien te da el servicio.", 12f, TEXTO_SUAVE).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
+        }.also { cHwid.addView(it) }
+        val valorHwid = Hwid.get(this)
+        tvHwid = texto(valorHwid, 19f, Color.WHITE, true).apply {
             setTextIsSelectable(true)
-            text = "Tu HWID (fijo para este teléfono, pásaselo a quien te da el servicio):\n" + Hwid.get(this@MainActivity)
+            gravity = Gravity.CENTER
+            typeface = Typeface.MONOSPACE
+            letterSpacing = 0.04f
+            background = redondo(Color.parseColor("#2E2854"), 12)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         cHwid.addView(tvHwid)
-        cHwid.addView(botonSecundario("💾  Guardar config (archivo para WhatsApp)") { guardarConfigArchivo() })
-        cHwid.addView(botonSecundario("🗑  Borrar datos", ROJO) { borrarDatos() })
-        cHwid.addView(botonSecundario("📥  Importar config (desde archivo)") { importarConfigArchivo() })
+        cHwid.addView(botonPrimario("📋  Copiar HWID", ACENTO) {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("HWID", valorHwid))
+            aviso("HWID copiado")
+        })
         col.addView(cHwid)
+
+        // perfil completo (servidor + inicio de sesión) en un archivo para enviar por WhatsApp
+        val cPerfil = tarjeta()
+        seccion(cPerfil, "📁", "Perfil (servidor + login)")
+        cPerfil.addView(botonSecundario("💾  Guardar config (archivo para WhatsApp)") { guardarConfigArchivo() })
+        cPerfil.addView(botonSecundario("📥  Importar config (desde archivo)") { importarConfigArchivo() })
+        cPerfil.addView(botonSecundario("🗑  Borrar datos", ROJO) { borrarDatos() })
+        col.addView(cPerfil)
 
         // estabilidad de la conexión
         val cEst = tarjeta()
@@ -304,8 +322,9 @@ class MainActivity : Activity() {
     private fun refrescar() {
         if (::tvConfig.isInitialized) {
             val c = prefs.config
+            // No se muestran host/payload acá: son datos del servidor, no algo para exponer en pantalla.
             tvConfig.text = if (c == null || c.host.isBlank()) "Sin configurar. Pega el enlace que te dieron."
-            else "${c.name}\n${c.host}:${c.sshPort}  ·  " + (if (c.payload.isBlank()) "SSH directo" else "SSH + payload") + (if (c.tls) " + TLS" else "")
+            else "✔ Configurado: \"${c.name}\""
         }
         val corr = ZumoVpnService.corriendo
         val con = ZumoVpnService.conectado
@@ -440,26 +459,6 @@ class MainActivity : Activity() {
             }.setNegativeButton("Cancelar", null).show()
     }
 
-    private fun confirmarImportarPerfil(p: Perfil) {
-        val c = p.cfg
-        val detalle = StringBuilder()
-            .append("Servidor: ${c.host}:${c.sshPort}\n")
-            .append("Payload: " + if (c.payload.isBlank()) "ninguno (SSH directo)" else "sí\n\n${c.payload}")
-            .append(if (c.tls) "\n\nTLS: sí" + (if (c.sni.isNotBlank()) " (SNI: ${c.sni})" else "") else "")
-            .append("\n\nInicio de sesión: " + if (p.useHwid) "HWID de este teléfono" else if (p.user.isNotBlank()) "usuario \"${p.user}\"" else "sin cambios")
-        val tv = texto(detalle.toString(), 13f, Color.WHITE).apply { setTextIsSelectable(true) }
-        val sv = ScrollView(this).apply {
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(20), dp(8), dp(20), 0)
-                addView(tv)
-            })
-        }
-        dialogo("Importar \"${c.name}\"", sv)
-            .setPositiveButton("Guardar") { _, _ -> importarPerfil(p) }
-            .setNegativeButton("Cancelar", null).mostrar()
-    }
-
     private fun importarDesdeIntent(i: Intent?) {
         val uri = i?.data ?: return
         when (uri.scheme) {
@@ -569,7 +568,7 @@ class MainActivity : Activity() {
             val texto = contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
             val p = texto?.let { Perfil.desdeTexto(it) }
             if (p == null) { aviso("El archivo no es una configuración válida de Zumo VPN"); return }
-            confirmarImportarPerfil(p)
+            importarPerfil(p)
         } catch (e: Exception) {
             aviso("No se pudo leer el archivo: ${e.message}")
         }
