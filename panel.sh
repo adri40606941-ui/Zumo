@@ -533,7 +533,7 @@ done
 listar_usuarios() {
 if [ ! -s "$DB" ]; then banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}\n"; msg_err "No hay usuarios"; pausa; return; fi
 while true; do
-banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS — EN VIVO${N}"
+banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}"
 echo
 
 local hay_comun=0 hay_hwid=0
@@ -570,7 +570,9 @@ done < "$DB"
 [ "$hay_hwid" -eq 0 ] && echo -e " \e[2m(sin usuarios HWID)${N}"
 
 echo; echo -e " $L"
-read -t 2 -rsn1 _ && break
+echo -e "\n Enter para volver..."
+read -rsn1 _
+break
 done
 }
 
@@ -580,7 +582,7 @@ banner; echo -e " \e[1;38;5;141mUSUARIO${N}\n"
 op 1 "✚" "Crear usuario"
 op 2 "✖" "Eliminar usuario"
 op 3 "✎" "Editar usuario"
-op 4 "▤" "Ver usuarios (en vivo)"
+op 4 "▤" "Ver usuarios"
 op 5 "⚠" "Usuarios vencidos"
 op 6 "⏳" "Usuario temporal"
 op 0 "◂" "Volver"
