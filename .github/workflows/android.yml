@@ -1,0 +1,58 @@
+name: Compilar app Android
+
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android.yml', '.gitmodules']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Android SDK y NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" "ndk;27.0.12077973" > /dev/null
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Clave de firma (se crea una sola vez y se reutiliza)
+        uses: actions/cache@v4
+        with:
+          path: ks
+          key: zumo-keystore-v1
+
+      - name: Preparar firma
+        run: |
+          if [ ! -f ks/zumo.jks ]; then
+            mkdir -p ks
+            P=$(openssl rand -hex 16)
+            keytool -genkeypair -keystore ks/zumo.jks -storepass "$P" -keypass "$P" -alias zumo \
+              -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=Zumo VPN"
+            echo "$P" > ks/pass
+          fi
+          echo "ZUMO_KEYSTORE=$PWD/ks/zumo.jks" >> "$GITHUB_ENV"
+          echo "ZUMO_KS_PASS=$(cat ks/pass)" >> "$GITHUB_ENV"
+
+      - name: Compilar
+        env:
+          ZUMO_VERSION_CODE: ${{ github.run_number }}
+        run: gradle -p android assembleRelease --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zumo-vpn-apk
+          path: android/app/build/outputs/apk/release/*.apk
