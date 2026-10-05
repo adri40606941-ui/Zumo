@@ -1060,7 +1060,7 @@ awk -v b="$1" 'BEGIN{ if (b>=1073741824) printf "%.2f GB", b/1073741824; else pr
 
 uso_datos() {
 local DATOS="${ZUMO_DATOS:-/etc/zumo/datos.db}" HIST="${ZUMO_HIST:-/etc/zumo/datos-hist.db}"
-local u b d m total totd totm n rc k vista=1 hoy mes hh lista
+local u b d m total totd totm n rc k hoy mes hh
 if [ ! -s "$DB" ]; then msg_err "No hay usuarios registrados"; pausa; return; fi
 while true; do
 hoy=$(date +%F); mes=${hoy:0:7}
@@ -1068,8 +1068,6 @@ banner; echo -e " \e[1;38;5;141mUSO DE DATOS${N}\n"
 if ! systemctl is-active --quiet zumo-datos 2>/dev/null; then
 echo -e " \e[1;31m● El contador no está activo (actualizá con actualizar.sh)${N}\n"
 fi
-case $vista in
-1)
 hh=$(awk -F: -v h="$hoy" -v m="$mes" '{ if ($1==h) d[$2]+=$3; if (substr($1,1,7)==m) s[$2]+=$3 }
 END { for (u in s) printf "%s %.0f %.0f\n", u, d[u]+0, s[u]; for (u in d) if (!(u in s)) printf "%s %.0f 0\n", u, d[u] }' "$HIST" 2>/dev/null)
 total=0; totd=0; totm=0; n=0
@@ -1086,30 +1084,11 @@ n=$((n+1))
 printf " \e[1;32m%-10s\e[0m \e[1;38;5;51m%9s %9s %9s${N}\n" "$(etiqueta_de "$u" | cut -c1-10)" "$(_fmt_bytes "$d")" "$(_fmt_bytes "$m")" "$(_fmt_bytes "$b")"
 done < "$DB"
 echo; echo -e " $L"
-printf " \e[1;38;5;214m%-10s\e[0m \e[1;38;5;51m%9s %9s %9s${N}\n" "TOTAL($n)" "$(_fmt_bytes "$totd")" "$(_fmt_bytes "$totm")" "$(_fmt_bytes "$total")" ;;
-2)
-echo -e " \e[1;38;5;208mPOR DÍA (todos los usuarios, últimos 14 días)${N}\n"
-lista=$(awk -F: '{ d[$1]+=$3 } END { for (k in d) printf "%s %.0f\n", k, d[k] }' "$HIST" 2>/dev/null | sort -r | head -n 14)
-if [ -z "$lista" ]; then echo -e " \e[2m(todavía sin datos)${N}"; fi
-while read -r k b; do
-[ -z "$k" ] && continue
-printf " \e[1;32m%s${N}  \e[1;38;5;51m%10s${N}\n" "${k:8:2}/${k:5:2}/${k:0:4}" "$(_fmt_bytes "$b")"
-done <<<"$lista"
-echo; echo -e " $L" ;;
-3)
-echo -e " \e[1;38;5;208mPOR MES (todos los usuarios, últimos 6 meses)${N}\n"
-lista=$(awk -F: '{ d[substr($1,1,7)]+=$3 } END { for (k in d) printf "%s %.0f\n", k, d[k] }' "$HIST" 2>/dev/null | sort -r | head -n 6)
-if [ -z "$lista" ]; then echo -e " \e[2m(todavía sin datos)${N}"; fi
-while read -r k b; do
-[ -z "$k" ] && continue
-printf " \e[1;32m%s${N}  \e[1;38;5;51m%10s${N}\n" "${k:5:2}/${k:0:4}" "$(_fmt_bytes "$b")"
-done <<<"$lista"
-echo; echo -e " $L" ;;
-esac
-echo -e " \e[2m[1] Usuarios  [2] Por día  [3] Por mes   Enter: volver${N}"
+printf " \e[1;38;5;214m%-10s\e[0m \e[1;38;5;51m%9s %9s %9s${N}\n" "TOTAL($n)" "$(_fmt_bytes "$totd")" "$(_fmt_bytes "$totm")" "$(_fmt_bytes "$total")"
+echo -e "\n Enter para volver..."
 read -rsn1 -t 2 k; rc=$?
 [ "$rc" -gt 128 ] && continue
-case $k in 1|2|3) vista=$k ;; *) break ;; esac
+break
 done
 }
 

@@ -116,11 +116,6 @@ chequear "ana: hoy 1.0 MB, mes 3.0 MB, total 1.50 GB" "si" "$(grep -qE 'ana +1\.
 chequear "beto: hoy 5.0 MB, mes 5.0 MB, total 5.0 MB" "si" "$(grep -qE 'beto +5\.0 MB +5\.0 MB +5\.0 MB' <<<"$SAL" && echo si || echo no)"
 chequear "usuario sin datos en 0" "si" "$(grep -qE 'nuevo +0\.0 MB +0\.0 MB +0\.0 MB' <<<"$SAL" && echo si || echo no)"
 chequear "total de los 3 usuarios" "si" "$(grep -qE 'TOTAL\(3\) +6\.0 MB +8\.0 MB +1\.50 GB' <<<"$SAL" && echo si || echo no)"
-SAL=$(printf '2\n' | uso_datos | limpio)
-chequear "vista por día muestra hoy" "si" "$(grep -qE "$(date +%d/%m/%Y) +6\.0 MB" <<<"$SAL" && echo si || echo no)"
-chequear "vista por día muestra un día viejo" "si" "$(grep -qE '05/01/2020 +9\.5 MB' <<<"$SAL" && echo si || echo no)"
-SAL=$(printf '3\n' | uso_datos | limpio)
-chequear "vista por mes muestra el mes actual" "si" "$(grep -qE "${MES:5:2}/${MES:0:4} +8\.0 MB" <<<"$SAL" && echo si || echo no)"
 
 echo "6) Renovar pone el contador en 0; cambiar HWID lo traslada"
 export ZUMO_DATOS_LOCK="$T/lock"
