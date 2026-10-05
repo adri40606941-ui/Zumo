@@ -49,6 +49,14 @@ jobs:
           echo "ZUMO_KEYSTORE=$PWD/ks/zumo.jks" >> "$GITHUB_ENV"
           echo "ZUMO_KS_PASS=$(cat ks/pass)" >> "$GITHUB_ENV"
 
+      - name: Pruebas del túnel (SSH + WebSocket + SOCKS)
+        continue-on-error: true
+        run: |
+          mkdir -p out
+          set -o pipefail
+          gradle -p android testDebugUnitTest --no-daemon --stacktrace 2>&1 | tail -n 150 | tee out/pruebas.log
+          cp -r android/app/build/test-results/testDebugUnitTest out/resultados 2>/dev/null || true
+
       - name: Compilar
         env:
           ZUMO_VERSION_CODE: ${{ github.run_number }}
@@ -64,8 +72,9 @@ jobs:
           mkdir -p out
           cp android/app/build/outputs/apk/release/*.apk out/zumo-vpn.apk
           cd out
+          rm -f resultados/binary 2>/dev/null || true
           git init -q
           git checkout -q -b apk
-          git add zumo-vpn.apk
+          git add -A
           git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "APK compilación ${{ github.run_number }} (${GITHUB_SHA::7})"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" apk

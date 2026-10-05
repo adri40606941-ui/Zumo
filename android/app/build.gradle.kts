@@ -46,6 +46,8 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
+    testOptions { unitTests.isReturnDefaultValues = true }
+
     packaging {
         resources.excludes += listOf("META-INF/versions/**", "META-INF/*.kotlin_module", "META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*")
         jniLibs.useLegacyPackaging = true
@@ -54,4 +56,8 @@ android {
 
 dependencies {
     implementation("com.github.mwiede:jsch:0.2.20")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.apache.sshd:sshd-core:2.12.1")
+    testImplementation("org.slf4j:slf4j-simple:1.7.36")
+    testImplementation("org.json:json:20240303")
 }

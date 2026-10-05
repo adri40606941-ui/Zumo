@@ -1,6 +1,5 @@
 package com.zumo.vpn
 
-import android.util.Base64
 import java.io.IOException
 import java.io.InputStream
 import java.io.PushbackInputStream
@@ -50,12 +49,27 @@ object Transport {
         return Tunnel(s, pin)
     }
 
-    private fun wsRequest(c: Config): String {
+    /** Base64 sin depender de android.util (para poder probarlo en la JVM). */
+    fun base64(b: ByteArray): String {
+        val t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        val sb = StringBuilder()
+        var i = 0
+        while (i < b.size) {
+            val n = minOf(3, b.size - i)
+            var v = 0
+            for (k in 0 until 3) v = (v shl 8) or (if (k < n) b[i + k].toInt() and 0xff else 0)
+            for (k in 0 until 4) sb.append(if (k <= n) t[(v shr (18 - 6 * k)) and 63] else '=')
+            i += 3
+        }
+        return sb.toString()
+    }
+
+    fun wsRequest(c: Config): String {
         val key = ByteArray(16).also { SecureRandom().nextBytes(it) }
         val host = c.wsHost.ifBlank { c.host }
         val path = c.wsPath.ifBlank { "/" }
         return "GET $path HTTP/1.1[crlf]Host: $host[crlf]Upgrade: websocket[crlf]Connection: Upgrade[crlf]" +
-            "Sec-WebSocket-Key: ${Base64.encodeToString(key, Base64.NO_WRAP)}[crlf]Sec-WebSocket-Version: 13[crlf][crlf]"
+            "Sec-WebSocket-Key: ${base64(key)}[crlf]Sec-WebSocket-Version: 13[crlf][crlf]"
     }
 
     /** Reemplaza los comodines del payload: [host] [port] [host_port] [crlf] [cr] [lf] [protocol]. */
