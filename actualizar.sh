@@ -29,6 +29,14 @@ else
 fi
 rm -f "$TMP"
 
+# Vencimientos a las 21:00: la cuenta de Linux vence un día después y el corte exacto
+# lo hace el limitador (EXPIRE_HOUR en /etc/zumo/limit.conf).
+if [ -s /etc/zumo/usuarios.db ]; then
+while IFS=: read -r u _ e; do
+[ -n "$u" ] && id "$u" >/dev/null 2>&1 && [[ "$e" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && usermod -e "$(date -d "$e +1 day" +%F)" "$u" 2>/dev/null
+done < /etc/zumo/usuarios.db
+fi
+
 # 2) Panel de terminal ---------------------------------------------------------
 echo -e "${V}[2/4] Panel de terminal (zumo)...${N}"
 TMP=$(mktemp)

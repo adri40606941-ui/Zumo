@@ -10,7 +10,8 @@
  *      cliente pierde la señal y reconecta, entra enseguida y la sesión caída
  *      (que el servidor tarda ~30 s en notar) es la que se corta. Con
  *      KICK=newest se conserva la más vieja y se corta la nueva.
- *   3. Corta todas las sesiones de los usuarios vencidos.
+ *   3. Corta todas las sesiones de los usuarios vencidos. Un usuario vence el
+ *      día de su fecha a las 21:00 (hora de la VPS; se cambia con EXPIRE_HOUR).
  *   4. Borra los usuarios temporales cuyo tiempo ya pasó (por si el timer de
  *      systemd se perdió con un reinicio).
  *
@@ -18,6 +19,7 @@
  *   INTERVAL=3        segundos entre revisiones (1 a 60)
  *   GRACE=0           segundos que una sesión extra puede vivir antes de cortarla
  *   KICK=oldest       oldest = corta la vieja; newest = corta la nueva
+ *   EXPIRE_HOUR=21    hora (0 a 23) del día de vencimiento en que se corta
  *   TEMP_CLEANUP=1    1 = borrar temporales vencidos, 0 = no
  *
  * Opciones de línea de comandos:
@@ -68,6 +70,7 @@ typedef struct {
     int grace;         /* segundos de espera antes de cortar una sesión extra */
     int kick_newest;   /* 1 = corta la más nueva, 0 = corta la más vieja */
     int temp_cleanup;  /* 1 = borrar temporales vencidos */
+    int expire_hour;   /* hora (0-23) del día de vencimiento en que se corta */
 } Conf;
 
 typedef struct {
@@ -113,6 +116,7 @@ static void load_conf(Conf *c) {
     c->grace = 0;
     c->kick_newest = 0;
     c->temp_cleanup = 1;
+    c->expire_hour = 21;
     FILE *f = fopen(CONF_PATH, "r");
     if (!f) return;
     char line[160];
@@ -133,6 +137,9 @@ static void load_conf(Conf *c) {
         } else if (!strcmp(k, "KICK")) {
             if (!strcmp(v, "oldest")) c->kick_newest = 0;
             else if (!strcmp(v, "newest")) c->kick_newest = 1;
+        } else if (!strcmp(k, "EXPIRE_HOUR")) {
+            int n = atoi(v);
+            if (n >= 0 && n <= 23) c->expire_hour = n;
         } else if (!strcmp(k, "TEMP_CLEANUP")) {
             c->temp_cleanup = (atoi(v) != 0);
         }
@@ -479,7 +486,9 @@ static void run_cycle(const Conf *cf) {
             const UserLim *u = &g_users[g_sess[i].ui];
             int n = j - i;
 
-            if (u->exp[0] && strcmp(u->exp, hoy) < 0) {
+            int cmp_exp = u->exp[0] ? strcmp(u->exp, hoy) : 1;
+            /* vence el día indicado a la hora EXPIRE_HOUR (21:00 por defecto) */
+            if (u->exp[0] && (cmp_exp < 0 || (cmp_exp == 0 && tmv.tm_hour >= cf->expire_hour))) {
                 for (int k = i; k < j; k++) cut(&g_sess[k], u, "vencido", n);
             } else if (n > u->limit) {
                 /* la sesión que disparó el exceso es la más nueva del grupo */

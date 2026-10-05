@@ -13,7 +13,7 @@ PIDS=()
 
 limpiar() {
 	for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done
-	for u in ztest1 ztest2 ztest3 ztest4; do userdel "$u" 2>/dev/null; done
+	for u in ztest1 ztest2 ztest3 ztest4 ztest5 ztest6; do userdel "$u" 2>/dev/null; done
 	rm -rf "$T"
 }
 trap limpiar EXIT
@@ -24,7 +24,7 @@ gcc -O2 -Wall -Wextra \
 	-DTEMP_DB_PATH="\"$T/temporales.db\"" -DTEMP_SCRIPT="\"$T/borrar.sh\"" \
 	-DRUN_DIR="\"$T/run\"" -o "$T/zumo-limit" "$AQUI/zumo-limit.c" || { echo "no compila"; exit 1; }
 
-for u in ztest1 ztest2 ztest3 ztest4; do id "$u" >/dev/null 2>&1 || useradd -M -s /bin/false "$u"; done
+for u in ztest1 ztest2 ztest3 ztest4 ztest5 ztest6; do id "$u" >/dev/null 2>&1 || useradd -M -s /bin/false "$u"; done
 cp /bin/sleep "$T/sshd"   # proceso con nombre "sshd"
 
 printf 'ztest1:1:2099-01-01\nztest2:2:2099-01-01\nztest3:1:2020-01-01\nztest4:1:2099-01-01\n' > "$T/usuarios.db"
@@ -88,6 +88,26 @@ printf 'ztest2:2:2099-01-01\n' > "$T/usuarios.db"
 rm -f "$T/limit.conf"
 timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
 chequear "ztest1 fuera de la base: sin cambios" "vivo vivo" "$(estado $N2 $N3)"
+
+echo "5) Vence el día indicado a la hora de corte (EXPIRE_HOUR)"
+HOY=$(date +%F); HORA=$(date +%-H)
+printf 'ztest5:1:%s\nztest6:1:%s\n' "$HOY" "$HOY" > "$T/usuarios.db"
+: > "$T/temporales.db"
+abrir ztest5; V1=$NUEVO_PID; abrir ztest6; V2=$NUEVO_PID; sleep 0.3
+printf 'EXPIRE_HOUR=%s\n' "$HORA" > "$T/limit.conf"
+timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
+chequear "pasada la hora de corte, el día de vencimiento se corta" "cortado cortado" "$(estado $V1 $V2)"
+if [ "$HORA" -lt 23 ]; then
+abrir ztest5; V3=$NUEVO_PID; sleep 0.3
+printf 'EXPIRE_HOUR=%s\n' "$((HORA+1))" > "$T/limit.conf"
+timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
+chequear "antes de la hora de corte el mismo día sigue conectado" "vivo" "$(estado $V3)"
+else echo "  (se omite: son las 23 h)"; fi
+printf 'ztest5:1:%s\n' "$(date -d yesterday +%F)" > "$T/usuarios.db"
+abrir ztest5; V4=$NUEVO_PID; sleep 0.3
+printf 'EXPIRE_HOUR=23\n' > "$T/limit.conf"
+timeout 20 "$T/zumo-limit" --once 2>/dev/null; sleep 0.3
+chequear "un día anterior se corta siempre" "cortado" "$(estado $V4)"
 
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi

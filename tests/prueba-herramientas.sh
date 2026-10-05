@@ -14,7 +14,7 @@ trap limpiar EXIT
 
 N='\e[0m'; L='---'
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
-for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente mensaje_comun mensaje_hwid es_hwid bhttp_port hcr_port dias es_temporal temp_restante; do
+for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente mensaje_comun mensaje_hwid es_hwid hora_corte vencido_ya fecha_cuenta bhttp_port hcr_port dias es_temporal temp_restante; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
 	eval "$src"
@@ -161,6 +161,20 @@ chequear "hwid: vence" "si" "$(grep -q '├ ⏳ Vence: 20/08/2026' <<<"$SAL" && 
 SAL=$(mensaje_hwid HWIDX1234 "10 minutos" | limpio)
 chequear "hwid temporal: vence en minutos" "si" "$(grep -q 'Vence: 10 minutos' <<<"$SAL" && echo si || echo no)"
 unset ZUMO_PDIRECT_ENV
+
+echo "9) Vencimiento a las 21:00"
+export ZUMO_LIMCONF="$T/lc.conf"
+chequear "sin configuración la hora de corte es 21" "21" "$(rm -f "$ZUMO_LIMCONF"; hora_corte)"
+echo "EXPIRE_HOUR=0" > "$ZUMO_LIMCONF"
+chequear "hoy con corte a las 0 h: vencido" "vencido" "$(dias "$(date +%F)")"
+chequear "ayer: vencido" "vencido" "$(dias "$(date -d yesterday +%F)")"
+if [ "$(date +%-H)" -lt 23 ]; then
+echo "EXPIRE_HOUR=23" > "$ZUMO_LIMCONF"
+chequear "hoy antes de la hora de corte: vence hoy" "vence hoy" "$(dias "$(date +%F)")"
+fi
+chequear "mañana: vence 1 día" "vence 1 día" "$(dias "$(date -d tomorrow +%F)")"
+chequear "la cuenta de Linux vence un día después" "2026-10-25" "$(fecha_cuenta 2026-10-24)"
+unset ZUMO_LIMCONF
 
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi

@@ -14,7 +14,7 @@ export ZUMO_DB="$T/usuarios.db" ZUMO_LOCK="$T/lock" ZUMO_DATOS="$T/datos.db" ZUM
 DB="$ZUMO_DB"; TEMPDB="$T/temporales.db"; N='\e[0m'; L='---'
 source "$AQUI/zumo-lib.sh"
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
-for f in msg_ok msg_err _merge_por_usuario _respaldo_crear _respaldo_restaurar _respaldo_servidor_py _respaldos_lista; do
+for f in msg_ok msg_err fecha_cuenta _merge_por_usuario _respaldo_crear _respaldo_restaurar _respaldo_servidor_py _respaldos_lista; do
 	src=$(extraer "$f"); [ -n "$src" ] || { echo "no encontré $f"; exit 1; }; eval "$src"
 done
 RESP_DIR="$ZUMO_RESP_DIR"
@@ -64,7 +64,7 @@ chequear "misma contraseña zrpedro" "$H1" "$(hash_de zrpedro)"
 chequear "zrana sigue bloqueada (mismo hash)" "$H2" "$(hash_de zrana)"
 chequear "misma contraseña HWID" "$H3" "$(hash_de HWIDRESP0001)"
 chequear "etiqueta del HWID" "hwid,Carlos" "$(getent passwd HWIDRESP0001 | cut -d: -f5)"
-chequear "vencimiento de la cuenta (chage)" "si" "$(chage -l zrpedro | grep -q 'Jan 01, 2099' && echo si || echo no)"
+chequear "la cuenta de Linux vence un día después (chage)" "si" "$(chage -l zrpedro | grep -q 'Jan 02, 2099' && echo si || echo no)"
 chequear "base: límite y vencimiento" "zrpedro:2:2099-01-01" "$(grep '^zrpedro:' "$DB")"
 chequear "base: 4 filas" "4" "$(grep -c : "$DB")"
 chequear "datos.db vuelve" "zrpedro:5000" "$(grep '^zrpedro:' "$ZUMO_DATOS")"

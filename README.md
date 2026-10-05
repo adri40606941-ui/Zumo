@@ -60,6 +60,7 @@ Se ajusta en `/etc/zumo/limit.conf` (se relee solo, sin reiniciar):
 | `INTERVAL` | `3` | Segundos entre revisiones. |
 | `GRACE` | `0` | Segundos que una sesión de más puede vivir antes de cortarla. |
 | `KICK` | `oldest` | `oldest` corta la sesión vieja y deja la nueva; `newest` corta la nueva y deja la vieja. |
+| `EXPIRE_HOUR` | `21` | Hora (0 a 23, hora de la VPS) del día de vencimiento en que se corta al usuario. |
 | `TEMP_CLEANUP` | `1` | Borra los usuarios temporales vencidos. |
 
 Si un cliente cambia de red y reconecta, su sesión vieja tarda hasta ~30 s en

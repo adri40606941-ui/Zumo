@@ -49,9 +49,26 @@ op() { echo -e " \e[1;38;5;208m[$1]\e[0m \e[1;38;5;208m$2\e[0m \e[1;32m$3${N}"; 
 msg_ok() { echo -e " \e[1;32m✔ $1${N}"; }
 msg_err() { echo -e " \e[1;31m✘ $1${N}"; }
 
+# Hora del día de vencimiento en que se corta al usuario (21 por defecto).
+hora_corte() {
+local h
+h=$(grep -m1 '^EXPIRE_HOUR=' "${ZUMO_LIMCONF:-/etc/zumo/limit.conf}" 2>/dev/null | cut -d= -f2)
+[[ "$h" =~ ^([0-9]|1[0-9]|2[0-3])$ ]] || h=21
+echo "$h"
+}
+# vencido_ya AAAA-MM-DD: 0 si ya pasó el día de vencimiento a esa hora.
+vencido_ya() {
+local e
+e=$(date -d "$1 $(hora_corte):00" +%s 2>/dev/null) || return 1
+[ "$(date +%s)" -ge "$e" ]
+}
+# La cuenta de Linux se deja vencer un día después: el corte exacto lo hace el limitador.
+fecha_cuenta() { date -d "$1 +1 day" +%F; }
+
 dias() {
+if vencido_ya "$1"; then echo "vencido"; return; fi
 local d=$(( ( $(date -d "$1" +%s) - $(date -d "$(date +%F)" +%s) ) / 86400 ))
-if [ "$d" -lt 0 ]; then echo "vencido"; elif [ "$d" -eq 1 ]; then echo "vence 1 día"; else echo "vence $d días"; fi
+if [ "$d" -eq 0 ]; then echo "vence hoy"; elif [ "$d" -eq 1 ]; then echo "vence 1 día"; else echo "vence $d días"; fi
 }
 
 # Base de usuarios temporales (username:epoch_de_vencimiento).
@@ -242,7 +259,7 @@ read -rp " Días de duración: " d
 read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
 [[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido (mínimo 1)"; pausa; return; }
 exp=$(date -d "+$d days" +%F)
-if ! useradd --badname -M -s /bin/false -e "$exp" -c "hwid,$etiqueta" "$hwid" 2>/dev/null; then
+if ! useradd --badname -M -s /bin/false -e "$(fecha_cuenta "$exp")" -c "hwid,$etiqueta" "$hwid" 2>/dev/null; then
 msg_err "No se pudo crear el usuario (probá con otro HWID)"; pausa; return
 fi
 echo "$hwid:$hwid" | chpasswd
@@ -263,7 +280,7 @@ read -rp " Días de duración: " d
 read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
 [[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido (mínimo 1)"; pausa; return; }
 exp=$(date -d "+$d days" +%F)
-if ! useradd -M -s /bin/false -e "$exp" "$u" 2>/dev/null; then
+if ! useradd -M -s /bin/false -e "$(fecha_cuenta "$exp")" "$u" 2>/dev/null; then
 msg_err "No se pudo crear el usuario"; pausa; return
 fi
 echo "$u:$p" | chpasswd
@@ -324,7 +341,7 @@ id "$hwid" &>/dev/null && { msg_err "Ese HWID ya está registrado"; pausa; retur
 read -rp " Minutos de duración: " min
 [[ "$min" =~ ^[0-9]+$ ]] && [ "$min" -ge 1 ] || { msg_err "Minutos inválidos"; pausa; return; }
 exp=$(date -d "+2 days" +%F)
-if ! useradd --badname -M -s /bin/false -e "$exp" -c "hwid,$etiqueta" "$hwid" 2>/dev/null; then
+if ! useradd --badname -M -s /bin/false -e "$(fecha_cuenta "$exp")" -c "hwid,$etiqueta" "$hwid" 2>/dev/null; then
 msg_err "No se pudo crear el usuario temporal"; pausa; return
 fi
 echo "$hwid:$hwid" | chpasswd
@@ -346,7 +363,7 @@ read -rp " Minutos de duración: " min
 read -rp " Conexiones permitidas [1]: " lim; lim=${lim:-1}
 [[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido"; pausa; return; }
 exp=$(date -d "+2 days" +%F)
-if ! useradd -M -s /bin/false -e "$exp" "$u" 2>/dev/null; then
+if ! useradd -M -s /bin/false -e "$(fecha_cuenta "$exp")" "$u" 2>/dev/null; then
 msg_err "No se pudo crear el usuario temporal"; pausa; return
 fi
 echo "$u:$p" | chpasswd
@@ -456,12 +473,10 @@ done
 vencidos() {
 banner; echo -e " \e[1;38;5;141mUSUARIOS VENCIDOS${N}\n"
 if [ ! -s "$DB" ]; then msg_err "No hay usuarios"; pausa; return; fi
-hoy=$(date -d "$(date +%F)" +%s)
 VENC=()
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
-e=$(date -d "$exp" +%s 2>/dev/null) || continue
-[ "$e" -lt "$hoy" ] && VENC+=("$u|$exp")
+vencido_ya "$exp" && VENC+=("$u|$exp")
 done < "$DB"
 if [ ${#VENC[@]} -eq 0 ]; then msg_ok "No hay usuarios vencidos"; pausa; return; fi
 printf " \e[1;38;5;208m%-16s %s${N}\n" "USUARIO/CLIENTE" "VENCIÓ"
@@ -532,7 +547,7 @@ msg_ok "Límite de $SEL ahora es $nl"; sleep 1 ;;
 3) read -rp " Días desde hoy: " nd
 [[ "$nd" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; sleep 1; continue; }
 nexp=$(date -d "+$nd days" +%F)
-usermod -e "$nexp" "$SEL" 2>/dev/null
+usermod -e "$(fecha_cuenta "$nexp")" "$SEL" 2>/dev/null
 zumo_db_set "$SEL" 3 "$nexp"
 datos_reset "$SEL"
 msg_ok "Vencimiento de $SEL ahora: $nexp ($(dias "$nexp")). Contador de datos en 0"; sleep 1 ;;
@@ -1189,7 +1204,7 @@ if [ -n "${TEMP[$u]:-}" ] && [ "${TEMP[$u]}" -le "$now" ]; then vencidos=$((venc
 if id "$u" >/dev/null 2>&1; then
 existentes=$((existentes+1))
 else
-args=(-M -s /bin/false -e "$exp")
+args=(-M -s /bin/false -e "$(fecha_cuenta "$exp")")
 [ -n "$gecos" ] && args+=(-c "$gecos")
 case "$gecos" in hwid,*) args+=(--badname) ;; esac
 if useradd "${args[@]}" "$u" 2>/dev/null; then
