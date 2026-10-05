@@ -1105,7 +1105,7 @@ LC_ALL=C awk -v p="$1" 'BEGIN{ if (p >= 90) print "\033[1;31m"; else if (p >= 70
 # Los 5 procesos que más RAM y más CPU usan, con qué es cada uno, y al final el
 # uso real de RAM y CPU. La CPU se mide en vivo durante 1 segundo.
 procesos_top() {
-local tmp t0 t1 dt cores hz cpu_real mt mu ram_pct pid comm val d rc primera=1 buf
+local tmp t0 t1 dt cores hz cpu_real mt mu ram_pct pid comm val d rc primera=1 buf k
 while true; do
 [ "$primera" = 1 ] && { banner; echo -e " \e[1;38;5;141mUSO DE CPU Y RAM${N}\n"; echo -e " \e[2mMidiendo...${N}"; }
 primera=0
@@ -1147,8 +1147,9 @@ echo -e "   CPU: $(_col_pct "$cpu_real")${cpu_real}%\e[0m  (medido en 1 s, de to
 rm -rf "$tmp"
 banner; echo -e " \e[1;38;5;141mUSO DE CPU Y RAM${N}\n"
 printf '%s\n' "$buf"
-echo -e "\n Enter para volver..."
-read -rsn1 -t 1; rc=$?
+echo -e "\n \e[1;38;5;208m[L]${N} Liberar RAM y limpiar     \e[2mEnter para volver...${N}"
+k=""; read -rsn1 -t 1 k; rc=$?
+if [ "$rc" -eq 0 ] && [[ "$k" =~ ^[lL]$ ]]; then liberar_ram; primera=1; continue; fi
 [ "$rc" -gt 128 ] || break
 done
 }
@@ -1451,15 +1452,13 @@ echo -e " \e[1;31m● BBR: inactivo${N}\n"
 fi
 op 1 "⚡" "BBR"
 op 2 "🚀" "Test de velocidad"
-op 3 "🧹" "Liberar RAM y limpiar"
-op 4 "📊" "Uso de CPU y RAM"
+op 3 "📊" "Uso de CPU y RAM"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) menu_bbr ;;
 2) test_velocidad ;;
-3) liberar_ram ;;
-4) procesos_top ;;
+3) procesos_top ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
