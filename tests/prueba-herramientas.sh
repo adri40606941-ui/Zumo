@@ -243,5 +243,18 @@ chequear "Ver usuarios lee nombres largos (HWID de 32) sin recortar" "si" "$(gre
 chequear "HWID nuevo: límite por defecto 2" "si" "$(sed -n '/Pegá el HWID del cliente/,/zumo_db_add "\$hwid" "\$lim"/p' "$AQUI/panel.sh" | grep -q 'lim=\${lim:-2}' && echo si || echo no)"
 chequear "actualizar pasa HWID de límite 1 a 2 una sola vez" "si" "$(grep -q 'hwid-limite2' "$AQUI/actualizar.sh" && echo si || echo no)"
 
+echo "8) Ficha HWID sin límite a la vista"
+for f in _ficha_usuario _fmt_secs dias; do src=$(extraer "$f"); eval "$src"; done
+N=$'\e[0m'; export LC_ALL=C.UTF-8
+declare -gA _ON=() _TS=() _GE=() _CL=() _TM=() _DC=(); _PRE=1; _SEP="---"
+_GE[hwidaaaa1111]="cliente1"; _ON[hwidaaaa1111]=1; _TS[hwidaaaa1111]=300
+_CL[normal]="clave1"; _ON[normal]=1; _TS[normal]=300
+SAL=$(_ficha_usuario 1 hwidaaaa1111 2 2030-01-01 | limpio)
+chequear "HWID muestra vencimiento y tiempo conectado" "si" "$(grep -q 'Vence: 01/01/2030 *5m' <<<"$SAL" && echo si || echo no)"
+chequear "HWID no muestra el límite" "no" "$(grep -q 'Límite' <<<"$SAL" && echo si || echo no)"
+SAL=$(_ficha_usuario 2 normal 1 2030-01-01 | limpio)
+chequear "usuario común sigue mostrando Límite 1/1" "si" "$(grep -q 'Límite: 1/1' <<<"$SAL" && echo si || echo no)"
+unset _PRE
+
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi
