@@ -1538,6 +1538,81 @@ return
 done
 }
 
+# ── Control de red ─────────────────────────────────────────────────────────
+# Interfaz de salida a internet (la de la ruta por defecto).
+_red_iface() {
+local i
+i=$(ip -o route get 1.1.1.1 2>/dev/null | awk '{for(k=1;k<=NF;k++) if($k=="dev"){print $(k+1); exit}}')
+[ -z "$i" ] && i=$(awk -F'[: ]+' 'NR>2 && $2!="lo"{print $2; exit}' "${ZUMO_NETDEV:-/proc/net/dev}")
+echo "$i"
+}
+# Bytes recibidos y enviados desde el arranque: "rx tx".
+_red_bytes() {
+awk -v i="$1" '{sub(/^ +/,"")} index($0,i":")==1{sub(/^[^:]*: */,""); print $1, $9; exit}' "${ZUMO_NETDEV:-/proc/net/dev}"
+}
+# Velocidad en Mbps entre dos lecturas: "bajada subida".
+_red_calc() {
+LC_ALL=C awk -v r0="$1" -v t0="$2" -v r1="$3" -v t1="$4" -v dt="$5" \
+'BEGIN{if(dt<=0){print "0.0 0.0"; exit} d=(r1-r0)*8/dt/1000000; u=(t1-t0)*8/dt/1000000; if(d<0)d=0; if(u<0)u=0; printf "%.1f %.1f", d, u}'
+}
+_red_fmt_bytes() {
+LC_ALL=C awk -v b="${1:-0}" 'BEGIN{ if(b>=1073741824) printf "%.2f GB", b/1073741824;
+else if(b>=1048576) printf "%.1f MB", b/1048576; else printf "%.0f KB", b/1024 }'
+}
+# Capacidad del enlace en Mbps (vacío si la VPS no la informa).
+_red_capacidad() {
+local c="${ZUMO_LINK_MBPS:-}"
+[ -z "$c" ] && c=$(cat "/sys/class/net/$1/speed" 2>/dev/null)
+[[ "$c" =~ ^[0-9]+$ ]] && [ "$c" -gt 0 ] && echo "$c"
+}
+
+control_red() {
+local ifc rx0 tx0 rx1 tx1 t0 t1 dt dl ul cap pico_d=0 pico_u=0 pd pu conex online k rc buf
+local rx_ini tx_ini
+ifc=$(_red_iface)
+[ -z "$ifc" ] && { banner; msg_err "No se encontró la interfaz de red"; pausa; return; }
+read -r rx_ini tx_ini <<< "$(_red_bytes "$ifc")"
+cap=$(_red_capacidad "$ifc")
+read -r rx0 tx0 <<< "$(_red_bytes "$ifc")"; t0=$(date +%s.%N)
+while true; do
+read -rsn1 -t 1 k; rc=$?
+if [ "$rc" -eq 0 ]; then
+[[ "$k" =~ ^[rR]$ ]] && { pico_d=0; pico_u=0; continue; }
+return
+fi
+[ "$rc" -gt 128 ] || return   # sin teclado (EOF): salir
+read -r rx1 tx1 <<< "$(_red_bytes "$ifc")"; t1=$(date +%s.%N)
+dt=$(LC_ALL=C awk -v a="$t0" -v b="$t1" 'BEGIN{print b-a}')
+read -r dl ul <<< "$(_red_calc "$rx0" "$tx0" "$rx1" "$tx1" "$dt")"
+rx0=$rx1; tx0=$tx1; t0=$t1
+pico_d=$(LC_ALL=C awk -v a="$pico_d" -v b="$dl" 'BEGIN{print (b>a)?b:a}')
+pico_u=$(LC_ALL=C awk -v a="$pico_u" -v b="$ul" 'BEGIN{print (b>a)?b:a}')
+conex=$(ss -Htn state established '( sport = :22 )' 2>/dev/null | wc -l)
+online=$(ps -eo user:32,comm 2>/dev/null | awk '$2=="sshd" && $1!="root" && $1!="sshd"{print $1}' | sort -u | wc -l)
+buf=$(
+echo -e " \e[1;38;5;141mCONTROL DE RED${N}  \e[2m(${ifc})${N}\n"
+echo -e " \e[1;38;5;208m↓ Bajada:${N} \e[1;32m${dl} Mbps${N}   \e[2mpico ${pico_d}${N}"
+echo -e " \e[1;38;5;208m↑ Subida:${N} \e[1;32m${ul} Mbps${N}   \e[2mpico ${pico_u}${N}"
+if [ -n "$cap" ]; then
+pd=$(LC_ALL=C awk -v v="$dl" -v c="$cap" 'BEGIN{printf "%.1f", v*100/c}')
+pu=$(LC_ALL=C awk -v v="$ul" -v c="$cap" 'BEGIN{printf "%.1f", v*100/c}')
+echo -e "\n \e[1;38;5;208mUso del enlace (${cap} Mbps):${N}"
+echo -e "   Bajada: $(_col_pct "$pd")${pd}%\e[0m   Subida: $(_col_pct "$pu")${pu}%\e[0m"
+else
+echo -e "\n \e[2mLa VPS no informa la capacidad del enlace.\n Para ver el % de uso: ZUMO_LINK_MBPS=1000 zumo${N}"
+fi
+echo -e "\n \e[1;38;5;208mDesde que abriste esto:${N}"
+echo -e "   ↓ $(_red_fmt_bytes $((rx1-rx_ini)))   ↑ $(_red_fmt_bytes $((tx1-tx_ini)))"
+echo -e " \e[1;38;5;208mDesde que arrancó la VPS:${N}"
+echo -e "   ↓ $(_red_fmt_bytes "$rx1")   ↑ $(_red_fmt_bytes "$tx1")"
+echo -e "\n \e[1;38;5;208mConexiones SSH:${N} \e[1;97m${conex}${N}   \e[1;38;5;208mUsuarios en línea:${N} \e[1;32m${online}${N}"
+)
+banner
+printf '%s\n' "$buf"
+echo -e "\n $L\n \e[1;38;5;208m[R]${N} Reiniciar picos     \e[2mCualquier otra tecla para volver...${N}"
+done
+}
+
 menu_herramientas() {
 while true; do
 banner; echo -e " \e[1;38;5;141mHERRAMIENTAS${N}\n"
@@ -1550,6 +1625,7 @@ op 1 "⚡" "BBR"
 op 2 "🚀" "Test de velocidad"
 op 3 "📊" "Uso de CPU y RAM"
 op 4 "👥" "Usuario compartido"
+op 5 "📡" "Control de red"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -1557,6 +1633,7 @@ case $o in
 2) test_velocidad ;;
 3) procesos_top ;;
 4) usuario_compartido ;;
+5) control_red ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac

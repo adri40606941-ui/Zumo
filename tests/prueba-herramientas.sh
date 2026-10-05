@@ -14,7 +14,7 @@ trap limpiar EXIT
 
 N='\e[0m'; L='---'
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
-for f in mensaje_renovacion clave_get db_orden op msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente mensaje_comun mensaje_hwid es_hwid hora_corte vencido_ya fecha_cuenta vencidos bhttp_port hcr_port dias es_temporal temp_restante; do
+for f in _red_iface _red_bytes _red_calc _red_fmt_bytes _red_capacidad control_red mensaje_renovacion clave_get db_orden op msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente mensaje_comun mensaje_hwid es_hwid hora_corte vencido_ya fecha_cuenta vencidos bhttp_port hcr_port dias es_temporal temp_restante; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
 	eval "$src"
@@ -211,6 +211,32 @@ chequear "no muestra usuarios que ya no existen" "no" "$(grep -q fantasma <<<"$S
 printf 'vs\n' | usuario_compartido >/dev/null 2>&1
 chequear "vaciar historial borra el archivo" "no" "$([ -f "$ZUMO_EXCESOS" ] && echo si || echo no)"
 unset ZUMO_EXCESOS
+
+echo "6) Control de red"
+ND="$T/netdev"; export ZUMO_NETDEV="$ND"
+cat > "$ND" <<'EOT'
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo:  500  5 0 0 0 0 0 0  500  5 0 0 0 0 0 0
+  eth0: 1073741824 100 0 0 0 0 0 0 2097152 50 0 0 0 0 0 0
+EOT
+chequear "lee bytes de la interfaz" "1073741824 2097152" "$(_red_bytes eth0)"
+chequear "no confunde lo con otra interfaz" "500 500" "$(_red_bytes lo)"
+chequear "calcula Mbps (12,5 MB en 1 s = 100 Mbps)" "100.0 8.0" "$(_red_calc 0 0 12500000 1000000 1)"
+chequear "contador que baja no da negativo" "0.0 0.0" "$(_red_calc 100 100 50 50 1)"
+chequear "formato GB" "1.00 GB" "$(_red_fmt_bytes 1073741824)"
+chequear "formato MB" "2.0 MB" "$(_red_fmt_bytes 2097152)"
+chequear "capacidad desde variable" "1000" "$(ZUMO_LINK_MBPS=1000 _red_capacidad eth0)"
+chequear "capacidad inválida se ignora" "" "$(ZUMO_LINK_MBPS=-1 _red_capacidad nope)"
+banner() { :; }
+_red_iface() { echo eth0; }
+SAL=$( (sleep 2.5; echo q) | ZUMO_LINK_MBPS=1000 control_red 2>&1 | limpio)
+chequear "muestra el título y la interfaz" "si" "$(grep -q 'CONTROL DE RED  *(eth0)' <<<"$SAL" && echo si || echo no)"
+chequear "muestra bajada y subida" "si" "$(grep -q 'Bajada: .* Mbps' <<<"$SAL" && grep -q 'Subida: .* Mbps' <<<"$SAL" && echo si || echo no)"
+chequear "muestra el total desde el arranque" "si" "$(grep -q '1.00 GB' <<<"$SAL" && echo si || echo no)"
+chequear "muestra uso del enlace con capacidad" "si" "$(grep -q 'Uso del enlace (1000 Mbps)' <<<"$SAL" && echo si || echo no)"
+chequear "sale sola si no hay teclado (EOF)" "ok" "$(timeout 10 bash -c 'true'; ( control_red </dev/null >/dev/null 2>&1 & p=$!; for i in 1 2 3 4 5 6; do sleep 0.5; kill -0 $p 2>/dev/null || { echo ok; exit; }; done; kill $p 2>/dev/null; echo cuelga ))"
+unset ZUMO_NETDEV
 
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi
