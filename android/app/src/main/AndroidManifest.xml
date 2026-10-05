@@ -28,16 +28,10 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="zumo" />
-            </intent-filter>
             <!--
-                Abrir un archivo .zumoconf compartido por WhatsApp, Gmail, un administrador de archivos, etc.
+                Abrir un archivo .zs compartido por WhatsApp, Gmail, un administrador de archivos, etc.
                 WhatsApp no conserva el mimeType que mandamos al compartir: cuando el usuario toca el
-                archivo en el chat, Android adivina el tipo por la extensión y, como ".zumoconf" no es
+                archivo en el chat, Android adivina el tipo por la extensión y, como ".zs" no es
                 una extensión conocida, cae en un tipo genérico. Por eso el filtro tiene que ser amplio
                 (mimeType "*/*" sin exigir esquema/host/patrón de ruta) para que la app aparezca en
                 "Abrir con", igual que hacen HTTP Injector o HTTP Custom con sus propios archivos.

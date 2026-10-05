@@ -5,50 +5,46 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.provider.MediaStore
-import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
-import androidx.core.content.FileProvider
-import java.io.File
 
+/**
+ * Pantalla mínima: conectar, vencimiento de la cuenta y un registro de lo que pasa al conectar.
+ * El servidor, el payload y el usuario no se ven ni se editan: vienen dentro del archivo .zs que
+ * genera el bot de Telegram y que se abre con esta app.
+ */
 class MainActivity : Activity() {
 
     private lateinit var prefs: Prefs
     private val h = Handler(Looper.getMainLooper())
     private lateinit var tvEstado: TextView
     private lateinit var tvError: TextView
-    private lateinit var tvConfig: TextView
     private lateinit var btn: Button
-    private lateinit var etUser: EditText
-    private lateinit var etPass: EditText
-    private lateinit var boxLogin: LinearLayout
     private lateinit var puntoEstado: View
     private lateinit var tvVelocidad: TextView
     private lateinit var tvTiempo: TextView
     private lateinit var tvDatos: TextView
-    private var perfilPendienteGuardar: Perfil? = null
+    private lateinit var cSinCuenta: LinearLayout
+    private lateinit var tvVence: TextView
+    private lateinit var tvVenceDetalle: TextView
+    private lateinit var tvRegistro: TextView
 
     private val BG = Color.parseColor("#14102B")
     private val CARD = Color.parseColor("#201A3D")
     private val BORDE = Color.parseColor("#36305E")
     private val ACENTO = Color.parseColor("#B388FF")
-    private val ACENTO_OSCURO = Color.parseColor("#8B6CC9")
     private val VERDE = Color.parseColor("#4CE0A8")
     private val ROJO = Color.parseColor("#FF6E6E")
     private val NARANJA = Color.parseColor("#FFB74D")
@@ -80,7 +76,6 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause()
         h.removeCallbacksAndMessages(null)
-        guardarCampos()
     }
 
     // ---------- interfaz ----------
@@ -137,11 +132,6 @@ class MainActivity : Activity() {
         cont.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(12)) })
     }
 
-    private fun campo(hint: String, tipo: Int = InputType.TYPE_CLASS_TEXT): EditText = EditText(this).apply {
-        this.hint = hint; setHintTextColor(Color.GRAY); setTextColor(Color.WHITE); inputType = tipo
-        setSingleLine(true)
-    }
-
     private fun armarUi() {
         val root = ScrollView(this).apply { setBackgroundColor(BG); isFillViewport = true }
         val col = LinearLayout(this).apply {
@@ -172,6 +162,13 @@ class MainActivity : Activity() {
         filaCab.addView(espaciador); filaCab.addView(cab); filaCab.addView(btnMenu)
         col.addView(filaCab)
 
+        // sin cuenta cargada: solo se pide abrir el .zs
+        cSinCuenta = tarjeta()
+        seccion(cSinCuenta, "📥", "Falta tu cuenta")
+        cSinCuenta.addView(texto("Abrí con esta app el archivo .zs que te pasaron, o elegilo desde acá.", 13.5f, TEXTO_SUAVE))
+        cSinCuenta.addView(botonPrimario("Importar archivo .zs", ACENTO) { elegirArchivo() })
+        col.addView(cSinCuenta)
+
         // estado de la conexión
         val cEstado = tarjeta().apply { gravity = Gravity.CENTER_HORIZONTAL }
         puntoEstado = View(this).apply {
@@ -193,6 +190,16 @@ class MainActivity : Activity() {
         btn = botonPrimario("Conectar", VERDE) { alternar() }
         cEstado.addView(btn)
         col.addView(cEstado)
+
+        // vencimiento de la cuenta
+        val cVence = tarjeta()
+        seccion(cVence, "📅", "Tu cuenta")
+        tvVence = texto("--", 17f, Color.WHITE, true)
+        tvVenceDetalle = texto("", 13f, TEXTO_SUAVE).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
+        }
+        cVence.addView(tvVence); cVence.addView(tvVenceDetalle)
+        col.addView(cVence)
 
         // velocidad, tiempo conectado y datos usados
         val cStats = tarjeta()
@@ -218,48 +225,36 @@ class MainActivity : Activity() {
         cStats.addView(filaStats)
         col.addView(cStats)
 
+        // registro del proceso de conexión
+        val cReg = tarjeta()
+        seccion(cReg, "📝", "Registro")
+        tvRegistro = texto("", 12f, TEXTO_SUAVE).apply {
+            typeface = Typeface.MONOSPACE
+            minLines = 4
+            background = redondo(Color.parseColor("#2E2854"), 10)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+        }
+        cReg.addView(tvRegistro)
+        cReg.addView(botonSecundario("📋  Copiar registro") {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("Registro", Registro.texto(80)))
+            aviso("Registro copiado")
+        })
+        col.addView(cReg)
+
         setContentView(root)
     }
 
-    /** Pantalla de configuración (servidor, login, batería) detrás del botón ☰ de la esquina. */
+    /** Menú ☰: importar una cuenta nueva (renovación) y la guía de batería. */
     private fun abrirMenu() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        // login
-        val cLogin = tarjeta()
-        seccion(cLogin, "🔐", "Cuenta")
-        boxLogin = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
-        }
-        etUser = campo("Usuario").apply { setText(prefs.user) }
-        etPass = campo("Contraseña", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD).apply {
-            setText(prefs.pass)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) }
-        }
-        boxLogin.addView(etUser); boxLogin.addView(etPass)
-        cLogin.addView(boxLogin)
-        col.addView(cLogin)
+        val cCuenta = tarjeta()
+        seccion(cCuenta, "📥", "Cuenta")
+        cCuenta.addView(texto("¿Te mandaron un archivo .zs nuevo (renovación u otra cuenta)? Importalo acá.", 13f, TEXTO_SUAVE))
+        cCuenta.addView(botonSecundario("📂  Importar archivo .zs") { elegirArchivo() })
+        col.addView(cCuenta)
 
-        // configuración del servidor (sin mostrar el host/payload reales: solo si está configurado o no)
-        val cCfg = tarjeta()
-        seccion(cCfg, "🌐", "Servidor")
-        tvConfig = texto("", 13.5f, TEXTO_SUAVE)
-        cCfg.addView(tvConfig)
-        cCfg.addView(botonSecundario("📋  Pegar enlace de configuración") { pegarEnlace() })
-        cCfg.addView(botonSecundario("✏️  Editar configuración") { editarConfig() })
-        cCfg.addView(botonSecundario("📤  Compartir configuración") { compartir() })
-        col.addView(cCfg)
-
-        // perfil completo (servidor + inicio de sesión) en un archivo para enviar por WhatsApp
-        val cPerfil = tarjeta()
-        seccion(cPerfil, "📁", "Perfil (servidor + login)")
-        cPerfil.addView(botonSecundario("💾  Guardar config (archivo para WhatsApp)") { guardarConfigArchivo() })
-        cPerfil.addView(botonSecundario("📥  Importar config (desde archivo)") { importarConfigArchivo() })
-        cPerfil.addView(botonSecundario("🗑  Borrar datos", ROJO) { borrarDatos() })
-        col.addView(cPerfil)
-
-        // estabilidad de la conexión
         val cEst = tarjeta()
         seccion(cEst, "⚙️", "Evitar desconexiones")
         val sw = Switch(this).apply {
@@ -272,22 +267,12 @@ class MainActivity : Activity() {
 
         val sv = ScrollView(this).apply { addView(col) }
         dialogo("Configuración", sv).setPositiveButton("Cerrar", null).mostrar()
-        refrescar()
-    }
-
-    private fun guardarCampos() {
-        if (!::etUser.isInitialized) return
-        prefs.user = etUser.text.toString().trim()
-        prefs.pass = etPass.text.toString().trim()
     }
 
     private fun refrescar() {
-        if (::tvConfig.isInitialized) {
-            val c = prefs.config
-            // No se muestran host/payload acá: son datos del servidor, no algo para exponer en pantalla.
-            tvConfig.text = if (c == null || c.host.isBlank()) "Sin configurar. Pega el enlace que te dieron."
-            else "✔ Configurado: \"${c.name}\""
-        }
+        val tieneCuenta = prefs.config?.valida() == true && prefs.user.isNotBlank()
+        cSinCuenta.visibility = if (tieneCuenta) View.GONE else View.VISIBLE
+
         val corr = ZumoVpnService.corriendo
         val con = ZumoVpnService.conectado
         tvEstado.text = ZumoVpnService.estado
@@ -300,16 +285,35 @@ class MainActivity : Activity() {
         puntoEstado.background = redondo(colorEstado, 10)
         tvError.text = when {
             con -> ""
-            corr -> listOf(ZumoVpnService.ultimoError, ZumoVpnService.etapaActual).filter { it.isNotBlank() }.joinToString("\n")
-            ZumoVpnService.estado == "Error" -> ZumoVpnService.ultimoError
+            corr || ZumoVpnService.estado == "Error" -> ZumoVpnService.ultimoError
             else -> ""
         }
         btn.text = if (corr) "◼  Desconectar" else "▶  Conectar"
         btn.background = redondo(if (corr) ROJO else VERDE, 16)
 
+        // vencimiento
+        val exp = prefs.exp
+        val dias = Perfil.diasRestantes(exp)
+        when {
+            !tieneCuenta -> { tvVence.text = "--"; tvVence.setTextColor(Color.WHITE); tvVenceDetalle.text = "" }
+            exp.isBlank() || dias == null -> { tvVence.text = "Sin vencimiento"; tvVence.setTextColor(VERDE); tvVenceDetalle.text = "" }
+            Perfil.vencida(exp) -> {
+                tvVence.text = "Vencida el ${Perfil.fechaLinda(exp)}"; tvVence.setTextColor(ROJO)
+                tvVenceDetalle.text = "Pedí la renovación y abrí el archivo .zs nuevo."
+            }
+            else -> {
+                val d = dias ?: 0
+                tvVence.text = "Vence el ${Perfil.fechaLinda(exp)}"
+                tvVence.setTextColor(if (d <= 3) NARANJA else VERDE)
+                tvVenceDetalle.text = when (d) { 0 -> "Vence hoy a las ${Perfil.HORA_CORTE}:00"; 1 -> "Falta 1 día"; else -> "Faltan $d días" }
+            }
+        }
+
         tvVelocidad.text = if (con && ZumoVpnService.velocidad.isNotBlank()) ZumoVpnService.velocidad else "--"
         tvDatos.text = if (con && ZumoVpnService.datosUsados.isNotBlank()) ZumoVpnService.datosUsados else "--"
         tvTiempo.text = if (con && ZumoVpnService.desde > 0) formatearDuracion(System.currentTimeMillis() - ZumoVpnService.desde) else "--"
+
+        tvRegistro.text = Registro.texto(12).ifBlank { "Todavía no hay actividad." }
     }
 
     private fun formatearDuracion(ms: Long): String {
@@ -320,15 +324,19 @@ class MainActivity : Activity() {
 
     // ---------- acciones ----------
     private fun alternar() {
-        guardarCampos()
         if (ZumoVpnService.corriendo) {
             prefs.wanted = false
             ZumoVpnService.detener(this)
+            Registro.add("Desconectado")
             return
         }
         val c = prefs.config
-        if (c == null || !c.valida()) { aviso("Primero pega o edita la configuración del servidor"); return }
-        if (prefs.user.isBlank() || prefs.pass.isBlank()) { aviso("Escribe tu usuario y contraseña"); return }
+        if (c == null || !c.valida() || prefs.user.isBlank()) { aviso("Primero importá el archivo .zs de tu cuenta"); return }
+        if (Perfil.vencida(prefs.exp)) {
+            Registro.add("✘ Tu cuenta venció el ${Perfil.fechaLinda(prefs.exp)}. Pedí la renovación.")
+            aviso("Tu cuenta está vencida")
+            return
+        }
         // La primera vez, se pide quedar fuera del ahorro de batería antes de conectar (si no, el
         // sistema puede cerrar la VPN sola al rato, sobre todo en Tecno, Xiaomi y similares).
         if (!prefs.pidioBateria && !PowerGuide.sinOptimizar(this)) {
@@ -354,23 +362,10 @@ class MainActivity : Activity() {
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
         if (req == 1 && res == RESULT_OK) ZumoVpnService.iniciar(this)
-        if (req == 2 && res == RESULT_OK) data?.data?.let { leerArchivoConfig(it) }
+        if (req == 2 && res == RESULT_OK) data?.data?.let { leerArchivo(it) }
     }
 
     private fun aviso(t: String) = Toast.makeText(this, t, Toast.LENGTH_LONG).show()
-
-    private fun pegarEnlace() {
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val portapapeles = cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString() ?: ""
-        val et = campo("zumo://...").apply {
-            setText(if (portapapeles.startsWith("zumo://")) portapapeles else ""); setSingleLine(false)
-            setTextColor(Color.BLACK); setPadding(dp(14), dp(12), dp(14), dp(12))
-        }
-        val cont = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); addView(et) }
-        dialogo("Enlace de configuración", cont)
-            .setPositiveButton("Importar") { _, _ -> importar(et.text.toString()) }
-            .setNegativeButton("Cancelar", null).mostrar()
-    }
 
     /** Diálogo con la misma paleta oscura de la app (el tema del sistema es claro por defecto). */
     private fun dialogo(titulo: String, vista: View): AlertDialog.Builder =
@@ -383,124 +378,13 @@ class MainActivity : Activity() {
         d.show()
     }
 
-
-    private fun importar(link: String) {
-        val c = Config.fromLink(link)
-        if (c == null) { aviso("El enlace no es válido"); return }
-        prefs.config = c
-        aviso("Configuración \"${c.name}\" guardada")
-        refrescar()
-    }
-
-    /** Guarda un perfil completo (servidor + usuario y clave) y actualiza la pantalla de login. */
-    private fun importarPerfil(p: Perfil) {
-        prefs.config = p.cfg
-        prefs.user = p.user; prefs.pass = p.pass
-        if (::etUser.isInitialized) { etUser.setText(prefs.user); etPass.setText(prefs.pass) }
-        aviso("Configuración \"${p.cfg.name}\" guardada")
-        refrescar()
-    }
-
-    /** Borra el servidor, usuario/clave y cualquier .zumoconf exportado: vuelve la app a como estaba recién instalada. */
-    private fun borrarDatos() {
-        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
-            .setTitle("Borrar datos")
-            .setMessage("Se borra el servidor, el usuario/clave guardados y los archivos de configuración exportados. Vas a tener que configurar todo de nuevo.")
-            .setPositiveButton("Borrar") { _, _ ->
-                if (ZumoVpnService.corriendo) { prefs.wanted = false; ZumoVpnService.detener(this) }
-                prefs.config = null
-                prefs.user = ""; prefs.pass = ""
-                try { File(cacheDir, "config").deleteRecursively() } catch (_: Exception) {}
-                if (::etUser.isInitialized) { etUser.setText(""); etPass.setText("") }
-                refrescar()
-                aviso("Datos borrados")
-            }.setNegativeButton("Cancelar", null).show()
-    }
-
+    // ---------- importar .zs ----------
     private fun importarDesdeIntent(i: Intent?) {
         val uri = i?.data ?: return
-        when (uri.scheme) {
-            "zumo" -> {
-                val d = i.dataString ?: return
-                AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
-                    .setTitle("Importar configuración").setMessage("¿Guardar esta configuración de servidor?")
-                    .setPositiveButton("Sí") { _, _ -> importar(d) }.setNegativeButton("No", null).show()
-            }
-            "content", "file" -> leerArchivoConfig(uri)
-        }
+        if (uri.scheme == "content" || uri.scheme == "file") leerArchivo(uri)
     }
 
-    /** Arma un perfil (servidor + login) y pregunta dónde guardarlo: compartir o Descargas/Zumo. */
-    private fun guardarConfigArchivo() {
-        guardarCampos()
-        val c = prefs.config
-        if (c == null || !c.valida()) { aviso("Primero configurá el servidor"); return }
-        val p = Perfil(c, user = prefs.user, pass = prefs.pass)
-        dialogo("Guardar configuración", View(this))
-            .setPositiveButton("Guardar en Descargas/Zumo") { _, _ -> guardarEnDescargas(p) }
-            .setNeutralButton("Compartir (WhatsApp, etc.)") { _, _ -> exportarArchivo(p) }
-            .setNegativeButton("Cancelar", null).mostrar()
-    }
-
-    private fun exportarArchivo(p: Perfil) {
-        try {
-            val dir = File(cacheDir, "config").apply { mkdirs() }
-            val nombre = p.cfg.name.ifBlank { "zumo" }.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".zumoconf"
-            val f = File(dir, nombre)
-            f.writeText(p.toJson().toString())
-            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
-            val i = Intent(Intent.ACTION_SEND).setType("application/x-zumoconfig")
-                .putExtra(Intent.EXTRA_STREAM, uri)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            startActivity(Intent.createChooser(i, "Compartir configuración"))
-        } catch (e: Exception) {
-            aviso("No se pudo crear el archivo: ${e.message}")
-        }
-    }
-
-    /** Guarda el .zumoconf directo en Descargas/Zumo del teléfono (crea la carpeta si no existe). */
-    private fun guardarEnDescargas(p: Perfil) {
-        val nombre = p.cfg.name.ifBlank { "zumo" }.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".zumoconf"
-        val contenido = p.toJson().toString()
-        try {
-            if (Build.VERSION.SDK_INT >= 29) {
-                val values = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, nombre)
-                    put(MediaStore.MediaColumns.MIME_TYPE, "application/x-zumoconfig")
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/Zumo")
-                }
-                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                if (uri == null) { aviso("No se pudo crear el archivo"); return }
-                contentResolver.openOutputStream(uri)?.use { it.write(contenido.toByteArray(Charsets.UTF_8)) }
-                aviso("Guardado en Descargas/Zumo/$nombre")
-            } else {
-                if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                    perfilPendienteGuardar = p
-                    requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 9)
-                    return
-                }
-                @Suppress("DEPRECATION")
-                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Zumo").apply { mkdirs() }
-                File(dir, nombre).writeText(contenido)
-                aviso("Guardado en Descargas/Zumo/$nombre")
-            }
-        } catch (e: Exception) {
-            aviso("No se pudo guardar: ${e.message}")
-        }
-    }
-
-    override fun onRequestPermissionsResult(req: Int, perms: Array<out String>, resultados: IntArray) {
-        super.onRequestPermissionsResult(req, perms, resultados)
-        if (req == 9) {
-            val p = perfilPendienteGuardar; perfilPendienteGuardar = null
-            if (p != null) {
-                if (resultados.firstOrNull() == PackageManager.PERMISSION_GRANTED) guardarEnDescargas(p)
-                else aviso("Sin permiso para guardar en Descargas")
-            }
-        }
-    }
-
-    private fun importarConfigArchivo() {
+    private fun elegirArchivo() {
         try {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), 2)
         } catch (e: Exception) {
@@ -508,20 +392,27 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun leerArchivoConfig(uri: Uri) {
+    private fun leerArchivo(uri: Uri) {
         try {
-            val texto = contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
-            val p = texto?.let { Perfil.desdeTexto(it) }
-            if (p == null) { aviso("El archivo no es una configuración válida de Zumo VPN"); return }
-            importarPerfil(p)
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            val p = bytes?.let { Zs.descifrar(it) }
+            if (p == null) { aviso("El archivo no es una cuenta válida de Zumo VPN"); Registro.add("✘ Archivo .zs no válido"); return }
+            guardarCuenta(p)
         } catch (e: Exception) {
-            aviso("No se pudo leer el archivo: ${e.message}")
+            aviso("No se pudo leer el archivo")
         }
     }
 
-    private fun compartir() {
-        val c = prefs.config ?: run { aviso("No hay configuración"); return }
-        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, c.toLink()), "Compartir"))
+    private fun guardarCuenta(p: Perfil) {
+        val cambioDeCuenta = prefs.user != p.user || prefs.config?.host != p.cfg.host
+        prefs.config = p.cfg
+        prefs.user = p.user; prefs.pass = p.pass
+        prefs.exp = p.exp
+        Registro.add(if (cambioDeCuenta) "✔ Cuenta importada" else "✔ Cuenta actualizada")
+        aviso(if (Perfil.vencida(p.exp)) "Cuenta cargada, pero ya está vencida" else "Cuenta cargada")
+        // si la VPN estaba corriendo con la cuenta anterior, se reinicia para usar la nueva
+        if (ZumoVpnService.corriendo) { prefs.wanted = false; ZumoVpnService.detener(this) }
+        refrescar()
     }
 
     private fun guiaBateria() {
@@ -533,51 +424,5 @@ class MainActivity : Activity() {
             .setPositiveButton("Quitar límite de batería") { _, _ -> PowerGuide.pedirExclusion(this) }
             .setNeutralButton("Abrir autoinicio") { _, _ -> PowerGuide.abrirAutoinicio(this) }
             .setNegativeButton("Cerrar", null).show()
-    }
-
-    private fun editarConfig() {
-        val c = prefs.config ?: Config()
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(10), dp(20), 0) }
-        fun etiqueta(t: String) = col.addView(texto(t, 12.5f, TEXTO_SUAVE, true).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
-        })
-        fun estiloCampo(v: View) { v.background = redondo(Color.parseColor("#2E2854"), 10); v.setPadding(dp(12), dp(10), dp(12), dp(10)) }
-        fun f(hint: String, v: String, tipo: Int = InputType.TYPE_CLASS_TEXT) =
-            campo(hint, tipo).apply { setText(v); setTextColor(Color.WHITE); setHintTextColor(TEXTO_SUAVE); estiloCampo(this) }
-        etiqueta("Nombre")
-        val nombre = f("Ej: Mi VPS", c.name)
-        etiqueta("Servidor (dominio o IP)")
-        val host = f("Ej: 157.254.54.170", c.host, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
-        etiqueta("Puerto")
-        val puerto = f("22, 80, 443...", c.sshPort.toString(), InputType.TYPE_CLASS_NUMBER)
-        etiqueta("Payload (opcional)")
-        val payload = EditText(this).apply {
-            hint = "Comodines: [host] [port] [host_port] [crlf] [lf] [split]"
-            setHintTextColor(TEXTO_SUAVE); setTextColor(Color.WHITE); estiloCampo(this)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            setSingleLine(false); minLines = 4; gravity = Gravity.TOP
-            setText(c.payload)
-        }
-        val tls = CheckBox(this).apply {
-            text = "TLS / SSL (puerto 443)"; setTextColor(Color.WHITE); isChecked = c.tls
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) }
-        }
-        etiqueta("SNI (vacío = el servidor)")
-        val sni = f("Opcional", c.sni)
-        listOf(nombre, host, puerto, payload).forEachIndexed { i, v ->
-            if (i > 0) (v.layoutParams as? LinearLayout.LayoutParams)?.let {} // separación ya la da etiqueta()
-            col.addView(v)
-        }
-        col.addView(tls); col.addView(sni)
-        val sv = ScrollView(this).apply { addView(col) }
-        dialogo("Configuración del servidor", sv)
-            .setPositiveButton("Guardar") { _, _ ->
-                prefs.config = Config(
-                    name = nombre.text.toString().ifBlank { "Zumo" }, host = host.text.toString(),
-                    sshPort = puerto.text.toString().toIntOrNull() ?: 22,
-                    payload = payload.text.toString(), tls = tls.isChecked, sni = sni.text.toString().trim()
-                ).limpiar()
-                refrescar()
-            }.setNegativeButton("Cancelar", null).mostrar()
     }
 }

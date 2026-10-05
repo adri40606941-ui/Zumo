@@ -28,7 +28,7 @@ class SshTunnel(
         })
         val tr = Transport.connect(cfg, etapa, proteger)
         try {
-            etapa("Iniciando sesión SSH")
+            etapa("Iniciando sesión")
             val s = JSch().getSession(user, cfg.host, cfg.sshPort)
             s.setPassword(pass)
             s.setConfig("StrictHostKeyChecking", "no")
@@ -73,11 +73,7 @@ class SshTunnel(
             session = s
         } catch (e: Exception) {
             try { tr.socket.close() } catch (_: Exception) {}
-            val detalle = SshDebug.ultimas()
-            val crudo = CrudoDebug.volcado()
-            var msg = e.message ?: e.javaClass.simpleName
-            if (detalle.isNotBlank()) msg += "\n\n[ssh] $detalle"
-            if (crudo.isNotBlank()) msg += "\n\n$crudo"
+            val msg = e.message ?: e.javaClass.simpleName
             throw Exception(msg, e)
         }
     }

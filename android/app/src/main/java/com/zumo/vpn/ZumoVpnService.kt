@@ -107,10 +107,18 @@ class ZumoVpnService : VpnService() {
         crearCanal()
         startForeground(NOTI_ID, notificacion("Conectando..."))
         if (cfg == null || !cfg.valida() || user.isBlank() || pass.isBlank()) {
-            ultimoError = "Falta la configuración, el usuario o la contraseña"
+            ultimoError = "No hay una cuenta cargada. Abrí el archivo .zs que te pasaron."
+            Registro.add("✘ $ultimoError")
             estado = "Error"; prefs.wanted = false
             stopSelf(); return
         }
+        if (Perfil.vencida(prefs.exp)) {
+            ultimoError = "Tu cuenta venció el ${Perfil.fechaLinda(prefs.exp)}. Pedí la renovación."
+            Registro.add("✘ $ultimoError")
+            estado = "Error"; prefs.wanted = false
+            stopSelf(); return
+        }
+        Registro.add("Iniciando…")
         activo = true; corriendo = true; desde = System.currentTimeMillis()
         tomarBloqueos()
         Watchdog.programar(this)
@@ -119,6 +127,7 @@ class ZumoVpnService : VpnService() {
             socks = SocksServer(SOCKS_PORT) { tunel }.also { it.start() }
         } catch (e: Exception) {
             ultimoError = "No se pudo iniciar la VPN: ${e.message}"
+            Registro.add("✘ $ultimoError")
             estado = "Error"; prefs.wanted = false
             apagar(); stopSelf(); return
         }
@@ -212,23 +221,70 @@ class ZumoVpnService : VpnService() {
         tproxy = TProxyService().also { it.TProxyStartService(yml.absolutePath, tun!!.fd) }
     }
 
+    /** Hay alguna red (datos móviles o Wi-Fi) con salida a internet, sin contar la propia VPN. */
+    private fun hayInternet(): Boolean {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        return try {
+            cm.allNetworks.any { n ->
+                val c = cm.getNetworkCapabilities(n)
+                c != null && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+            }
+        } catch (_: Exception) { true }
+    }
+
+    /** Corta la VPN para siempre (hasta que el usuario toque Conectar) y deja el motivo en pantalla. */
+    private fun detenerPorError(motivo: String) {
+        ultimoError = motivo
+        Registro.add("✘ $motivo")
+        activo = false
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            Prefs(this).wanted = false
+            apagar()
+            estado = "Error"
+            stopSelf()
+        }
+    }
+
     private fun bucle(cfg: Config, user: String, pass: String) {
         var espera = 2000L
+        var sinInternet = false
+        var fallosAuth = 0
         while (activo) {
-            val t = SshTunnel(cfg, user, pass, etapa = { etapaActual = it }, proteger = { sock -> protect(sock) })
+            if (!hayInternet()) {
+                estado = "Sin internet"; conectado = false
+                ultimoError = "Sin internet: encendé los datos móviles o el Wi-Fi"
+                Registro.add("✘ $ultimoError")
+                sinInternet = true; actualizarNoti()
+                try { Thread.sleep(1500) } catch (e: InterruptedException) { break }
+                continue
+            }
+            if (sinInternet) { Registro.add("Internet disponible"); sinInternet = false; ultimoError = "" }
+            if (Perfil.vencida(Prefs(this).exp)) {
+                detenerPorError("Tu cuenta venció el ${Perfil.fechaLinda(Prefs(this).exp)}. Pedí la renovación."); break
+            }
+            val t = SshTunnel(cfg, user, pass, etapa = { etapaActual = it; Registro.add(it) }, proteger = { sock -> protect(sock) })
             try {
                 estado = "Conectando..."; conectado = false; actualizarNoti()
                 t.connect()
                 tunel = t
                 estado = "Conectado"; conectado = true; ultimoError = ""; actualizarNoti()
-                espera = 2000L
+                Registro.add("✔ Conectado")
+                espera = 2000L; fallosAuth = 0
                 while (activo && t.conectado && !forzarReconexion) Thread.sleep(1000)
                 forzarReconexion = false
-                if (activo) ultimoError = "Conexión perdida, reconectando..."
+                if (activo) { ultimoError = "Conexión perdida, reconectando..."; Registro.add("Conexión perdida, reconectando…") }
             } catch (e: InterruptedException) {
                 break
             } catch (e: Exception) {
                 ultimoError = mensaje(e)
+                Registro.add("✘ $ultimoError")
+                if (esFalloDeLogin(e)) {
+                    fallosAuth++
+                    if (fallosAuth >= 3) {
+                        t.close()
+                        detenerPorError("Usuario o contraseña incorrectos. Pedí tu cuenta de nuevo."); break
+                    }
+                } else fallosAuth = 0
             } finally {
                 conectado = false
                 t.close()
@@ -249,16 +305,21 @@ class ZumoVpnService : VpnService() {
         }
     }
 
+    private fun esFalloDeLogin(e: Exception): Boolean {
+        val m = e.message ?: ""
+        return m.contains("Auth fail", true) || m.contains("authentication failures", true) || m.contains("Auth cancel", true)
+    }
+
     private fun mensaje(e: Exception): String {
         val m = e.message ?: e.javaClass.simpleName
         val causa = when {
-            e is java.net.UnknownHostException -> "No se encontró el dominio \"$m\" (revisa el nombre o tu internet)"
+            e is java.net.UnknownHostException -> "No se encontró el servidor (revisá tu internet)"
             e is java.net.ConnectException -> "No se pudo conectar (puerto cerrado o bloqueado)"
             e is java.net.SocketTimeoutException || m.contains("timeout", true) || m.contains("timed out", true) ->
                 "Tiempo agotado: el servidor no respondió"
-            m.contains("Auth fail", true) -> "Usuario o contraseña incorrectos (o vencido)"
+            esFalloDeLogin(e) -> "Usuario o contraseña incorrectos (o cuenta vencida)"
             m.contains("Connection reset", true) || m.contains("EOF", true) -> "El servidor cortó la conexión"
-            else -> m
+            else -> if (m.startsWith("El servidor ")) m else "Error de conexión"
         }
         return if (etapaActual.isBlank()) causa else "$etapaActual → $causa"
     }
@@ -275,6 +336,7 @@ class ZumoVpnService : VpnService() {
             }
             override fun onLost(network: Network) {
                 forzarReconexion = true
+                Registro.add("Se perdió la red")
             }
         }
         cb = c

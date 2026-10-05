@@ -73,7 +73,7 @@ object Transport {
 
     /** Conecta por TCP (y TLS si se pidió) y, si hay payload, lo envía y consume las respuestas HTTP. */
     fun connect(c: Config, etapa: (String) -> Unit = {}, proteger: (Socket) -> Unit = {}): Tunnel {
-        etapa("Conectando a ${c.host}:${c.sshPort}")
+        etapa("Conectando al servidor")
         var s = Socket()
         // Hay que sacar esta conexión de la VPN antes de que exista el túnel (TUN): si no, el
         // propio tráfico SSH que sostiene la VPN entraría a la VPN y se cortaría en bucle.
@@ -82,7 +82,7 @@ object Transport {
         s.keepAlive = true
         s.connect(InetSocketAddress(c.host, c.sshPort), 15000)
         if (c.tls) {
-            etapa("Negociando TLS")
+            etapa("Estableciendo canal seguro")
             val sniName = c.sni.ifBlank { c.host }
             val ss = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(s, sniName, c.sshPort, true) as SSLSocket
             val p = ss.sslParameters
@@ -95,7 +95,7 @@ object Transport {
         val pin = PushbackInputStream(StreamEspia(s.getInputStream(), CrudoDebug.entrada), 8192)
         val salida = StreamEspiaSalida(s.getOutputStream(), CrudoDebug.salida)
         if (c.payload.isNotBlank()) {
-            etapa("Enviando payload")
+            etapa("Enviando solicitud")
             s.soTimeout = 15000
             for ((i, parte) in partir(expandir(c.payload, c)).withIndex()) {
                 if (i > 0) Thread.sleep(150)
@@ -153,7 +153,7 @@ object Transport {
             var n = 0
             while (n < head.size) {
                 val r = try { pin.read(head, n, head.size - n) } catch (e: java.net.SocketTimeoutException) {
-                    throw IOException(if (ultima.isEmpty()) "El servidor no respondió al payload" else "El servidor respondió: $ultima")
+                    throw IOException(if (ultima.isEmpty()) "El servidor no respondió" else "El servidor respondió: $ultima")
                 }
                 if (r < 0) throw IOException(if (ultima.isEmpty()) "El servidor cerró la conexión" else "El servidor respondió: $ultima")
                 n += r

@@ -19,6 +19,11 @@ class Prefs(ctx: Context) {
         get() = sp.getString("pass", "") ?: ""
         set(v) { sp.edit().putString("pass", v).apply() }
 
+    /** Vencimiento de la cuenta (AAAA-MM-DD), o vacío. */
+    var exp: String
+        get() = sp.getString("exp", "") ?: ""
+        set(v) { sp.edit().putString("exp", v).apply() }
+
     var autoStart: Boolean
         get() = sp.getBoolean("auto", true)
         set(v) { sp.edit().putBoolean("auto", v).apply() }
