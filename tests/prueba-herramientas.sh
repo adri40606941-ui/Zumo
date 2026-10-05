@@ -14,7 +14,7 @@ trap limpiar EXIT
 
 N='\e[0m'; L='---'
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
-for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente es_hwid bhttp_port hcr_port dias es_temporal temp_restante; do
+for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente mensaje_comun es_hwid bhttp_port hcr_port dias es_temporal temp_restante; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
 	eval "$src"
@@ -136,5 +136,20 @@ chequear "mensaje: usuario y contraseña" "si" "$(grep -q 'Usuario: *ana' <<<"$S
 chequear "mensaje: vence y puertos" "si" "$(grep -q 'Vence: *30 días' <<<"$SAL" && grep -q 'Puertos: *SSH 22' <<<"$SAL" && echo si || echo no)"
 SAL=$(mensaje_cliente ana "" "30 días" | limpio)
 chequear "mensaje sin clave avisa" "si" "$(grep -q 'la que le diste' <<<"$SAL" && echo si || echo no)"
+echo "8) Mensaje corto para usuarios comunes"
+printf 'PDIRECT_BANNER=MiBanner\nPDIRECT_COLOR=yellow\n' > "$T/pd.env"; export ZUMO_PDIRECT_ENV="$T/pd.env"
+printf 'ana:2:2099-01-01\nbeto:1:2099-01-01\n' > "$DB"
+SAL=$(mensaje_comun ana clave99 "22/08" | limpio)
+chequear "usuario" "si" "$(grep -q '👤 ana' <<<"$SAL" && echo si || echo no)"
+chequear "contraseña" "si" "$(grep -q '🔒 clave99' <<<"$SAL" && echo si || echo no)"
+chequear "fecha" "si" "$(grep -q '📅 22/08' <<<"$SAL" && echo si || echo no)"
+chequear "2 dispositivos" "si" "$(grep -q '🔌 2 dispositivos' <<<"$SAL" && echo si || echo no)"
+chequear "banner del 101" "si" "$(grep -q '📄 MiBanner' <<<"$SAL" && echo si || echo no)"
+SAL=$(mensaje_comun beto x "01/01" | limpio)
+chequear "1 dispositivo (singular)" "si" "$(grep -q '🔌 1 dispositivo$' <<<"$SAL" && echo si || echo no)"
+export ZUMO_PDIRECT_ENV="$T/no-existe"
+chequear "sin config usa ZUMO" "si" "$(mensaje_comun beto x "01/01" | limpio | grep -q '📄 ZUMO' && echo si || echo no)"
+unset ZUMO_PDIRECT_ENV
+
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi

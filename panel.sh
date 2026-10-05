@@ -184,6 +184,22 @@ echo -e " \e[1;38;5;208mPuertos:\e[0m      \e[1;38;5;214m$(puertos_activos)${N}"
 echo -e " $L"
 }
 
+# Mensaje corto para usuarios comunes: usuario, contraseña, fecha (dd/mm),
+# dispositivos y el banner del 101 (el de PDirect).
+mensaje_comun() {
+local u="$1" clave="$2" fecha="$3" lim ban
+lim=$(zumo_db_campo "$u" 2); lim=${lim:-1}
+ban=$(grep -m1 '^PDIRECT_BANNER=' "${ZUMO_PDIRECT_ENV:-/etc/zumo/pdirect.env}" 2>/dev/null | cut -d= -f2-)
+ban=${ban:-ZUMO}
+echo
+echo -e " 👤 \e[1;38;5;214m$u${N}"
+echo -e " 🔒 \e[1;38;5;214m$clave${N}"
+echo -e " 📅 \e[1;38;5;214m$fecha${N}"
+if [ "$lim" -eq 1 ]; then echo -e " 🔌 \e[1;38;5;214m1 dispositivo${N}"; else echo -e " 🔌 \e[1;38;5;214m$lim dispositivos${N}"; fi
+echo -e " 📄 \e[1;38;5;214m$ban${N}"
+echo
+}
+
 crear_usuario() {
 banner; echo -e " \e[1;38;5;141mCREAR USUARIO${N}\n"
 op 1 "●" "Normal"
@@ -237,7 +253,7 @@ fi
 echo "$u:$p" | chpasswd
 zumo_db_add "$u" "$lim" "$exp"
 echo; msg_ok "Usuario creado"
-mensaje_cliente "$u" "$p" "$(dias "$exp")"
+mensaje_comun "$u" "$p" "$(date -d "$exp" +%d/%m)"
 pausa
 }
 
@@ -321,7 +337,7 @@ echo "$u:$p" | chpasswd
 zumo_db_add "$u" "$lim" "$exp"
 programar_borrado_temp "$u" "$min"
 echo; msg_ok "Usuario temporal creado"
-mensaje_cliente "$u" "$p" "$min minuto(s)"
+mensaje_comun "$u" "$p" "$(date -d "+$min minutes" +%d/%m)"
 pausa
 }
 
