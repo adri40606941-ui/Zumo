@@ -23,6 +23,9 @@ object Registro {
     @Synchronized
     fun texto(n: Int = 12): String = lineas.toList().takeLast(n).joinToString("\n")
 
+    /** Detalle técnico del último error (no se muestra en pantalla). */
+    @Volatile var detalle: String = ""
+
     @Synchronized
     fun limpiar() = lineas.clear()
 }

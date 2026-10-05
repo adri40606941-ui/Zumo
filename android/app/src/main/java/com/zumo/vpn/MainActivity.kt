@@ -228,6 +228,12 @@ class MainActivity : Activity() {
         // registro del proceso de conexión
         val cReg = tarjeta()
         seccion(cReg, "📝", "Registro")
+        // pulsación larga en el título: copia el registro con el detalle técnico del último error
+        (cReg.getChildAt(0) as ViewGroup).setOnLongClickListener {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("Registro", Registro.texto(80) + "\n\n" + Registro.detalle))
+            aviso("Registro técnico copiado"); true
+        }
         tvRegistro = texto("", 12f, TEXTO_SUAVE).apply {
             typeface = Typeface.MONOSPACE
             minLines = 4

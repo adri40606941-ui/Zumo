@@ -73,8 +73,16 @@ class SshTunnel(
             session = s
         } catch (e: Exception) {
             try { tr.socket.close() } catch (_: Exception) {}
-            val msg = e.message ?: e.javaClass.simpleName
-            throw Exception(msg, e)
+            // El detalle técnico (excepción, últimas líneas de JSch y bytes crudos) queda aparte: solo
+            // se ve con una pulsación larga sobre el título "Registro", no en pantalla.
+            val sb = StringBuilder("Error: $e")
+            e.cause?.let { sb.append("\nCausa: $it") }
+            val detalle = SshDebug.ultimas()
+            if (detalle.isNotBlank()) sb.append("\n\n[ssh]\n$detalle")
+            val crudo = CrudoDebug.volcado()
+            if (crudo.isNotBlank()) sb.append("\n\n$crudo")
+            Registro.detalle = sb.toString()
+            throw e
         }
     }
 

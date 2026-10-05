@@ -319,7 +319,7 @@ class ZumoVpnService : VpnService() {
                 "Tiempo agotado: el servidor no respondió"
             esFalloDeLogin(e) -> "Usuario o contraseña incorrectos (o cuenta vencida)"
             m.contains("Connection reset", true) || m.contains("EOF", true) -> "El servidor cortó la conexión"
-            else -> if (m.startsWith("El servidor ")) m else "Error de conexión"
+            else -> if (m.startsWith("El servidor ")) m else "Error de conexión (${e.javaClass.simpleName})"
         }
         return if (etapaActual.isBlank()) causa else "$etapaActual → $causa"
     }
