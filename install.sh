@@ -5,13 +5,25 @@ export DEBIAN_FRONTEND=noninteractive
 clear
 
 echo -e "\e[1;38;5;87m╔══════════════════════════════════╗"
-echo -e "║         INSTALANDO PANEL         ║"
+echo -e "║            PANEL ZUMO            ║"
 echo -e "╚══════════════════════════════════╝\e[0m"
+
+# Progreso real: cada paso muestra el porcentaje y lo que se está instalando.
+ZUMO_TOTAL=13; ZUMO_STEP=0
+paso() {
+ZUMO_STEP=$((ZUMO_STEP+1))
+local pct=$(( ZUMO_STEP*100/ZUMO_TOTAL )) f=$(( ZUMO_STEP*20/ZUMO_TOTAL )) b="" i
+for ((i=0;i<20;i++)); do if [ $i -lt $f ]; then b+="█"; else b+="░"; fi; done
+printf "\e[1;33m[%3d%%]\e[0m \e[1;38;5;87m%s\e[0m %s\n" "$pct" "$b" "$1"
+}
+ok() { echo -e "        \e[1;32m✔\e[0m $1"; }
+
 echo
 
-echo -e "\e[1;33m[1/9]\e[0m Instalando dependencias..."
+paso "Instalando dependencias (procps, iproute2, curl, gcc)"
 apt-get update -y >/dev/null 2>&1
 apt-get install -y --no-install-recommends procps iproute2 curl ca-certificates gcc libc6-dev >/dev/null 2>&1
+paso "Configurando hora de Buenos Aires"
 # Hora de la VPS en Buenos Aires (los vencimientos y la hora del panel salen de acá).
 ZUMO_TZ=America/Argentina/Buenos_Aires
 if [ "$(timedatectl show -p Timezone --value 2>/dev/null)" != "$ZUMO_TZ" ]; then
@@ -49,6 +61,7 @@ touch /etc/zumo/temporales.db
 # acepte algoritmos SSH viejos que usan apps de Android (HTTP Custom/Injector).
 # Se hace en DOS pasos independientes, validados por separado con sshd -t, para
 # que si los algoritmos viejos fallan en tu OpenSSH, el timeout IGUAL se aplique.
+paso "Ajustando SSH (timeout de sesiones y compatibilidad)"
 if [ -f /etc/ssh/sshd_config ]; then
 
 # Paso 1: timeout de sesiones muertas (esto nunca lo rechaza OpenSSH).
@@ -92,9 +105,9 @@ rm -f "$_sshd_t2"
 
 systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 fi
-echo -e " \e[1;32m✔ listo\e[0m"
+ok "dependencias, hora Buenos Aires y SSH configurados"
 
-echo -e "\e[1;33m[2/9]\e[0m Creando activador de PDirect (WebSocket 80)..."
+paso "Instalando WebSocket / PDirect (puerto 80)"
 
 cat > /etc/zumo/activar-pdirect.sh <<'ZUMOPDIRECTACT'
 #!/bin/bash
@@ -739,9 +752,9 @@ systemctl is-active --quiet pdirect-80
 ZUMOPDIRECTACT
 
 chmod +x /etc/zumo/activar-pdirect.sh
-echo -e " \e[1;32m✔ listo\e[0m"
+ok "WebSocket / PDirect instalado"
 
-echo -e "\e[1;33m[3/9]\e[0m Creando desactivador de PDirect..."
+paso "Instalando desactivador de PDirect"
 
 cat > /etc/zumo/desactivar-pdirect.sh <<'DESPDEOF'
 #!/bin/bash
@@ -756,9 +769,9 @@ systemctl reset-failed pdirect-80 2>/dev/null
 DESPDEOF
 
 chmod +x /etc/zumo/desactivar-pdirect.sh
-echo -e " \e[1;32m✔ listo\e[0m"
+ok "desactivador de PDirect instalado"
 
-echo -e "\e[1;33m[4/9]\e[0m Creando activador de BadVPN..."
+paso "Instalando BadVPN (UDP 7300)"
 
 cat > /etc/zumo/activar-badvpn.sh <<'ZUMOBADVPNACT'
 #!/bin/bash
@@ -829,9 +842,9 @@ systemctl is-active --quiet udpgw-7300
 ZUMOBADVPNACT
 
 chmod +x /etc/zumo/activar-badvpn.sh
-echo -e " \e[1;32m✔ listo\e[0m"
+ok "BadVPN instalado"
 
-echo -e "\e[1;33m[5/9]\e[0m Creando desactivador de BadVPN..."
+paso "Instalando desactivador de BadVPN"
 
 cat > /etc/zumo/desactivar-badvpn.sh <<'DESBVEOF'
 #!/bin/bash
@@ -846,9 +859,9 @@ systemctl reset-failed udpgw-7300 2>/dev/null
 DESBVEOF
 
 chmod +x /etc/zumo/desactivar-badvpn.sh
-echo -e " \e[1;32m✔ listo\e[0m"
+ok "desactivador de BadVPN instalado"
 
-echo -e "\e[1;33m[6/9]\e[0m Compilando limitador de conexiones..."
+paso "Compilando limitador de conexiones (gcc)"
 
 LIMWORK=$(mktemp -d)
 ZUMO_RAW="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
@@ -886,9 +899,10 @@ SVCEOF
 systemctl daemon-reload >/dev/null 2>&1
 systemctl enable zumo-limit >/dev/null 2>&1
 systemctl restart zumo-limit >/dev/null 2>&1
-echo -e " \e[1;32m✔ listo\e[0m"
+ok "limitador compilado y activo"
 
 # Contador de datos por usuario
+paso "Instalando contador de datos de usuarios"
 if curl -fsSL "$ZUMO_RAW/zumo-datos.sh" -o /tmp/zumo-datos.sh && bash -n /tmp/zumo-datos.sh; then
 install -m 0755 /tmp/zumo-datos.sh /usr/local/bin/zumo-datos
 cat > /etc/systemd/system/zumo-datos.service <<'DATEOF'
@@ -905,13 +919,13 @@ DATEOF
 systemctl daemon-reload >/dev/null 2>&1
 systemctl enable zumo-datos >/dev/null 2>&1
 systemctl restart zumo-datos >/dev/null 2>&1
-echo -e " \e[1;32m✔ contador de datos activo\e[0m"
+ok "contador de datos activo"
 else
 echo -e " \e[1;31m✘ no se pudo bajar zumo-datos.sh\e[0m"
 fi
 rm -f /tmp/zumo-datos.sh
 
-echo -e "\e[1;33m[7/9]\e[0m Creando activador de HCR Server..."
+paso "Instalando HCR Server"
 
 cat > /etc/zumo/activar-hcr.sh <<'ZUMOHCRACT'
 #!/bin/bash
@@ -998,9 +1012,9 @@ exit 0
 DESHCREOF
 
 chmod +x /etc/zumo/desactivar-hcr.sh
-echo -e " \e[1;32m✔ listo\e[0m"
+ok "HCR Server instalado"
 
-echo -e "\e[1;33m[8/9]\e[0m Creando activador de BHTTP..."
+paso "Instalando BHTTP"
 
 cat > /etc/zumo/activar-bhttp.sh <<'ZUMOBHTTPACT'
 #!/bin/bash
@@ -1162,9 +1176,9 @@ exit 0
 DESBHTTPEOF
 
 chmod +x /etc/zumo/desactivar-bhttp.sh
-echo -e " \e[1;32m✔ listo\e[0m"
+ok "BHTTP instalado"
 
-echo -e "\e[1;33m[9/9]\e[0m Instalando panel..."
+paso "Descargando panel y librería"
 
 # Librería compartida de operaciones sobre el DB (lock + escritura atómica),
 # usada por el panel de terminal y por el borrador de usuarios temporales.
@@ -1189,7 +1203,8 @@ rm -f "$PANEL_TMP"
 echo -e " \e[1;31m✘ No se pudo descargar un panel.sh válido desde el repo.\e[0m"
 exit 1
 fi
-echo -e " \e[1;32m✔ listo\e[0m"
+ok "panel instalado en /usr/local/bin/zumo"
+paso "Finalizando"
 echo
 
 echo -e "\e[1;38;5;201m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
