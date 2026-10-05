@@ -2,6 +2,7 @@ package com.zumo.vpn
 
 import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 import java.io.PushbackInputStream
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -10,30 +11,36 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
 /** Socket ya conectado (y con el payload / WebSocket negociado) listo para hablar SSH. */
-class Tunnel(val socket: Socket, val input: InputStream)
+class Tunnel(val socket: Socket, val input: InputStream, val output: OutputStream)
 
-/** Registra (en SshDebug) los primeros bytes que llegan del servidor, tal cual, antes de que
- *  el payload o JSch los toquen. Sirve para ver si lo que entra es el protocolo SSH posta o
- *  viene envuelto en algo (WebSocket, una respuesta HTTP mal cortada, etc.). No cambia el
- *  comportamiento del stream, solo mira lo que pasa. */
-private class StreamEspia(private val base: InputStream, private val tope: Int = 320) : InputStream() {
-    private var total = 0
+/** Registra en un BufferCrudo los primeros bytes que pasan por el stream, tal cual, antes de
+ *  que el payload o JSch los toquen. Sirve para ver si lo que entra/sale es el protocolo SSH
+ *  posta o viene envuelto en algo (WebSocket, una respuesta HTTP mal cortada, etc.). No cambia
+ *  el comportamiento del stream, solo mira lo que pasa. */
+private class StreamEspia(private val base: InputStream, private val destino: BufferCrudo) : InputStream() {
     override fun read(): Int {
         val v = base.read()
-        if (v >= 0) registrar(byteArrayOf(v.toByte()), 0, 1)
+        if (v >= 0) destino.agregar(byteArrayOf(v.toByte()), 0, 1)
         return v
     }
     override fun read(b: ByteArray, off: Int, len: Int): Int {
         val n = base.read(b, off, len)
-        if (n > 0) registrar(b, off, n)
+        if (n > 0) destino.agregar(b, off, n)
         return n
     }
-    @Synchronized private fun registrar(b: ByteArray, off: Int, len: Int) {
-        if (total >= tope) return
-        val tomar = minOf(len, tope - total)
-        CrudoDebug.agregar(b, off, tomar)
-        total += tomar
+}
+
+private class StreamEspiaSalida(private val base: OutputStream, private val destino: BufferCrudo) : OutputStream() {
+    override fun write(b: Int) {
+        base.write(b)
+        destino.agregar(byteArrayOf(b.toByte()), 0, 1)
     }
+    override fun write(b: ByteArray, off: Int, len: Int) {
+        base.write(b, off, len)
+        destino.agregar(b, off, len)
+    }
+    override fun flush() = base.flush()
+    override fun close() = base.close()
 }
 
 object Transport {
@@ -59,21 +66,21 @@ object Transport {
             ss.startHandshake()
             s = ss
         }
-        val pin = PushbackInputStream(StreamEspia(s.getInputStream()), 8192)
+        val pin = PushbackInputStream(StreamEspia(s.getInputStream(), CrudoDebug.entrada), 8192)
+        val salida = StreamEspiaSalida(s.getOutputStream(), CrudoDebug.salida)
         if (c.payload.isNotBlank()) {
             etapa("Enviando payload")
             s.soTimeout = 15000
-            val out = s.getOutputStream()
             for ((i, parte) in partir(expandir(c.payload, c)).withIndex()) {
                 if (i > 0) Thread.sleep(150)
-                out.write(parte.toByteArray(Charsets.ISO_8859_1))
-                out.flush()
+                salida.write(parte.toByteArray(Charsets.ISO_8859_1))
+                salida.flush()
             }
             etapa("Esperando respuesta del servidor")
             leerRespuestasHttp(pin)
             s.soTimeout = 0
         }
-        return Tunnel(s, pin)
+        return Tunnel(s, pin, salida)
     }
 
     /** Base64 sin depender de android.util (para poder probarlo en la JVM). */
@@ -108,8 +115,10 @@ object Transport {
 
     /**
      * Lee lo que el servidor conteste al payload. Es tolerante, como HTTP Custom: las respuestas HTTP
-     * "de relleno" (200, 400, 403...) a los pedidos señuelo se consumen y se ignoran. Termina cuando llega
-     * un 101 (WebSocket) o cuando lo siguiente ya no es HTTP (el banner SSH-2.0...).
+     * "de relleno" (200, 101, 400, 403...) a los pedidos señuelo se consumen y se ignoran, sin importar
+     * cuántas vengan encadenadas (algunos payloads mandan varios pedidos señuelo, cada uno con su propia
+     * respuesta). Termina recién cuando lo siguiente ya no es HTTP (ahí empieza el banner SSH-2.0...).
+     * Antes cortaba apenas veía un 101, dejando sin consumir cualquier respuesta señuelo siguiente.
      */
     private fun leerRespuestasHttp(pin: PushbackInputStream) {
         var ultima = ""
@@ -144,7 +153,6 @@ object Transport {
             val cabecera = sb.toString()
             ultima = cabecera.lineSequence().first().trim()
             val code = ultima.split(" ").getOrNull(1)?.toIntOrNull() ?: 0
-            if (code == 101) return
             // cuerpo de la respuesta señuelo (si lo hay): se descarta sin tocar lo que venga después
             val largo = Regex("(?im)^content-length:\\s*(\\d+)").find(cabecera)?.groupValues?.get(1)?.toIntOrNull() ?: 0
             if (largo > 0 && code != 204 && code != 304) {

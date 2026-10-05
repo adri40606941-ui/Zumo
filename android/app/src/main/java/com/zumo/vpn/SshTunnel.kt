@@ -65,7 +65,7 @@ class SshTunnel(
             s.setSocketFactory(object : SocketFactory {
                 override fun createSocket(host: String?, port: Int): Socket = tr.socket
                 override fun getInputStream(socket: Socket?): InputStream = tr.input
-                override fun getOutputStream(socket: Socket?): OutputStream = tr.socket.getOutputStream()
+                override fun getOutputStream(socket: Socket?): OutputStream = tr.output
             })
             s.serverAliveInterval = 20000
             s.serverAliveCountMax = 3

@@ -19,16 +19,9 @@ object SshDebug {
 
 }
 
-/**
- * Guarda, en un buffer propio (separado del de SshDebug, que JSch va llenando de líneas y
- * puede "empujar afuera" lo que importa), los primeros bytes crudos recibidos del servidor,
- * tal cual llegan, antes de que el payload o JSch los toquen. Sirve para ver si lo que entra
- * es el protocolo SSH posta o viene envuelto en otra cosa (WebSocket, un error de texto plano,
- * una respuesta HTTP mal cortada, etc.).
- */
-object CrudoDebug {
-    private const val TOPE = 320
-    private val buf = ByteArray(TOPE)
+/** Un buffer de bytes crudos con tope fijo, usado tanto para lo que entra como lo que sale. */
+class BufferCrudo(private val tope: Int = 320) {
+    private val buf = ByteArray(tope)
     private var total = 0
 
     @Synchronized
@@ -36,14 +29,14 @@ object CrudoDebug {
 
     @Synchronized
     fun agregar(b: ByteArray, off: Int, len: Int) {
-        if (total >= TOPE || len <= 0) return
-        val tomar = minOf(len, TOPE - total)
+        if (total >= tope || len <= 0) return
+        val tomar = minOf(len, tope - total)
         System.arraycopy(b, off, buf, total, tomar)
         total += tomar
     }
 
     @Synchronized
-    fun volcado(): String {
+    fun volcado(etiqueta: String): String {
         if (total == 0) return ""
         val hex = StringBuilder()
         val txt = StringBuilder()
@@ -52,6 +45,26 @@ object CrudoDebug {
             hex.append("%02x ".format(v))
             txt.append(if (v in 32..126) v.toChar() else '.')
         }
-        return "[crudo] (${total}B) hex: $hex\ntexto: $txt"
+        return "[$etiqueta] (${total}B) hex: $hex\ntexto: $txt"
+    }
+}
+
+/**
+ * Guarda, en buffers propios (separados del de SshDebug, que JSch va llenando de líneas y
+ * puede "empujar afuera" lo que importa), los primeros bytes crudos que entran y salen por la
+ * conexión, tal cual, antes de que el payload o JSch los toquen. Sirve para ver si lo que se
+ * manda/recibe es el protocolo SSH posta o viene envuelto en otra cosa (WebSocket, un error de
+ * texto plano, una respuesta HTTP mal cortada, etc.).
+ */
+object CrudoDebug {
+    val entrada = BufferCrudo()
+    val salida = BufferCrudo()
+
+    fun limpiar() { entrada.limpiar(); salida.limpiar() }
+
+    fun volcado(): String {
+        val e = entrada.volcado("recibido")
+        val s = salida.volcado("enviado")
+        return listOf(e, s).filter { it.isNotBlank() }.joinToString("\n")
     }
 }
