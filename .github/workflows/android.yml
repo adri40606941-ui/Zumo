@@ -8,6 +8,8 @@ on:
 
 jobs:
   build:
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -56,3 +58,14 @@ jobs:
         with:
           name: zumo-vpn-apk
           path: android/app/build/outputs/apk/release/*.apk
+
+      - name: Publicar APK en la rama apk
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/*.apk out/zumo-vpn.apk
+          cd out
+          git init -q
+          git checkout -q -b apk
+          git add zumo-vpn.apk
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "APK compilación ${{ github.run_number }} (${GITHUB_SHA::7})"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" apk
