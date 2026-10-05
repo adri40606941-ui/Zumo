@@ -643,10 +643,8 @@ _fila " [$n] $nombre  $dot" " ${bc}[$n]${N} \e[1;97m$nombre${N}  ${bc}${dot}${N}
 es_hwid "$u" && _fila "   HWID      $u" "   \e[2mHWID${N}      \e[1;38;5;214m$u${N}"
 _fila "   Clave     $clave" "   \e[2mClave${N}     \e[1;96m$clave${N}"
 _fila "   Estado    $est_txt" "   \e[2mEstado${N}    ${est_col}${est_txt}${N}"
-_fila "   Límite    $lim" "   \e[2mLímite${N}    \e[1;97m$lim${N}"
-_fila "   Vence     $venc" "   \e[2mVence${N}     ${venc_col}${venc}${N}"
+_fila "   Límite    $lim · Vence $venc" "   \e[2mLímite${N}    \e[1;97m$lim${N} \e[2m· Vence${N} ${venc_col}${venc}${N}"
 echo -e " ${bc}┗$(printf '━%.0s' $(seq 1 $W))┛${N}"
-echo
 }
 
 listar_usuarios() {
