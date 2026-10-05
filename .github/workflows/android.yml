@@ -58,23 +58,34 @@ jobs:
           cp -r android/app/build/test-results/testDebugUnitTest out/resultados 2>/dev/null || true
 
       - name: Compilar
+        id: compilar
+        continue-on-error: true
         env:
           ZUMO_VERSION_CODE: ${{ github.run_number }}
-        run: gradle -p android assembleRelease --no-daemon --stacktrace
+        run: |
+          mkdir -p out
+          set -o pipefail
+          gradle -p android assembleRelease --no-daemon --stacktrace 2>&1 | tee out/compilacion-completa.log | grep -E "^e: |FAILED|BUILD|error:|Exception" | head -n 150 | tee out/compilacion.log
 
       - uses: actions/upload-artifact@v4
+        if: steps.compilar.outcome == 'success'
         with:
           name: zumo-vpn-apk
           path: android/app/build/outputs/apk/release/*.apk
 
-      - name: Publicar APK en la rama apk
+      - name: Publicar APK (o registros, si falló) en la rama apk
+        if: always()
         run: |
           mkdir -p out
-          cp android/app/build/outputs/apk/release/*.apk out/zumo-vpn.apk
+          cp android/app/build/outputs/apk/release/*.apk out/zumo-vpn.apk 2>/dev/null || true
           cd out
           rm -f resultados/binary 2>/dev/null || true
           git init -q
           git checkout -q -b apk
           git add -A
-          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "APK compilación ${{ github.run_number }} (${GITHUB_SHA::7})"
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Compilación ${{ github.run_number }} (${GITHUB_SHA::7})"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" apk
+
+      - name: Fallar si no compiló
+        if: steps.compilar.outcome != 'success'
+        run: exit 1
