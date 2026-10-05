@@ -238,5 +238,10 @@ chequear "muestra uso del enlace con capacidad" "si" "$(grep -q 'Uso del enlace 
 chequear "sale sola si no hay teclado (EOF)" "ok" "$(timeout 10 bash -c 'true'; ( control_red </dev/null >/dev/null 2>&1 & p=$!; for i in 1 2 3 4 5 6; do sleep 0.5; kill -0 $p 2>/dev/null || { echo ok; exit; }; done; kill $p 2>/dev/null; echo cuelga ))"
 unset ZUMO_NETDEV
 
+echo "7) Usuarios HWID en línea y límite 2"
+chequear "Ver usuarios lee nombres largos (HWID de 32) sin recortar" "si" "$(grep -q 'ps -eo user:32=,comm=,etimes=' "$AQUI/panel.sh" && echo si || echo no)"
+chequear "HWID nuevo: límite por defecto 2" "si" "$(sed -n '/Pegá el HWID del cliente/,/zumo_db_add "\$hwid" "\$lim"/p' "$AQUI/panel.sh" | grep -q 'lim=\${lim:-2}' && echo si || echo no)"
+chequear "actualizar pasa HWID de límite 1 a 2 una sola vez" "si" "$(grep -q 'hwid-limite2' "$AQUI/actualizar.sh" && echo si || echo no)"
+
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi

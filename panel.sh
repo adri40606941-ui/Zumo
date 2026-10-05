@@ -296,7 +296,7 @@ fi
 id "$hwid" &>/dev/null && { msg_err "Ese HWID ya está registrado"; pausa; return; }
 read -rp " Días de duración: " d
 [[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
-read -rp " Límite de conexiones [1]: " lim; lim=${lim:-1}
+read -rp " Límite de conexiones [2]: " lim; lim=${lim:-2}
 [[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido (mínimo 1)"; pausa; return; }
 exp=$(date -d "+$d days" +%F)
 if ! useradd --badname -M -s /bin/false -e "$(fecha_cuenta "$exp")" -c "hwid,$etiqueta" "$hwid" 2>/dev/null; then
@@ -697,7 +697,7 @@ if [ ! -s "$DB" ]; then banner; echo -e " \e[1;38;5;141mUSUARIOS REGISTRADOS${N}
 # Se prepara todo de una vez (sesiones, HWID, claves, temporales) y se dibuja la lista entera junta.
 declare -gA _ON=() _TS=() _GE=() _CL=() _TM=() _DC=()
 local k a b l
-while read -r k a b; do _ON[$k]=$a; _TS[$k]=$b; done < <(ps -eo user=,comm=,etimes= 2>/dev/null | awk '$2=="sshd"{c[$1]++; if($3>m[$1])m[$1]=$3} END{for(u in c) print u, c[u], m[u]}')
+while read -r k a b; do _ON[$k]=$a; _TS[$k]=$b; done < <(ps -eo user:32=,comm=,etimes= 2>/dev/null | awk '$2=="sshd"{c[$1]++; if($3>m[$1])m[$1]=$3} END{for(u in c) print u, c[u], m[u]}')
 while IFS=$'\t' read -r k a; do _GE[$k]=$a; done < <(awk -F: '$5 ~ /^hwid,/{print $1 "\t" substr($5,6)}' "${ZUMO_PASSWD:-/etc/passwd}")
 [ -f "$CLAVES" ] && while IFS= read -r l; do [ -n "$l" ] && _CL[${l%%:*}]=${l#*:}; done < "$CLAVES"
 [ -f "$TEMPDB" ] && while IFS=: read -r k a; do [ -n "$k" ] && _TM[$k]=$a; done < "$TEMPDB"
