@@ -37,6 +37,18 @@ class ZumoVpnService : VpnService() {
         @Volatile var corriendo: Boolean = false
         @Volatile var desde: Long = 0L
         @Volatile var etapaActual: String = ""
+        @Volatile var velocidad: String = ""
+        @Volatile var datosUsados: String = ""
+
+        /** Da formato legible (B/KB/MB/GB) a una cantidad de bytes. */
+        fun formatoDatos(bytes: Long): String {
+            if (bytes < 1024) return "$bytes B"
+            var v = bytes.toDouble()
+            var i = -1
+            val unidades = "KMGT"
+            while (v >= 1024 && i < unidades.length - 1) { v /= 1024; i++ }
+            return "%.1f %cB".format(v, unidades[i])
+        }
 
         fun iniciar(ctx: Context) {
             val i = Intent(ctx, ZumoVpnService::class.java).setAction(ACTION_START)
@@ -55,7 +67,6 @@ class ZumoVpnService : VpnService() {
     @Volatile private var activo = false
     @Volatile private var forzarReconexion = false
     @Volatile private var cfgActual: Config? = null
-    @Volatile private var velocidadTxt: String = ""
     private var hilo: Thread? = null
     private var monitor: Thread? = null
     private var wake: PowerManager.WakeLock? = null
@@ -138,7 +149,8 @@ class ZumoVpnService : VpnService() {
                     val tx = st[1]; val rx = st[3]
                     val subMbps = (tx - txAnt).coerceAtLeast(0) * 8 / dt / 1_000_000
                     val bajMbps = (rx - rxAnt).coerceAtLeast(0) * 8 / dt / 1_000_000
-                    velocidadTxt = "↓ %.1f  ↑ %.1f Mbps".format(bajMbps, subMbps)
+                    velocidad = "↓ %.1f  ↑ %.1f Mbps".format(bajMbps, subMbps)
+                    datosUsados = formatoDatos(tx + rx)
                     txAnt = tx; rxAnt = rx; t0 = t1
                     actualizarNoti()
                 }
@@ -278,7 +290,7 @@ class ZumoVpnService : VpnService() {
         cb = null
         hilo?.interrupt(); hilo = null
         monitor?.interrupt(); monitor = null
-        velocidadTxt = ""
+        velocidad = ""; datosUsados = ""
         try { tunel?.close() } catch (_: Exception) {}
         tunel = null
         try { socks?.stop() } catch (_: Exception) {}
@@ -307,7 +319,7 @@ class ZumoVpnService : VpnService() {
             this, 1, Intent(this, ZumoVpnService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE
         )
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL) else @Suppress("DEPRECATION") Notification.Builder(this)
-        val cuerpo = if (conectado && velocidadTxt.isNotBlank()) "$txt  ·  $velocidadTxt" else txt
+        val cuerpo = if (conectado && velocidad.isNotBlank()) "$txt  ·  $velocidad" else txt
         b.setContentTitle("Zumo VPN").setContentText(cuerpo)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentIntent(abrir).setOngoing(true)

@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <application
         android:allowBackup="false"
@@ -33,20 +34,18 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="zumo" />
             </intent-filter>
-            <!-- Abrir un archivo .zumoconf compartido por WhatsApp, Gmail, un administrador de archivos, etc. -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/x-zumoconfig" />
-            </intent-filter>
+            <!--
+                Abrir un archivo .zumoconf compartido por WhatsApp, Gmail, un administrador de archivos, etc.
+                WhatsApp no conserva el mimeType que mandamos al compartir: cuando el usuario toca el
+                archivo en el chat, Android adivina el tipo por la extensión y, como ".zumoconf" no es
+                una extensión conocida, cae en un tipo genérico. Por eso el filtro tiene que ser amplio
+                (mimeType "*/*" sin exigir esquema/host/patrón de ruta) para que la app aparezca en
+                "Abrir con", igual que hacen HTTP Injector o HTTP Custom con sus propios archivos.
+            -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" />
-                <data android:scheme="file" />
-                <data android:host="*" />
-                <data android:pathPattern=".*\\.zumoconf" />
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>

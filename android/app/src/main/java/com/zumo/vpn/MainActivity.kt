@@ -5,16 +5,20 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -37,6 +41,10 @@ class MainActivity : Activity() {
     private lateinit var tvHwid: TextView
     private lateinit var boxLogin: LinearLayout
     private lateinit var puntoEstado: View
+    private lateinit var tvVelocidad: TextView
+    private lateinit var tvTiempo: TextView
+    private lateinit var tvDatos: TextView
+    private var perfilPendienteGuardar: Perfil? = null
 
     private val BG = Color.parseColor("#14102B")
     private val CARD = Color.parseColor("#201A3D")
@@ -144,15 +152,27 @@ class MainActivity : Activity() {
         }
         root.addView(col)
 
-        // encabezado
-        val cab = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
+        // encabezado: título centrado + botón de menú (☰) en la esquina
+        val filaCab = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val espaciador = View(this).apply { layoutParams = LinearLayout.LayoutParams(dp(44), dp(1)) }
+        val cab = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
         cab.addView(texto("🛡", 34f).apply { gravity = Gravity.CENTER })
         cab.addView(texto("ZUMO VPN", 25f, Color.WHITE, true).apply { gravity = Gravity.CENTER; letterSpacing = 0.03f })
         cab.addView(texto("Conexión privada y estable", 13f, TEXTO_SUAVE).apply {
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
         })
-        col.addView(cab)
+        val btnMenu = TextView(this).apply {
+            text = "☰"; textSize = 20f; setTextColor(ACENTO); gravity = Gravity.CENTER
+            background = redondo(CARD, 14, trazo = 1)
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+            setOnClickListener { abrirMenu() }
+        }
+        filaCab.addView(espaciador); filaCab.addView(cab); filaCab.addView(btnMenu)
+        col.addView(filaCab)
 
         // estado de la conexión
         val cEstado = tarjeta().apply { gravity = Gravity.CENTER_HORIZONTAL }
@@ -175,6 +195,37 @@ class MainActivity : Activity() {
         btn = botonPrimario("Conectar", VERDE) { alternar() }
         cEstado.addView(btn)
         col.addView(cEstado)
+
+        // velocidad, tiempo conectado y datos usados
+        val cStats = tarjeta()
+        seccion(cStats, "📊", "Conexión")
+        val filaStats = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        fun columnaStat(titulo: String): TextView {
+            val colStat = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            colStat.addView(texto(titulo, 11.5f, TEXTO_SUAVE).apply { gravity = Gravity.CENTER })
+            val valor = texto("--", 15.5f, Color.WHITE, true).apply {
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
+            }
+            colStat.addView(valor)
+            filaStats.addView(colStat)
+            return valor
+        }
+        tvVelocidad = columnaStat("Velocidad")
+        tvTiempo = columnaStat("Conectado hace")
+        tvDatos = columnaStat("Datos usados")
+        cStats.addView(filaStats)
+        col.addView(cStats)
+
+        setContentView(root)
+    }
+
+    /** Pantalla de configuración (servidor, login, HWID, batería) detrás del botón ☰ de la esquina. */
+    private fun abrirMenu() {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         // login
         val cLogin = tarjeta()
@@ -232,11 +283,14 @@ class MainActivity : Activity() {
         cEst.addView(botonSecundario("🔋  Guía para evitar cortes de batería", NARANJA) { guiaBateria() })
         col.addView(cEst)
 
-        setContentView(root)
+        val sv = ScrollView(this).apply { addView(col) }
+        dialogo("Configuración", sv).setPositiveButton("Cerrar", null).mostrar()
         refrescarLogin()
+        refrescar()
     }
 
     private fun refrescarLogin() {
+        if (!::swHwid.isInitialized || !::boxLogin.isInitialized) return
         val on = swHwid.isChecked
         boxLogin.visibility = if (on) View.GONE else View.VISIBLE
     }
@@ -248,26 +302,39 @@ class MainActivity : Activity() {
     }
 
     private fun refrescar() {
-        val c = prefs.config
-        tvConfig.text = if (c == null || c.host.isBlank()) "Sin configurar. Pega el enlace que te dieron."
-        else "${c.name}\n${c.host}:${c.sshPort}  ·  " + (if (c.payload.isBlank()) "SSH directo" else "SSH + payload") + (if (c.tls) " + TLS" else "")
+        if (::tvConfig.isInitialized) {
+            val c = prefs.config
+            tvConfig.text = if (c == null || c.host.isBlank()) "Sin configurar. Pega el enlace que te dieron."
+            else "${c.name}\n${c.host}:${c.sshPort}  ·  " + (if (c.payload.isBlank()) "SSH directo" else "SSH + payload") + (if (c.tls) " + TLS" else "")
+        }
         val corr = ZumoVpnService.corriendo
+        val con = ZumoVpnService.conectado
         tvEstado.text = ZumoVpnService.estado
         val colorEstado = when {
-            ZumoVpnService.conectado -> VERDE
+            con -> VERDE
             corr -> NARANJA
             else -> ROJO
         }
         tvEstado.setTextColor(colorEstado)
         puntoEstado.background = redondo(colorEstado, 10)
         tvError.text = when {
-            ZumoVpnService.conectado -> ""
+            con -> ""
             corr -> listOf(ZumoVpnService.ultimoError, ZumoVpnService.etapaActual).filter { it.isNotBlank() }.joinToString("\n")
             ZumoVpnService.estado == "Error" -> ZumoVpnService.ultimoError
             else -> ""
         }
         btn.text = if (corr) "◼  Desconectar" else "▶  Conectar"
         btn.background = redondo(if (corr) ROJO else VERDE, 16)
+
+        tvVelocidad.text = if (con && ZumoVpnService.velocidad.isNotBlank()) ZumoVpnService.velocidad else "--"
+        tvDatos.text = if (con && ZumoVpnService.datosUsados.isNotBlank()) ZumoVpnService.datosUsados else "--"
+        tvTiempo.text = if (con && ZumoVpnService.desde > 0) formatearDuracion(System.currentTimeMillis() - ZumoVpnService.desde) else "--"
+    }
+
+    private fun formatearDuracion(ms: Long): String {
+        val s = ms / 1000
+        val hh = s / 3600; val mm = (s % 3600) / 60; val ss = s % 60
+        return if (hh > 0) "%d:%02d:%02d".format(hh, mm, ss) else "%02d:%02d".format(mm, ss)
     }
 
     // ---------- acciones ----------
@@ -366,8 +433,8 @@ class MainActivity : Activity() {
                 prefs.config = null
                 prefs.user = ""; prefs.pass = ""; prefs.useHwid = false
                 try { File(cacheDir, "config").deleteRecursively() } catch (_: Exception) {}
-                swHwid.isChecked = false
-                etUser.setText(""); etPass.setText("")
+                if (::swHwid.isInitialized) swHwid.isChecked = false
+                if (::etUser.isInitialized) { etUser.setText(""); etPass.setText("") }
                 refrescarLogin(); refrescar()
                 aviso("Datos borrados")
             }.setNegativeButton("Cancelar", null).show()
@@ -406,7 +473,7 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Arma un archivo .zumoconf (servidor + login) para mandar por WhatsApp u otra app. */
+    /** Arma un perfil (servidor + login) y pregunta dónde guardarlo: compartir o Descargas/Zumo. */
     private fun guardarConfigArchivo() {
         guardarCampos()
         val c = prefs.config
@@ -418,7 +485,12 @@ class MainActivity : Activity() {
         }
         val cont = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); addView(cbHwid) }
         dialogo("Guardar configuración", cont)
-            .setPositiveButton("Guardar y compartir") { _, _ ->
+            .setPositiveButton("Guardar en Descargas/Zumo") { _, _ ->
+                val p = if (cbHwid.isChecked) Perfil(c, useHwid = true)
+                else Perfil(c, user = prefs.user, pass = prefs.pass, useHwid = false)
+                guardarEnDescargas(p)
+            }
+            .setNeutralButton("Compartir (WhatsApp, etc.)") { _, _ ->
                 val p = if (cbHwid.isChecked) Perfil(c, useHwid = true)
                 else Perfil(c, user = prefs.user, pass = prefs.pass, useHwid = false)
                 exportarArchivo(p)
@@ -439,6 +511,48 @@ class MainActivity : Activity() {
             startActivity(Intent.createChooser(i, "Compartir configuración"))
         } catch (e: Exception) {
             aviso("No se pudo crear el archivo: ${e.message}")
+        }
+    }
+
+    /** Guarda el .zumoconf directo en Descargas/Zumo del teléfono (crea la carpeta si no existe). */
+    private fun guardarEnDescargas(p: Perfil) {
+        val nombre = p.cfg.name.ifBlank { "zumo" }.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".zumoconf"
+        val contenido = p.toJson().toString()
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, nombre)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/x-zumoconfig")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/Zumo")
+                }
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                if (uri == null) { aviso("No se pudo crear el archivo"); return }
+                contentResolver.openOutputStream(uri)?.use { it.write(contenido.toByteArray(Charsets.UTF_8)) }
+                aviso("Guardado en Descargas/Zumo/$nombre")
+            } else {
+                if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    perfilPendienteGuardar = p
+                    requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 9)
+                    return
+                }
+                @Suppress("DEPRECATION")
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Zumo").apply { mkdirs() }
+                File(dir, nombre).writeText(contenido)
+                aviso("Guardado en Descargas/Zumo/$nombre")
+            }
+        } catch (e: Exception) {
+            aviso("No se pudo guardar: ${e.message}")
+        }
+    }
+
+    override fun onRequestPermissionsResult(req: Int, perms: Array<out String>, resultados: IntArray) {
+        super.onRequestPermissionsResult(req, perms, resultados)
+        if (req == 9) {
+            val p = perfilPendienteGuardar; perfilPendienteGuardar = null
+            if (p != null) {
+                if (resultados.firstOrNull() == PackageManager.PERMISSION_GRANTED) guardarEnDescargas(p)
+                else aviso("Sin permiso para guardar en Descargas")
+            }
         }
     }
 
