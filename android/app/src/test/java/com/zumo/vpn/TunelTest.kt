@@ -70,7 +70,7 @@ class TunelTest {
     }
 
     /** Proxy que lee un "payload", contesta con [respuesta] y reenvía el resto al SSH. */
-    private class FalsoProxy(val sshPort: Int, val respuesta: String) : AutoCloseable {
+    private class FalsoProxy(val sshPort: Int, val respuesta: String, val espera: String = "\r\n\r\n", val cerrar: Boolean = false) : AutoCloseable {
         val ss = ServerSocket(0, 10, InetAddress.getByName("127.0.0.1"))
         val puerto get() = ss.localPort
         @Volatile var recibido = ""
@@ -88,13 +88,12 @@ class TunelTest {
             try {
                 val i = c.getInputStream()
                 val sb = ByteArrayOutputStream()
-                var fin = 0
-                while (fin < 4) {
+                while (!sb.toString(Charsets.ISO_8859_1).endsWith(espera)) {
                     val b = i.read(); if (b < 0) return
                     sb.write(b)
-                    fin = when { (b == 13 && (fin == 0 || fin == 2)) || (b == 10 && (fin == 1 || fin == 3)) -> fin + 1; b == 13 -> 1; else -> 0 }
                 }
                 recibido = sb.toString(Charsets.ISO_8859_1)
+                if (cerrar) { c.getOutputStream().write(respuesta.toByteArray()); c.getOutputStream().flush(); return }
                 val up = Socket("127.0.0.1", sshPort)
                 if (respuesta.isNotEmpty()) { c.getOutputStream().write(respuesta.toByteArray()); c.getOutputStream().flush() }
                 Thread { copiar(up.getInputStream(), c.getOutputStream()) }.start()
@@ -174,11 +173,33 @@ class TunelTest {
 
     @Test
     fun respuesta_http_de_error_se_informa() {
-        val px = FalsoProxy(sshPort, "HTTP/1.1 403 Forbidden\r\n\r\n").also { cerrar += it }
+        val px = FalsoProxy(sshPort, "HTTP/1.1 403 Forbidden\r\n\r\n", cerrar = true).also { cerrar += it }
         val cfg = Config(host = "127.0.0.1", sshPort = sshPort, mode = "ws", proxyHost = "127.0.0.1", proxyPort = px.puerto)
         try { SshTunnel(cfg, "cliente", "clave1").connect(); fail("debía fallar") } catch (e: Exception) {
             assertTrue(e.message ?: "", (e.message ?: "").contains("403"))
         }
+    }
+
+    @Test
+    fun payload_con_cabeceras_senuelo_estilo_http_custom() {
+        val payload = "HEAD / HTTP/1.1[crlf]Host:[host][crlf][crlf][split][crlf][crlf]GET- / HTTP/1.1[crlf]Host:[host][lf][lf]" +
+            "GET /appp4 HTTP/1.1[crlf]Host:dyyl4x18ayspo.cloudfront.net[lf]Connection:  Upgrade[lf]Upgrade: websocket[lf]" +
+            "User-Agent: Googlebot/2.1 (+http://www.google.com/bot.html)\nConnection:keep-Alive[lf][lf][split]"
+        val respuestas = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n" +
+            "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\n\r\nBad Request" +
+            "HTTP/1.1 302 Found\r\nLocation: /x\r\nContent-Length: 4\r\n\r\n" +   // HEAD-like: sin cuerpo
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"
+        val px = FalsoProxy(sshPort, respuestas, espera = "Connection:keep-Alive\n\n").also { cerrar += it }
+        val cfg = Config(host = "127.0.0.1", sshPort = sshPort, mode = "payload", proxyHost = "127.0.0.1", proxyPort = px.puerto, payload = payload)
+        val t = SshTunnel(cfg, "cliente", "clave1")
+        t.connect()
+        assertEquals(
+            "HEAD / HTTP/1.1\r\nHost:127.0.0.1\r\n\r\n\r\n\r\nGET- / HTTP/1.1\r\nHost:127.0.0.1\n\nGET /appp4 HTTP/1.1\r\n" +
+                "Host:dyyl4x18ayspo.cloudfront.net\nConnection:  Upgrade\nUpgrade: websocket\n" +
+                "User-Agent: Googlebot/2.1 (+http://www.google.com/bot.html)\nConnection:keep-Alive\n\n", px.recibido
+        )
+        assertEquals(2, Transport.partir(Transport.expandir(payload, cfg)).size)
+        conSocks(t) { sp -> assertTrue(socksGet(sp, "127.0.0.1", httpPort).contains("hola")) }
     }
 
     @Test

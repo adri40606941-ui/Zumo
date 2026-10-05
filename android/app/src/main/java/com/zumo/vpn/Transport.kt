@@ -75,7 +75,9 @@ object Transport {
     /** Reemplaza los comodines del payload: [host] [port] [host_port] [crlf] [cr] [lf] [protocol]. */
     fun expandir(p: String, c: Config): String = p
         .replace("\\r", "\r").replace("\\n", "\n")
+        .replace("[crlf*2]", "\r\n\r\n")
         .replace("[host_port]", "${c.host}:${c.sshPort}")
+        .replace("[ssh_host]", c.host).replace("[ssh_port]", c.sshPort.toString())
         .replace("[host]", c.host)
         .replace("[port]", c.sshPort.toString())
         .replace("[protocol]", "HTTP/1.1")
@@ -86,16 +88,20 @@ object Transport {
         p.split("[split]", "[instant_split]").filter { it.isNotEmpty() }.ifEmpty { listOf(p) }
 
     /**
-     * Si el servidor contesta con cabeceras HTTP (101 / 200...), las consume. Si contesta directo con
-     * el banner de SSH, no toca nada. Soporta varias respuestas seguidas.
+     * Lee lo que el servidor conteste al payload. Es tolerante, como HTTP Custom: las respuestas HTTP
+     * "de relleno" (200, 400, 403...) a los pedidos señuelo se consumen y se ignoran. Termina cuando llega
+     * un 101 (WebSocket) o cuando lo siguiente ya no es HTTP (el banner SSH-2.0...).
      */
     private fun leerRespuestasHttp(pin: PushbackInputStream) {
-        repeat(4) {
+        var ultima = ""
+        repeat(12) {
             val head = ByteArray(5)
             var n = 0
             while (n < head.size) {
-                val r = pin.read(head, n, head.size - n)
-                if (r < 0) throw IOException("El servidor cerró la conexión")
+                val r = try { pin.read(head, n, head.size - n) } catch (e: java.net.SocketTimeoutException) {
+                    throw IOException(if (ultima.isEmpty()) "El servidor no respondió al payload" else "El servidor respondió: $ultima")
+                }
+                if (r < 0) throw IOException(if (ultima.isEmpty()) "El servidor cerró la conexión" else "El servidor respondió: $ultima")
                 n += r
             }
             if (String(head, Charsets.ISO_8859_1) != "HTTP/") {
@@ -111,13 +117,34 @@ object Transport {
                 fin = when {
                     (b == 13 && (fin == 0 || fin == 2)) || (b == 10 && (fin == 1 || fin == 3)) -> fin + 1
                     b == 13 -> 1
+                    b == 10 -> if (sb.endsWith("\n\n")) 4 else 0
                     else -> 0
                 }
                 if (sb.length > 16384) throw IOException("Respuesta HTTP demasiado larga")
             }
-            val linea = sb.lineSequence().first()
-            val code = linea.split(" ").getOrNull(1)?.toIntOrNull() ?: 0
-            if (code !in 200..299 && code != 101) throw IOException("El servidor respondió: $linea")
+            val cabecera = sb.toString()
+            ultima = cabecera.lineSequence().first().trim()
+            val code = ultima.split(" ").getOrNull(1)?.toIntOrNull() ?: 0
+            if (code == 101) return
+            // cuerpo de la respuesta señuelo (si lo hay): se descarta sin tocar lo que venga después
+            val largo = Regex("(?im)^content-length:\\s*(\\d+)").find(cabecera)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            if (largo > 0 && code != 204 && code != 304) {
+                val pk = ByteArray(5)
+                var m = 0
+                while (m < pk.size) { val r = pin.read(pk, m, pk.size - m); if (r < 0) break; m += r }
+                val ini = String(pk, 0, m, Charsets.ISO_8859_1)
+                if (m == 5 && (ini == "HTTP/" || ini.startsWith("SSH-"))) {
+                    pin.unread(pk, 0, m)          // era la respuesta a un HEAD: no tiene cuerpo
+                } else {
+                    var resto = largo - m
+                    val buf = ByteArray(2048)
+                    while (resto > 0) {
+                        val r = pin.read(buf, 0, minOf(buf.size, resto))
+                        if (r < 0) break
+                        resto -= r
+                    }
+                }
+            }
         }
     }
 }
