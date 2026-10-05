@@ -1645,6 +1645,11 @@ v=$(grep -m1 '^bantime' "$F2B_JAIL" 2>/dev/null | cut -d= -f2 | tr -d ' ')
 echo "${v:-1h}"
 }
 
+# El tiempo de baneo en texto lindo (para siempre en vez de -1).
+f2b_bantime_lindo() {
+case "$(f2b_bantime)" in -1|-1s) echo "para siempre" ;; *) echo "$(f2b_bantime)" ;; esac
+}
+
 # Lista las IP baneadas ahora (separadas por espacios).
 f2b_baneadas() {
 fail2ban-client status sshd 2>/dev/null | sed -n 's/.*Banned IP list:[[:space:]]*//p'
@@ -1680,13 +1685,36 @@ msg_ok "fail2ban desactivado (ya no se banea a nadie)"
 }
 
 f2b_cambiar_tiempo() {
-echo -e " Tiempo de baneo actual: \e[1;97m$(f2b_bantime)${N}\n"
-echo -e " \e[2mEjemplos: 30m (minutos) · 1h · 12h · 1d (día) · 1w (semana) · -1 (para siempre)${N}"
-read -rp " Nuevo tiempo de baneo: " bt
-[[ "$bt" =~ ^(-1|[0-9]+[smhdw]?)$ ]] || { msg_err "Formato inválido"; sleep 1; return; }
+banner; echo -e " \e[1;38;5;141mTIEMPO DE BANEO${N}\n"
+echo -e " \e[2mCuánto dura bloqueada una IP que falla la contraseña.${N}"
+echo -e " Actual: \e[1;97m$(f2b_bantime_lindo)${N}\n"
+op 1 "⏱" "1 hora"
+op 2 "⏱" "6 horas"
+op 3 "📅" "1 día"
+op 4 "📅" "3 días"
+op 5 "📅" "1 semana"
+op 6 "♾" "Para siempre"
+op 7 "✎" "Otro (escribir)"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " t
+local bt
+case "$t" in
+1) bt=1h ;;
+2) bt=6h ;;
+3) bt=1d ;;
+4) bt=3d ;;
+5) bt=1w ;;
+6) bt=-1 ;;
+7) echo -e "\n \e[2mEjemplos: 30m (minutos) · 2h · 5d (días) · 2w (semanas)${N}"
+   read -rp " Escribí el tiempo: " bt
+   [[ "$bt" =~ ^(-1|[0-9]+[smhdw]?)$ ]] || { msg_err "Formato inválido"; sleep 1; return; } ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1; return ;;
+esac
 f2b_escribir_jail "$bt"
 if fail2ban_activo; then systemctl restart fail2ban 2>/dev/null; fi
-msg_ok "Tiempo de baneo: $bt"; sleep 1
+if [ "$bt" = "-1" ]; then msg_ok "Baneo: para siempre"; else msg_ok "Baneo: $bt"; fi
+sleep 1
 }
 
 # De qué país/empresa es una IP (ip-api.com, gratis, sin clave). "" si no se pudo.
@@ -1730,7 +1758,7 @@ banner; echo -e " \e[1;38;5;141mFAIL2BAN · anti-bots SSH${N}\n"
 echo -e " \e[2mBloquea la IP que falla la contraseña 5 veces en 10 min.\n Tus clientes por payload (127.0.0.1) nunca se bloquean.${N}\n"
 if fail2ban_instalado && fail2ban_activo; then
 local nban; nban=$(echo "$(f2b_baneadas)" | wc -w)
-echo -e " \e[1;32m● Estado: activo${N}   \e[1;38;5;208mBaneo:${N} \e[1;97m$(f2b_bantime)${N}   \e[1;38;5;208mBaneadas ahora:${N} \e[1;97m${nban}${N}\n"
+echo -e " \e[1;32m● Estado: activo${N}   \e[1;38;5;208mBaneo:${N} \e[1;97m$(f2b_bantime_lindo)${N}   \e[1;38;5;208mBaneadas ahora:${N} \e[1;97m${nban}${N}\n"
 elif fail2ban_instalado; then
 echo -e " \e[1;31m● Estado: instalado pero apagado${N}\n"
 else
