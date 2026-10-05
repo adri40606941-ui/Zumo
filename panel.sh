@@ -178,9 +178,18 @@ local etiq="$(etiqueta_de "${USERS[$i]}")"
 if es_hwid "${USERS[$i]}"; then etiq="$etiq (HWID)"; fi
 echo -e " \e[1;38;5;208m[$((i+1))]\e[0m \e[1;32m${etiq}\e[0m"
 done
-echo; read -rp " Número de usuario: " n
-if ! [[ "$n" =~ ^[0-9]+$ ]] || [ "$n" -lt 1 ] || [ "$n" -gt ${#USERS[@]} ]; then msg_err "Opción inválida"; return 1; fi
-SEL="${USERS[$((n-1))]}"
+echo; read -rp " Número o nombre de usuario: " n
+n="${n#"${n%%[![:space:]]*}"}"; n="${n%"${n##*[![:space:]]}"}"
+[ -z "$n" ] && { msg_err "Opción inválida"; return 1; }
+local rc h
+buscar_usuario "$n"; rc=$?
+case $rc in
+0) return 0 ;;
+2) msg_err "Hay varios clientes con el nombre \"$n\". Escribí el HWID:"
+for h in "${AMBIGUOS[@]}"; do echo -e "     \e[1;38;5;214m$h${N}"; done
+return 1 ;;
+*) msg_err "No existe: $n"; return 1 ;;
+esac
 }
 
 ip_publica() {
