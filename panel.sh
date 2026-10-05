@@ -644,7 +644,7 @@ echo -e "      \e[2mHWID:${N} \e[1;38;5;214m$u${N}"
 else
 echo -e " \e[1;38;5;208m[$n]${N} $dot \e[1;97m$nombre${N}  \e[2m·${N} \e[1;96m$clave${N}"
 fi
-echo -e "      \e[2mVence:${N} ${venc_col}${venc}${N}  \e[2mLímite:${N} \e[1;97m$lim${N}$con"
+echo -e "      \e[2mVence:${N} ${venc_col}${venc}${N}  \e[2mLímite:${N} \e[1;97m${on}/${lim}${N}$con"
 }
 
 listar_usuarios() {
