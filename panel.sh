@@ -620,6 +620,7 @@ done
 # Dos líneas por usuario: [n] ● nombre + clave; debajo vencimiento, límite y tiempo conectado.
 _ficha_usuario() { # n usuario límite vencimiento
 local n="$1" u="$2" lim="$3" exp="$4" on dot venc venc_col tc nombre clave con=""
+echo -e " \e[38;5;60m$(printf '─%.0s' $(seq 1 40))${N}"
 on=$(en_linea "$u")
 if [ "$on" -gt 0 ]; then
 dot="\e[1;32m●${N}"
