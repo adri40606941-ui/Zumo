@@ -127,29 +127,35 @@ class ZumoVpnService : VpnService() {
         var txAnt = 0L; var rxAnt = 0L; var t0 = System.currentTimeMillis()
         var tick = 0
         var fallos = 0
-        while (activo) {
-            Thread.sleep(2000)
-            if (!activo) break
-            val st = try { tproxy?.TProxyGetStats() } catch (_: Throwable) { null }
-            if (st != null && st.size >= 4 && conectado) {
-                val t1 = System.currentTimeMillis()
-                val dt = ((t1 - t0).coerceAtLeast(1)) / 1000.0
-                val tx = st[1]; val rx = st[3]
-                val subMbps = (tx - txAnt).coerceAtLeast(0) * 8 / dt / 1_000_000
-                val bajMbps = (rx - rxAnt).coerceAtLeast(0) * 8 / dt / 1_000_000
-                velocidadTxt = "↓ %.1f  ↑ %.1f Mbps".format(bajMbps, subMbps)
-                txAnt = tx; rxAnt = rx; t0 = t1
-                actualizarNoti()
-            }
-            tick++
-            if (tick % 10 == 0 && conectado) {   // cada ~20s
-                val t = tunel
-                val viva = t != null && probarSalud(t, cfg)
-                if (viva) fallos = 0 else {
-                    fallos++
-                    if (fallos >= 2) { forzarReconexion = true; fallos = 0 }
+        try {
+            while (activo) {
+                Thread.sleep(2000)
+                if (!activo) break
+                val st = try { tproxy?.TProxyGetStats() } catch (_: Throwable) { null }
+                if (st != null && st.size >= 4 && conectado) {
+                    val t1 = System.currentTimeMillis()
+                    val dt = ((t1 - t0).coerceAtLeast(1)) / 1000.0
+                    val tx = st[1]; val rx = st[3]
+                    val subMbps = (tx - txAnt).coerceAtLeast(0) * 8 / dt / 1_000_000
+                    val bajMbps = (rx - rxAnt).coerceAtLeast(0) * 8 / dt / 1_000_000
+                    velocidadTxt = "↓ %.1f  ↑ %.1f Mbps".format(bajMbps, subMbps)
+                    txAnt = tx; rxAnt = rx; t0 = t1
+                    actualizarNoti()
+                }
+                tick++
+                if (tick % 10 == 0 && conectado) {   // cada ~20s
+                    val t = tunel
+                    val viva = t != null && probarSalud(t, cfg)
+                    if (viva) fallos = 0 else {
+                        fallos++
+                        if (fallos >= 2) { forzarReconexion = true; fallos = 0 }
+                    }
                 }
             }
+        } catch (e: InterruptedException) {
+            // El hilo se interrumpe a propósito al desconectar (apagar() llama a monitor?.interrupt()).
+            // Si no se captura acá, la excepción sube sin control y tumba toda la app.
+            return
         }
     }
 
