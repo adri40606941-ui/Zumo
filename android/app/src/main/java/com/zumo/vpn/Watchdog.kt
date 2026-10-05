@@ -11,7 +11,7 @@ import android.os.SystemClock
  * Se re-arma solo cada vez que se dispara, así sigue vigilando mientras la VPN deba estar prendida.
  */
 object Watchdog {
-    private const val CADA_MS = 60_000L   // cada 1 minuto
+    private const val CADA_MS = 30_000L   // cada 30s: en HiOS (Tecno/Infinix/itel) el sistema puede matar el proceso entero, no solo el servicio, así que cuanto más seguido se revise, menos tiempo queda desconectado
 
     private fun pendiente(ctx: Context): PendingIntent {
         val i = Intent(ctx, WatchdogReceiver::class.java)
