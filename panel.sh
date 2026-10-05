@@ -159,6 +159,11 @@ printf '\n'
 REPLY_ALNUM="$buf"
 }
 
+# Usuarios.db ordenado alfabéticamente (HWID por el nombre del cliente), sin distinguir mayúsculas.
+db_orden() {
+awk -F: 'NR==FNR{ if($5 ~ /^hwid,/) l[$1]=substr($5,6); next } NF{ k=($1 in l)?l[$1]:$1; print tolower(k) "\t" $0 }' "${ZUMO_PASSWD:-/etc/passwd}" "$DB" | LC_ALL=C sort -s -t "$(printf '\t')" -k1,1 | cut -f2-
+}
+
 esta_bloqueado() {
 local est
 est=$(passwd -S "$1" 2>/dev/null | awk '{print $2}')
@@ -166,7 +171,7 @@ est=$(passwd -S "$1" 2>/dev/null | awk '{print $2}')
 }
 
 elegir_usuario() {
-mapfile -t USERS < <(cut -d: -f1 "$DB" | sed '/^$/d')
+mapfile -t USERS < <(db_orden | cut -d: -f1 | sed '/^$/d')
 if [ ${#USERS[@]} -eq 0 ]; then msg_err "No hay usuarios registrados"; return 1; fi
 for i in "${!USERS[@]}"; do
 local etiq="$(etiqueta_de "${USERS[$i]}")"
@@ -407,7 +412,7 @@ printf '      \e[2m%s\e[0m\n' "$u"
 else
 printf ' \e[1;38;5;208m[%d]\e[0m %b \e[1;38;5;214m%s\e[0m\n' "$i" "$col" "$u"
 fi
-done < "$DB"
+done < <(db_orden)
 }
 
 # Busca lo que escribió la persona: usuario o HWID exacto, número de la lista,
@@ -422,14 +427,14 @@ AMBIGUOS=()
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 if [ "$u" = "$q" ]; then SEL="$u"; return 0; fi
-done < "$DB"
+done < <(db_orden)
 # 2) número de la lista (mismo orden que lista_para_borrar)
 if [[ "$q" =~ ^[0-9]+$ ]]; then
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 i=$((i+1))
 if [ "$i" -eq "$((10#$q))" ]; then SEL="$u"; return 0; fi
-done < "$DB"
+done < <(db_orden)
 return 1
 fi
 # 3) nombre del cliente (HWID)
@@ -438,7 +443,7 @@ while IFS=: read -r u lim exp; do
 es_hwid "$u" || continue
 lab=$(etiqueta_de "$u")
 [ "${lab,,}" = "${q,,}" ] && hits+=("$u")
-done < "$DB"
+done < <(db_orden)
 if [ ${#hits[@]} -eq 1 ]; then SEL="${hits[0]}"; return 0; fi
 if [ ${#hits[@]} -gt 1 ]; then AMBIGUOS=("${hits[@]}"); return 2; fi
 # 4) usuario sin distinguir mayúsculas
@@ -446,7 +451,7 @@ while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 es_hwid "$u" && continue
 if [ "${u,,}" = "${q,,}" ]; then SEL="$u"; return 0; fi
-done < "$DB"
+done < <(db_orden)
 return 1
 }
 
@@ -495,7 +500,7 @@ VENC=()
 while IFS=: read -r u lim exp; do
 [ -z "$u" ] && continue
 vencido_ya "$exp" && VENC+=("$u|$exp")
-done < "$DB"
+done < <(db_orden)
 if [ ${#VENC[@]} -eq 0 ]; then msg_ok "No hay usuarios vencidos"; pausa; return; fi
 printf " \e[1;38;5;208m%-4s %-16s %s${N}\n" "" "USUARIO/CLIENTE" "VENCIÓ"
 local n=0
@@ -655,7 +660,7 @@ while IFS=: read -r u lim exp; do
 es_hwid "$u" && continue
 hay_comun=1; n=$((n+1))
 _ficha_usuario "$n" "$u" "$lim" "$exp"
-done < "$DB"
+done < <(db_orden)
 [ "$hay_comun" -eq 0 ] && echo -e " \e[2m(sin usuarios comunes)${N}\n"
 echo -e " \e[1;38;5;141m━━━ HWID ━━━${N}\n"
 n=0
@@ -664,7 +669,7 @@ while IFS=: read -r u lim exp; do
 es_hwid "$u" || continue
 hay_hwid=1; n=$((n+1))
 _ficha_usuario "$n" "$u" "$lim" "$exp"
-done < "$DB"
+done < <(db_orden)
 [ "$hay_hwid" -eq 0 ] && echo -e " \e[2m(sin usuarios HWID)${N}\n"
 echo -e " $L"
 echo -e "\n Enter para volver..."
