@@ -236,8 +236,14 @@ class ZumoVpnService : VpnService() {
             }
             if (!activo) break
             estado = "Reconectando..."; actualizarNoti()
-            var w = 0L
-            while (activo && w < espera && !forzarReconexion) { Thread.sleep(500); w += 500 }
+            try {
+                var w = 0L
+                while (activo && w < espera && !forzarReconexion) { Thread.sleep(500); w += 500 }
+            } catch (e: InterruptedException) {
+                // Pasa si el usuario presiona Desconectar justo durante la espera entre reintentos
+                // (apagar() interrumpe este hilo). Si no se captura acá, tumba toda la app.
+                break
+            }
             forzarReconexion = false
             espera = minOf(espera * 2, 20000L)
         }

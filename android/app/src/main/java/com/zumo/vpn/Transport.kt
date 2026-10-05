@@ -12,6 +12,30 @@ import javax.net.ssl.SSLSocketFactory
 /** Socket ya conectado (y con el payload / WebSocket negociado) listo para hablar SSH. */
 class Tunnel(val socket: Socket, val input: InputStream)
 
+/** Registra (en SshDebug) los primeros bytes que llegan del servidor, tal cual, antes de que
+ *  el payload o JSch los toquen. Sirve para ver si lo que entra es el protocolo SSH posta o
+ *  viene envuelto en algo (WebSocket, una respuesta HTTP mal cortada, etc.). No cambia el
+ *  comportamiento del stream, solo mira lo que pasa. */
+private class StreamEspia(private val base: InputStream, private val tope: Int = 220) : InputStream() {
+    private var total = 0
+    override fun read(): Int {
+        val v = base.read()
+        if (v >= 0) registrar(byteArrayOf(v.toByte()), 0, 1)
+        return v
+    }
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        val n = base.read(b, off, len)
+        if (n > 0) registrar(b, off, n)
+        return n
+    }
+    @Synchronized private fun registrar(b: ByteArray, off: Int, len: Int) {
+        if (total >= tope) return
+        val tomar = minOf(len, tope - total)
+        SshDebug.addRaw("[crudo #$total]", b, off, tomar)
+        total += tomar
+    }
+}
+
 object Transport {
 
     /** Conecta por TCP (y TLS si se pidió) y, si hay payload, lo envía y consume las respuestas HTTP. */
@@ -35,7 +59,7 @@ object Transport {
             ss.startHandshake()
             s = ss
         }
-        val pin = PushbackInputStream(s.getInputStream(), 8192)
+        val pin = PushbackInputStream(StreamEspia(s.getInputStream()), 8192)
         if (c.payload.isNotBlank()) {
             etapa("Enviando payload")
             s.soTimeout = 15000
