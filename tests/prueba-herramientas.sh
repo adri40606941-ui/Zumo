@@ -14,7 +14,7 @@ trap limpiar EXIT
 
 N='\e[0m'; L='---'
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
-for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente mensaje_comun es_hwid bhttp_port hcr_port dias es_temporal temp_restante; do
+for f in msg_ok msg_err _medir_velocidad test_velocidad liberar_ram desc_proceso _snap_cpu _col_pct procesos_top _fmt_bytes uso_datos datos_de datos_reset datos_rename hora_vps puertos_activos mensaje_cliente mensaje_comun mensaje_hwid es_hwid bhttp_port hcr_port dias es_temporal temp_restante; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
 	eval "$src"
@@ -149,6 +149,17 @@ SAL=$(mensaje_comun beto x "01/01" | limpio)
 chequear "1 dispositivo (singular)" "si" "$(grep -q '🔌 1 dispositivo$' <<<"$SAL" && echo si || echo no)"
 export ZUMO_PDIRECT_ENV="$T/no-existe"
 chequear "sin config usa ZUMO" "si" "$(mensaje_comun beto x "01/01" | limpio | grep -q '📄 ZUMO' && echo si || echo no)"
+unset ZUMO_PDIRECT_ENV
+printf 'PDIRECT_BANNER=MiBanner\n' > "$T/pd.env"; export ZUMO_PDIRECT_ENV="$T/pd.env"
+etiqueta_de() { [ "$1" = "HWIDX1234" ] && echo "lucrecia" || echo "$1"; }
+SAL=$(mensaje_hwid HWIDX1234 "20/08/2026" | limpio)
+chequear "hwid: título" "si" "$(grep -q '🔐 DATOS DE ACCESO' <<<"$SAL" && echo si || echo no)"
+chequear "hwid: plan" "si" "$(grep -q '├ ☁️ Plan: Privado' <<<"$SAL" && echo si || echo no)"
+chequear "hwid: máquina = banner del 101" "si" "$(grep -q '├ ⚙️ Máquina: MiBanner' <<<"$SAL" && echo si || echo no)"
+chequear "hwid: usuario = nombre del cliente" "si" "$(grep -q '├ 👤 Usuario: lucrecia' <<<"$SAL" && echo si || echo no)"
+chequear "hwid: vence" "si" "$(grep -q '├ ⏳ Vence: 20/08/2026' <<<"$SAL" && echo si || echo no)"
+SAL=$(mensaje_hwid HWIDX1234 "10 minutos" | limpio)
+chequear "hwid temporal: vence en minutos" "si" "$(grep -q 'Vence: 10 minutos' <<<"$SAL" && echo si || echo no)"
 unset ZUMO_PDIRECT_ENV
 
 echo

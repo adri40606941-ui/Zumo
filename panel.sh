@@ -200,6 +200,22 @@ echo -e " 📄 \e[1;38;5;214m$ban${N}"
 echo
 }
 
+# Mensaje para usuarios HWID: el "Usuario" es el nombre del cliente y la
+# "Máquina" es el banner del 101 (el de PDirect).
+mensaje_hwid() {
+local u="$1" vence="$2" ban nombre
+ban=$(grep -m1 '^PDIRECT_BANNER=' "${ZUMO_PDIRECT_ENV:-/etc/zumo/pdirect.env}" 2>/dev/null | cut -d= -f2-)
+ban=${ban:-ZUMO}
+nombre=$(etiqueta_de "$u")
+echo
+echo -e " 🔐 \e[1;38;5;214mDATOS DE ACCESO${N}"
+echo -e " ├ ☁️ Plan: \e[1;38;5;214mPrivado${N}"
+echo -e " ├ ⚙️ Máquina: \e[1;38;5;214m$ban${N}"
+echo -e " ├ 👤 Usuario: \e[1;38;5;214m$nombre${N}"
+echo -e " ├ ⏳ Vence: \e[1;38;5;214m$vence${N}"
+echo
+}
+
 crear_usuario() {
 banner; echo -e " \e[1;38;5;141mCREAR USUARIO${N}\n"
 op 1 "●" "Normal"
@@ -232,7 +248,7 @@ fi
 echo "$hwid:$hwid" | chpasswd
 zumo_db_add "$hwid" "$lim" "$exp"
 echo; msg_ok "Usuario HWID creado"
-mensaje_cliente "$hwid" "" "$(dias "$exp")"
+mensaje_hwid "$hwid" "$(date -d "$exp" +%d/%m/%Y)"
 pausa
 return
 fi
@@ -315,7 +331,7 @@ echo "$hwid:$hwid" | chpasswd
 zumo_db_add "$hwid" 1 "$exp"
 programar_borrado_temp "$hwid" "$min"
 echo; msg_ok "Usuario HWID temporal creado"
-mensaje_cliente "$hwid" "" "$min minuto(s)"
+mensaje_hwid "$hwid" "$( [ "$min" -eq 1 ] && echo "1 minuto" || echo "$min minutos" )"
 pausa
 return
 fi
