@@ -293,15 +293,19 @@ class MainActivity : Activity() {
         val cont = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0); addView(et) }
         dialogo("Enlace de configuración", cont)
             .setPositiveButton("Importar") { _, _ -> importar(et.text.toString()) }
-            .setNegativeButton("Cancelar", null).show()
+            .setNegativeButton("Cancelar", null).mostrar()
     }
 
     /** Diálogo con la misma paleta oscura de la app (el tema del sistema es claro por defecto). */
     private fun dialogo(titulo: String, vista: View): AlertDialog.Builder =
-        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
-            .setTitle(titulo)
-            .setView(vista)
-            .setBackground(redondo(CARD, 18))
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle(titulo).setView(vista)
+
+    /** Muestra el diálogo con fondo redondeado del color de las tarjetas (en vez de .show() directo). */
+    private fun AlertDialog.Builder.mostrar() {
+        val d = create()
+        d.setOnShowListener { d.window?.setBackgroundDrawable(redondo(CARD, 18)) }
+        d.show()
+    }
 
 
     private fun importar(link: String) {
@@ -379,6 +383,6 @@ class MainActivity : Activity() {
                     payload = payload.text.toString(), tls = tls.isChecked, sni = sni.text.toString().trim()
                 ).limpiar()
                 refrescar()
-            }.setNegativeButton("Cancelar", null).show()
+            }.setNegativeButton("Cancelar", null).mostrar()
     }
 }
