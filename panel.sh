@@ -1617,6 +1617,135 @@ echo -e "\n $L\n \e[1;38;5;208m[R]${N} Reiniciar picos     \e[2mCualquier otra t
 done
 }
 
+# ───────────────────────────── fail2ban (anti-bots SSH) ─────────────────────
+# Banea las IP que fallan la contraseña varias veces. Los clientes que entran por
+# el payload llegan al sshd como 127.0.0.1 (ignoreip), así que nunca se bloquean.
+F2B_JAIL="${ZUMO_F2B_JAIL:-/etc/fail2ban/jail.local}"
+
+fail2ban_instalado() { command -v fail2ban-client >/dev/null 2>&1; }
+fail2ban_activo() { systemctl is-active --quiet fail2ban 2>/dev/null; }
+
+# Escribe el jail con el tiempo de baneo que se le pase (por defecto 1h).
+f2b_escribir_jail() {
+cat > "$F2B_JAIL" <<EOF
+[sshd]
+enabled  = true
+backend  = systemd
+maxretry = 5
+findtime = 10m
+bantime  = ${1:-1h}
+ignoreip = 127.0.0.1/8 ::1
+EOF
+}
+
+# Lee el tiempo de baneo del jail (o 1h si no está).
+f2b_bantime() {
+local v
+v=$(grep -m1 '^bantime' "$F2B_JAIL" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+echo "${v:-1h}"
+}
+
+# Lista las IP baneadas ahora (separadas por espacios).
+f2b_baneadas() {
+fail2ban-client status sshd 2>/dev/null | sed -n 's/.*Banned IP list:[[:space:]]*//p'
+}
+
+f2b_activar() {
+if ! fail2ban_instalado; then
+echo " Instalando fail2ban..."
+export DEBIAN_FRONTEND=noninteractive
+apt-get update >/dev/null 2>&1
+apt-get install -y --no-install-recommends fail2ban >/dev/null 2>&1 || { msg_err "No se pudo instalar fail2ban"; return 1; }
+fi
+[ -f "$F2B_JAIL" ] || f2b_escribir_jail "1h"
+systemctl enable fail2ban >/dev/null 2>&1
+systemctl restart fail2ban 2>/dev/null
+sleep 1
+if fail2ban_activo; then msg_ok "fail2ban activado (baneo: $(f2b_bantime))"; else msg_err "No quedó activo (journalctl -u fail2ban)"; fi
+}
+
+f2b_desactivar() {
+systemctl stop fail2ban 2>/dev/null
+systemctl disable fail2ban >/dev/null 2>&1
+msg_ok "fail2ban desactivado (ya no se banea a nadie)"
+}
+
+f2b_cambiar_tiempo() {
+echo -e " Tiempo de baneo actual: \e[1;97m$(f2b_bantime)${N}\n"
+echo -e " \e[2mEjemplos: 30m (minutos) · 1h · 12h · 1d (día) · 1w (semana) · -1 (para siempre)${N}"
+read -rp " Nuevo tiempo de baneo: " bt
+[[ "$bt" =~ ^(-1|[0-9]+[smhdw]?)$ ]] || { msg_err "Formato inválido"; sleep 1; return; }
+f2b_escribir_jail "$bt"
+if fail2ban_activo; then systemctl restart fail2ban 2>/dev/null; fi
+msg_ok "Tiempo de baneo: $bt"; sleep 1
+}
+
+# De qué país/empresa es una IP (ip-api.com, gratis, sin clave). "" si no se pudo.
+f2b_empresa() {
+curl -s --max-time 4 "http://ip-api.com/line/$1?fields=country,isp" 2>/dev/null
+}
+
+f2b_lista() {
+banner; echo -e " \e[1;38;5;141mIP BANEADAS${N}\n"
+if ! fail2ban_instalado || ! fail2ban_activo; then msg_err "fail2ban no está activo"; pausa; return; fi
+local ips; ips=$(f2b_baneadas)
+local total; total=$(echo $ips | wc -w)
+if [ "$total" -eq 0 ]; then msg_ok "No hay ninguna IP baneada en este momento"; pausa; return; fi
+echo -e " \e[1;38;5;208mTotal baneadas:${N} \e[1;97m$total${N}   \e[2m(el dato de empresa sale de internet)${N}\n"
+local i=0 ip info country isp
+for ip in $ips; do
+i=$((i+1))
+info=$(f2b_empresa "$ip")
+country=$(echo "$info" | sed -n 1p)
+isp=$(echo "$info" | sed -n 2p)
+if [ -n "$isp" ]; then
+printf " \e[1;38;5;208m[%2d]\e[0m \e[1;97m%-16s\e[0m \e[1;32m%s\e[0m \e[2m(%s)${N}\n" "$i" "$ip" "$isp" "$country"
+else
+printf " \e[1;38;5;208m[%2d]\e[0m \e[1;97m%-16s\e[0m \e[2m(sin datos de empresa)${N}\n" "$i" "$ip"
+fi
+done
+pausa
+}
+
+f2b_desbanear() {
+if ! fail2ban_instalado || ! fail2ban_activo; then msg_err "fail2ban no está activo"; sleep 1; return; fi
+read -rp " IP a desbanear: " ip
+[[ "$ip" =~ ^[0-9a-fA-F.:]+$ ]] || { msg_err "IP inválida"; sleep 1; return; }
+if fail2ban-client set sshd unbanip "$ip" >/dev/null 2>&1; then msg_ok "$ip desbaneada"; else msg_err "No se pudo (¿estaba baneada?)"; fi
+sleep 1
+}
+
+menu_fail2ban() {
+while true; do
+banner; echo -e " \e[1;38;5;141mFAIL2BAN · anti-bots SSH${N}\n"
+echo -e " \e[2mBloquea la IP que falla la contraseña 5 veces en 10 min.\n Tus clientes por payload (127.0.0.1) nunca se bloquean.${N}\n"
+if fail2ban_instalado && fail2ban_activo; then
+local nban; nban=$(echo "$(f2b_baneadas)" | wc -w)
+echo -e " \e[1;32m● Estado: activo${N}   \e[1;38;5;208mBaneo:${N} \e[1;97m$(f2b_bantime)${N}   \e[1;38;5;208mBaneadas ahora:${N} \e[1;97m${nban}${N}\n"
+elif fail2ban_instalado; then
+echo -e " \e[1;31m● Estado: instalado pero apagado${N}\n"
+else
+echo -e " \e[1;31m● Estado: no instalado${N}\n"
+fi
+op 1 "⚡" "Activar"
+op 2 "✖" "Desactivar"
+op 3 "⏱" "Tiempo de baneo"
+op 4 "▤" "Ver IP baneadas (con empresa)"
+op 5 "🔓" "Desbanear una IP"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) f2b_activar; pausa ;;
+2) f2b_desactivar; sleep 1 ;;
+3) f2b_cambiar_tiempo ;;
+4) f2b_lista ;;
+5) f2b_desbanear ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
 menu_herramientas() {
 while true; do
 banner; echo -e " \e[1;38;5;141mHERRAMIENTAS${N}\n"
@@ -1630,6 +1759,7 @@ op 2 "🚀" "Test de velocidad"
 op 3 "📊" "Uso de CPU y RAM"
 op 4 "👥" "Usuario compartido"
 op 5 "📡" "Control de red"
+op 6 "🛡" "Fail2ban (anti-bots SSH)"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -1638,6 +1768,7 @@ case $o in
 3) procesos_top ;;
 4) usuario_compartido ;;
 5) control_red ;;
+6) menu_fail2ban ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac

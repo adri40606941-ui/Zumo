@@ -256,5 +256,21 @@ SAL=$(_ficha_usuario 2 normal 1 2030-01-01 | limpio)
 chequear "usuario común sigue mostrando Límite 1/1" "si" "$(grep -q 'Límite: 1/1' <<<"$SAL" && echo si || echo no)"
 unset _PRE
 
+echo "9) Fail2ban: jail, tiempo de baneo y lista de IP"
+export ZUMO_F2B_JAIL="$T/jail.local"
+for f in f2b_escribir_jail f2b_bantime f2b_baneadas; do src=$(extraer "$f"); eval "$src"; done
+F2B_JAIL="$ZUMO_F2B_JAIL"
+f2b_escribir_jail "12h"
+chequear "escribe el tiempo de baneo elegido" "12h" "$(f2b_bantime)"
+chequear "ignora 127.0.0.1 (clientes por payload)" "si" "$(grep -q '^ignoreip = 127.0.0.1/8' "$F2B_JAIL" && echo si || echo no)"
+chequear "banea tras 5 intentos" "si" "$(grep -q '^maxretry = 5' "$F2B_JAIL" && echo si || echo no)"
+f2b_escribir_jail
+chequear "sin argumento, el baneo por defecto es 1h" "1h" "$(f2b_bantime)"
+# fail2ban-client de mentira para probar el parseo de la lista
+fail2ban-client() { echo "Status for the jail: sshd"; echo "|- Banned IP list:	1.2.3.4 5.6.7.8"; }
+chequear "lee las IP baneadas del estado" "1.2.3.4 5.6.7.8" "$(f2b_baneadas)"
+chequear "cuenta cuántas hay baneadas" "2" "$(echo $(f2b_baneadas) | wc -w)"
+unset -f fail2ban-client
+
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi
