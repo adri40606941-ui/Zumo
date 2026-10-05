@@ -271,6 +271,23 @@ class MainActivity : Activity() {
         val c = prefs.config
         if (c == null || !c.valida()) { aviso("Primero pega o edita la configuración del servidor"); return }
         if (!prefs.useHwid && (prefs.user.isBlank() || prefs.pass.isBlank())) { aviso("Escribe tu usuario y contraseña, o activa el modo HWID"); return }
+        // La primera vez, se pide quedar fuera del ahorro de batería antes de conectar (si no, el
+        // sistema puede cerrar la VPN sola al rato, sobre todo en Tecno, Xiaomi y similares).
+        if (!prefs.pidioBateria && !PowerGuide.sinOptimizar(this)) {
+            prefs.pidioBateria = true
+            AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+                .setTitle("Antes de conectar")
+                .setMessage("Para que la VPN no se corte sola, permití que quede fuera del ahorro de batería.")
+                .setPositiveButton("Permitir") { _, _ -> PowerGuide.pedirExclusion(this); aviso("Listo, ahora tocá Conectar de nuevo") }
+                .setNegativeButton("Ahora no") { _, _ -> conectarDeVerdad() }
+                .mostrar()
+            return
+        }
+        conectarDeVerdad()
+    }
+
+    private fun conectarDeVerdad() {
+        prefs.wanted = true
         val i = VpnService.prepare(this)
         if (i != null) startActivityForResult(i, 1) else ZumoVpnService.iniciar(this)
     }

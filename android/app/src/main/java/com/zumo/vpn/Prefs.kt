@@ -31,4 +31,9 @@ class Prefs(ctx: Context) {
     var wanted: Boolean
         get() = sp.getBoolean("wanted", false)
         set(v) { sp.edit().putBoolean("wanted", v).apply() }
+
+    /** Ya se le pidió una vez la exclusión de batería (para no repetir el diálogo cada vez). */
+    var pidioBateria: Boolean
+        get() = sp.getBoolean("pidio_bateria", false)
+        set(v) { sp.edit().putBoolean("pidio_bateria", v).apply() }
 }
