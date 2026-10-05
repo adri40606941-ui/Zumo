@@ -633,6 +633,7 @@ vencido) venc_col="\e[1;31m" ;;
 "vence hoy"|"vence 1 día"|"vence 2 días"|"vence 3 días") venc_col="\e[1;38;5;214m" ;;
 *) venc_col="\e[1;32m" ;;
 esac
+venc="$(date -d "$exp" +%d/%m/%Y 2>/dev/null || echo "$exp")"
 fi
 nombre="$(etiqueta_de "$u")"
 clave="$(clave_get "$u")"; [ -n "$clave" ] || clave="-"
