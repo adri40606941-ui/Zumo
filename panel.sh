@@ -1453,8 +1453,6 @@ op 1 "⚡" "BBR"
 op 2 "🚀" "Test de velocidad"
 op 3 "🧹" "Liberar RAM y limpiar"
 op 4 "📊" "Uso de CPU y RAM"
-op 5 "📶" "Uso de datos"
-op 6 "💾" "Respaldo y restauración"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -1462,8 +1460,6 @@ case $o in
 2) test_velocidad ;;
 3) liberar_ram ;;
 4) procesos_top ;;
-5) uso_datos ;;
-6) menu_respaldo ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
