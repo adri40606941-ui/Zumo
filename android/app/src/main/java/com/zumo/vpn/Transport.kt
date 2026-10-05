@@ -5,7 +5,6 @@ import java.io.InputStream
 import java.io.PushbackInputStream
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.security.SecureRandom
 import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
@@ -15,16 +14,17 @@ class Tunnel(val socket: Socket, val input: InputStream)
 
 object Transport {
 
-    fun connect(c: Config): Tunnel {
-        val tcpHost = c.proxyHost.ifBlank { c.host }
-        val tcpPort = if (c.mode == "direct") c.sshPort else c.proxyPort
+    /** Conecta por TCP (y TLS si se pidió) y, si hay payload, lo envía y consume las respuestas HTTP. */
+    fun connect(c: Config, etapa: (String) -> Unit = {}): Tunnel {
+        etapa("Conectando a ${c.host}:${c.sshPort}")
         var s = Socket()
         s.tcpNoDelay = true
         s.keepAlive = true
-        s.connect(InetSocketAddress(tcpHost, tcpPort), 15000)
+        s.connect(InetSocketAddress(c.host, c.sshPort), 15000)
         if (c.tls) {
-            val sniName = c.sni.ifBlank { c.wsHost.ifBlank { tcpHost } }
-            val ss = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(s, sniName, tcpPort, true) as SSLSocket
+            etapa("Negociando TLS")
+            val sniName = c.sni.ifBlank { c.host }
+            val ss = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(s, sniName, c.sshPort, true) as SSLSocket
             val p = ss.sslParameters
             p.serverNames = listOf(SNIHostName(sniName))
             ss.sslParameters = p
@@ -32,20 +32,20 @@ object Transport {
             ss.startHandshake()
             s = ss
         }
-        if (c.mode == "direct") {
-            return Tunnel(s, PushbackInputStream(s.getInputStream(), 8192))
-        }
-        s.soTimeout = 15000
-        val out = s.getOutputStream()
         val pin = PushbackInputStream(s.getInputStream(), 8192)
-        val bruto = if (c.mode == "payload") c.payload else wsRequest(c)
-        for ((i, parte) in partir(expandir(bruto, c)).withIndex()) {
-            if (i > 0) Thread.sleep(150)
-            out.write(parte.toByteArray(Charsets.ISO_8859_1))
-            out.flush()
+        if (c.payload.isNotBlank()) {
+            etapa("Enviando payload")
+            s.soTimeout = 15000
+            val out = s.getOutputStream()
+            for ((i, parte) in partir(expandir(c.payload, c)).withIndex()) {
+                if (i > 0) Thread.sleep(150)
+                out.write(parte.toByteArray(Charsets.ISO_8859_1))
+                out.flush()
+            }
+            etapa("Esperando respuesta del servidor")
+            leerRespuestasHttp(pin)
+            s.soTimeout = 0
         }
-        leerRespuestasHttp(pin)
-        s.soTimeout = 0
         return Tunnel(s, pin)
     }
 
@@ -62,14 +62,6 @@ object Transport {
             i += 3
         }
         return sb.toString()
-    }
-
-    fun wsRequest(c: Config): String {
-        val key = ByteArray(16).also { SecureRandom().nextBytes(it) }
-        val host = c.wsHost.ifBlank { c.host }
-        val path = c.wsPath.ifBlank { "/" }
-        return "GET $path HTTP/1.1[crlf]Host: $host[crlf]Upgrade: websocket[crlf]Connection: Upgrade[crlf]" +
-            "Sec-WebSocket-Key: ${base64(key)}[crlf]Sec-WebSocket-Version: 13[crlf][crlf]"
     }
 
     /** Reemplaza los comodines del payload: [host] [port] [host_port] [crlf] [cr] [lf] [protocol]. */

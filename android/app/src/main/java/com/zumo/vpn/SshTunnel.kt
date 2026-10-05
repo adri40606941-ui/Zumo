@@ -9,14 +9,15 @@ import java.io.OutputStream
 import java.net.Socket
 
 /** Una sesión SSH autenticada sobre el transporte (payload / WebSocket). */
-class SshTunnel(private val cfg: Config, private val user: String, private val pass: String) {
+class SshTunnel(private val cfg: Config, private val user: String, private val pass: String, private val etapa: (String) -> Unit = {}) {
     @Volatile var session: Session? = null
         private set
 
     fun connect() {
         close()
-        val tr = Transport.connect(cfg)
+        val tr = Transport.connect(cfg, etapa)
         try {
+            etapa("Iniciando sesión SSH")
             val s = JSch().getSession(user, cfg.host, cfg.sshPort)
             s.setPassword(pass)
             s.setConfig("StrictHostKeyChecking", "no")

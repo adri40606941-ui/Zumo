@@ -36,6 +36,7 @@ class ZumoVpnService : VpnService() {
         @Volatile var ultimoError: String = ""
         @Volatile var corriendo: Boolean = false
         @Volatile var desde: Long = 0L
+        @Volatile var etapaActual: String = ""
 
         fun iniciar(ctx: Context) {
             val i = Intent(ctx, ZumoVpnService::class.java).setAction(ACTION_START)
@@ -148,7 +149,7 @@ class ZumoVpnService : VpnService() {
     private fun bucle(cfg: Config, user: String, pass: String) {
         var espera = 2000L
         while (activo) {
-            val t = SshTunnel(cfg, user, pass)
+            val t = SshTunnel(cfg, user, pass) { etapaActual = it }
             try {
                 estado = "Conectando..."; conectado = false; actualizarNoti()
                 t.connect()
@@ -178,11 +179,16 @@ class ZumoVpnService : VpnService() {
 
     private fun mensaje(e: Exception): String {
         val m = e.message ?: e.javaClass.simpleName
-        return when {
+        val causa = when {
+            e is java.net.UnknownHostException -> "No se encontró el dominio \"$m\" (revisa el nombre o tu internet)"
+            e is java.net.ConnectException -> "No se pudo conectar (puerto cerrado o bloqueado)"
+            e is java.net.SocketTimeoutException || m.contains("timeout", true) || m.contains("timed out", true) ->
+                "Tiempo agotado: el servidor no respondió"
             m.contains("Auth fail", true) -> "Usuario o contraseña incorrectos (o vencido)"
-            m.contains("timeout", true) || m.contains("timed out", true) -> "Tiempo agotado: el servidor no responde"
+            m.contains("Connection reset", true) || m.contains("EOF", true) -> "El servidor cortó la conexión"
             else -> m
         }
+        return if (etapaActual.isBlank()) causa else "$etapaActual → $causa"
     }
 
     private fun vigilarRed() {

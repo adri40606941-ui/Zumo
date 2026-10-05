@@ -134,7 +134,8 @@ class TunelTest {
     @Test
     fun websocket_ssh_y_socks_de_punta_a_punta() {
         val px = FalsoProxy(sshPort, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n").also { cerrar += it }
-        val cfg = Config(host = "127.0.0.1", sshPort = sshPort, mode = "ws", proxyHost = "127.0.0.1", proxyPort = px.puerto, wsHost = "ejemplo.cloudfront.net", wsPath = "/ssh")
+        val cfg = Config(host = "127.0.0.1", sshPort = px.puerto,
+            payload = "GET /ssh HTTP/1.1[crlf]Host: ejemplo.cloudfront.net[crlf]Upgrade: websocket[crlf]Connection: Upgrade[crlf][crlf]")
         val t = SshTunnel(cfg, "cliente", "clave1")
         t.connect()
         assertTrue(t.conectado)
@@ -148,24 +149,24 @@ class TunelTest {
     @Test
     fun payload_personalizado_con_comodines_y_sin_respuesta_http() {
         val px = FalsoProxy(sshPort, "").also { cerrar += it }   // no contesta HTTP: va directo el banner SSH
-        val cfg = Config(host = "127.0.0.1", sshPort = sshPort, mode = "payload", proxyHost = "127.0.0.1", proxyPort = px.puerto,
+        val cfg = Config(host = "127.0.0.1", sshPort = px.puerto,
             payload = "CONNECT [host_port] HTTP/1.1[crlf]Host: cdn.ejemplo.com[crlf][crlf]")
         val t = SshTunnel(cfg, "cliente", "clave1")
         t.connect()
-        assertEquals("CONNECT 127.0.0.1:$sshPort HTTP/1.1\r\nHost: cdn.ejemplo.com\r\n\r\n", px.recibido)
+        assertEquals("CONNECT 127.0.0.1:${px.puerto} HTTP/1.1\r\nHost: cdn.ejemplo.com\r\n\r\n", px.recibido)
         conSocks(t) { sp -> assertTrue(socksGet(sp, "127.0.0.1", httpPort).contains("hola")) }
     }
 
     @Test
     fun ssh_directo() {
-        val t = SshTunnel(Config(host = "127.0.0.1", sshPort = sshPort, mode = "direct"), "cliente", "clave1")
+        val t = SshTunnel(Config(host = "localhost", sshPort = sshPort), "cliente", "clave1")
         t.connect()
         conSocks(t) { sp -> assertTrue(socksGet(sp, "127.0.0.1", httpPort).contains("hola")) }
     }
 
     @Test
     fun clave_incorrecta_da_error() {
-        val t = SshTunnel(Config(host = "127.0.0.1", sshPort = sshPort, mode = "direct"), "cliente", "mala")
+        val t = SshTunnel(Config(host = "localhost", sshPort = sshPort), "cliente", "mala")
         try { t.connect(); fail("debía fallar") } catch (e: Exception) {
             assertTrue(e.message ?: "", (e.message ?: "").contains("Auth", true))
         }
@@ -174,7 +175,7 @@ class TunelTest {
     @Test
     fun respuesta_http_de_error_se_informa() {
         val px = FalsoProxy(sshPort, "HTTP/1.1 403 Forbidden\r\n\r\n", cerrar = true).also { cerrar += it }
-        val cfg = Config(host = "127.0.0.1", sshPort = sshPort, mode = "ws", proxyHost = "127.0.0.1", proxyPort = px.puerto)
+        val cfg = Config(host = "127.0.0.1", sshPort = px.puerto, payload = "GET / HTTP/1.1[crlf][crlf]")
         try { SshTunnel(cfg, "cliente", "clave1").connect(); fail("debía fallar") } catch (e: Exception) {
             assertTrue(e.message ?: "", (e.message ?: "").contains("403"))
         }
@@ -190,7 +191,7 @@ class TunelTest {
             "HTTP/1.1 302 Found\r\nLocation: /x\r\nContent-Length: 4\r\n\r\n" +   // HEAD-like: sin cuerpo
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"
         val px = FalsoProxy(sshPort, respuestas, espera = "Connection:keep-Alive\n\n").also { cerrar += it }
-        val cfg = Config(host = "127.0.0.1", sshPort = sshPort, mode = "payload", proxyHost = "127.0.0.1", proxyPort = px.puerto, payload = payload)
+        val cfg = Config(host = "127.0.0.1", sshPort = px.puerto, payload = payload)
         val t = SshTunnel(cfg, "cliente", "clave1")
         t.connect()
         assertEquals(
@@ -200,6 +201,13 @@ class TunelTest {
         )
         assertEquals(2, Transport.partir(Transport.expandir(payload, cfg)).size)
         conSocks(t) { sp -> assertTrue(socksGet(sp, "127.0.0.1", httpPort).contains("hola")) }
+    }
+
+    @Test
+    fun limpia_el_host_pegado_por_el_usuario() {
+        assertEquals(Config(host = "vps.ejemplo.com", sshPort = 8080), Config(host = " https://vps.ejemplo.com:8080/ruta ", sshPort = 22).limpiar())
+        assertEquals(Config(host = "10.0.0.5", sshPort = 443), Config(host = "10.0.0.5:443").limpiar())
+        assertEquals(Config(host = "dominio.com", sshPort = 80), Config(host = "dominio.com", sshPort = 80).limpiar())
     }
 
     @Test

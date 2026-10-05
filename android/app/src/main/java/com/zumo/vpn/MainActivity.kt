@@ -180,7 +180,7 @@ class MainActivity : Activity() {
     private fun refrescar() {
         val c = prefs.config
         tvConfig.text = if (c == null || c.host.isBlank()) "Sin configurar. Pega el enlace que te dieron."
-        else "${c.name}\n${c.host}:${c.sshPort}  ·  ${nombreModo(c.mode)}"
+        else "${c.name}\n${c.host}:${c.sshPort}  ·  " + (if (c.payload.isBlank()) "SSH directo" else "SSH + payload") + (if (c.tls) " + TLS" else "")
         val corr = ZumoVpnService.corriendo
         tvEstado.text = ZumoVpnService.estado
         tvEstado.setTextColor(
@@ -190,12 +190,15 @@ class MainActivity : Activity() {
                 else -> ROJO
             }
         )
-        tvError.text = if (corr || ZumoVpnService.estado == "Error") ZumoVpnService.ultimoError else ""
+        tvError.text = when {
+            ZumoVpnService.conectado -> ""
+            corr -> listOf(ZumoVpnService.ultimoError, ZumoVpnService.etapaActual).filter { it.isNotBlank() }.joinToString("\n")
+            ZumoVpnService.estado == "Error" -> ZumoVpnService.ultimoError
+            else -> ""
+        }
         btn.text = if (corr) "Desconectar" else "Conectar"
         btn.background = redondo(if (corr) ROJO else VERDE)
     }
-
-    private fun nombreModo(m: String) = when (m) { "ws" -> "WebSocket"; "payload" -> "Payload"; else -> "SSH directo" }
 
     // ---------- acciones ----------
     private fun alternar() {
@@ -262,33 +265,29 @@ class MainActivity : Activity() {
     private fun editarConfig() {
         val c = prefs.config ?: Config()
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
-        fun f(hint: String, v: String, tipo: Int = InputType.TYPE_CLASS_TEXT) = campo(hint, tipo).apply { setText(v); setTextColor(Color.BLACK); setHintTextColor(Color.GRAY) }
+        fun f(hint: String, v: String, tipo: Int = InputType.TYPE_CLASS_TEXT) =
+            campo(hint, tipo).apply { setText(v); setTextColor(Color.BLACK); setHintTextColor(Color.GRAY) }
         val nombre = f("Nombre", c.name)
-        val host = f("Servidor (VPS)", c.host)
-        val sshPort = f("Puerto SSH", c.sshPort.toString(), InputType.TYPE_CLASS_NUMBER)
-        val modo = Spinner(this).apply {
-            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("WebSocket", "Payload personalizado", "SSH directo"))
-            setSelection(when (c.mode) { "ws" -> 0; "payload" -> 1; else -> 2 })
+        val host = f("Servidor (dominio o IP)", c.host, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+        val puerto = f("Puerto (22, 80, 443...)", c.sshPort.toString(), InputType.TYPE_CLASS_NUMBER)
+        val payload = EditText(this).apply {
+            hint = "Payload (opcional). Comodines: [host] [port] [host_port] [crlf] [lf] [split]"
+            setHintTextColor(Color.GRAY); setTextColor(Color.BLACK)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setSingleLine(false); minLines = 4; gravity = Gravity.TOP
+            setText(c.payload)
         }
-        val pHost = f("Proxy / dominio al que se conecta (vacío = servidor)", c.proxyHost)
-        val pPort = f("Puerto del proxy", c.proxyPort.toString(), InputType.TYPE_CLASS_NUMBER)
         val tls = CheckBox(this).apply { text = "TLS / SSL (puerto 443)"; isChecked = c.tls }
-        val sni = f("SNI (vacío = automático)", c.sni)
-        val wsHost = f("Host del WebSocket (vacío = servidor)", c.wsHost)
-        val wsPath = f("Ruta del WebSocket", c.wsPath)
-        val payload = f("Payload (usa [host_port], [crlf], [split]...)", c.payload).apply { setSingleLine(false); minLines = 3 }
-        listOf(nombre, host, sshPort, modo, pHost, pPort, tls, sni, wsHost, wsPath, payload).forEach { col.addView(it) }
+        val sni = f("SNI (vacío = el servidor)", c.sni)
+        listOf(nombre, host, puerto, payload, tls, sni).forEach { col.addView(it) }
         val sv = ScrollView(this).apply { addView(col) }
         AlertDialog.Builder(this).setTitle("Configuración").setView(sv)
             .setPositiveButton("Guardar") { _, _ ->
                 prefs.config = Config(
-                    name = nombre.text.toString().ifBlank { "Zumo" }, host = host.text.toString().trim(),
-                    sshPort = sshPort.text.toString().toIntOrNull() ?: 22,
-                    mode = listOf("ws", "payload", "direct")[modo.selectedItemPosition],
-                    proxyHost = pHost.text.toString().trim(), proxyPort = pPort.text.toString().toIntOrNull() ?: 80,
-                    tls = tls.isChecked, sni = sni.text.toString().trim(), wsHost = wsHost.text.toString().trim(),
-                    wsPath = wsPath.text.toString().ifBlank { "/" }, payload = payload.text.toString()
-                )
+                    name = nombre.text.toString().ifBlank { "Zumo" }, host = host.text.toString(),
+                    sshPort = puerto.text.toString().toIntOrNull() ?: 22,
+                    payload = payload.text.toString(), tls = tls.isChecked, sni = sni.text.toString().trim()
+                ).limpiar()
                 refrescar()
             }.setNegativeButton("Cancelar", null).show()
     }
