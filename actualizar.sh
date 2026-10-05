@@ -10,6 +10,12 @@ V='\e[1;38;5;141m'; G='\e[1;32m'; R='\e[1;31m'; N='\e[0m'
 ok()  { echo -e " ${G}✔ $1${N}"; }
 err() { echo -e " ${R}✘ $1${N}"; }
 
+# Hora de la VPS en Buenos Aires (los vencimientos y la hora del panel salen de acá).
+ZUMO_TZ=America/Argentina/Buenos_Aires
+if [ "$(timedatectl show -p Timezone --value 2>/dev/null)" != "$ZUMO_TZ" ]; then
+[ -e "/usr/share/zoneinfo/$ZUMO_TZ" ] || DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata >/dev/null 2>&1
+timedatectl set-timezone "$ZUMO_TZ" 2>/dev/null || { ln -sf "/usr/share/zoneinfo/$ZUMO_TZ" /etc/localtime; echo "$ZUMO_TZ" > /etc/timezone; }
+fi
 mkdir -p /etc/zumo
 
 # 1) Librería compartida -------------------------------------------------------

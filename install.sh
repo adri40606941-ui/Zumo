@@ -12,6 +12,12 @@ echo
 echo -e "\e[1;33m[1/9]\e[0m Instalando dependencias..."
 apt-get update -y >/dev/null 2>&1
 apt-get install -y --no-install-recommends procps iproute2 curl ca-certificates gcc libc6-dev >/dev/null 2>&1
+# Hora de la VPS en Buenos Aires (los vencimientos y la hora del panel salen de acá).
+ZUMO_TZ=America/Argentina/Buenos_Aires
+if [ "$(timedatectl show -p Timezone --value 2>/dev/null)" != "$ZUMO_TZ" ]; then
+[ -e "/usr/share/zoneinfo/$ZUMO_TZ" ] || apt-get install -y --no-install-recommends tzdata >/dev/null 2>&1
+timedatectl set-timezone "$ZUMO_TZ" 2>/dev/null || { ln -sf "/usr/share/zoneinfo/$ZUMO_TZ" /etc/localtime; echo "$ZUMO_TZ" > /etc/timezone; }
+fi
 mkdir -p /etc/zumo
 touch /etc/zumo/usuarios.db
 grep -qx "/bin/false" /etc/shells || echo "/bin/false" >> /etc/shells
