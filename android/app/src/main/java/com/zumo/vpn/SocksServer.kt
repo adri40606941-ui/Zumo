@@ -91,15 +91,20 @@ class SocksServer(private val port: Int, private val tunel: () -> SshTunnel?) {
             responder(out, 0)
             c.soTimeout = 0
 
-            val fin = CountDownLatch(1)
+            val remotoFin = CountDownLatch(1)
+            val clienteFin = CountDownLatch(1)
             val ch = canal
             pool.execute {
                 try { copiar(ri, out) } catch (_: Exception) {}
-                fin.countDown()
+                // el servidor cerró: se avisa al cliente (FIN) y se le da unos segundos para cerrar
+                try { c.shutdownOutput() } catch (_: Exception) {}
+                remotoFin.countDown()
+                if (!clienteFin.await(15, TimeUnit.SECONDS)) { try { c.close() } catch (_: Exception) {} }
             }
             try { copiar(inp, ro) } catch (_: Exception) {}
+            clienteFin.countDown()
             try { ro.close() } catch (_: Exception) {}
-            fin.await(30, TimeUnit.SECONDS)
+            remotoFin.await(30, TimeUnit.SECONDS)
             ch.disconnect()
         } catch (e: Exception) {
             // conexión rechazada o caída: se cierra
