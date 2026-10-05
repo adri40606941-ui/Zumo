@@ -43,7 +43,33 @@ private class StreamEspiaSalida(private val base: OutputStream, private val dest
     override fun close() = base.close()
 }
 
+/**
+ * Después del primer write() (la línea "SSH-2.0-..." con la que JSch se identifica), espera un
+ * toque antes de dejar pasar lo que sigue (el primer paquete binario, KEXINIT). JSch manda esa
+ * línea y el paquete binario en dos escrituras seguidas sin pausa, y si llegan pegadas en el
+ * mismo paquete de red, algunos de estos proxys de payload (son scripts caseros) no separan bien
+ * dónde termina el texto y empieza lo binario, y el servidor real termina viendo una
+ * identificación "corrupta". Forzar un corte imita lo que hacen clientes como HTTP Custom.
+ */
+private class PrimerCorte(private val base: OutputStream) : OutputStream() {
+    private var primero = true
+    private fun despuesDelPrimero() {
+        if (!primero) return
+        primero = false
+        try { base.flush() } catch (_: Exception) {}
+        try { Thread.sleep(120) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+    }
+    override fun write(b: Int) { base.write(b); despuesDelPrimero() }
+    override fun write(b: ByteArray, off: Int, len: Int) { base.write(b, off, len); despuesDelPrimero() }
+    override fun flush() = base.flush()
+    override fun close() = base.close()
+}
+
 object Transport {
+
+    /** Envuelve un OutputStream para separar, con una pequeña pausa, su primera escritura del
+     *  resto (ver [PrimerCorte]). Lo usa SshTunnel para el stream que le entrega a JSch. */
+    fun primerCorte(out: OutputStream): OutputStream = PrimerCorte(out)
 
     /** Conecta por TCP (y TLS si se pidió) y, si hay payload, lo envía y consume las respuestas HTTP. */
     fun connect(c: Config, etapa: (String) -> Unit = {}, proteger: (Socket) -> Unit = {}): Tunnel {
