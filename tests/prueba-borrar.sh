@@ -22,7 +22,7 @@ source "$AQUI/zumo-lib.sh"
 
 # Funciones reales de panel.sh (se copian tal cual, sin ejecutar el menú).
 extraer() { sed -n "/^$1() {/,/^}/p" "$AQUI/panel.sh"; }
-for f in etiqueta_de es_hwid en_linea msg_ok msg_err lista_para_borrar buscar_usuario \
+for f in db_orden etiqueta_de es_hwid en_linea msg_ok msg_err lista_para_borrar buscar_usuario \
 	borrar_usuario_completo eliminar_usuario; do
 	src=$(extraer "$f")
 	[ -n "$src" ] || { echo "no encontré la función $f en panel.sh"; exit 1; }
