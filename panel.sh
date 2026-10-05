@@ -617,18 +617,14 @@ esac
 done
 }
 
-_fila() { # texto_plano texto_coloreado (sin borde: solo la línea)
-echo -e " $2"
-}
-
-# Una ficha (cuadro) por usuario, numerada: nombre, clave, estado, límite y vencimiento.
+# Dos líneas por usuario: [n] ● nombre + clave; debajo vencimiento, límite y tiempo conectado.
 _ficha_usuario() { # n usuario límite vencimiento
-local W n="$1" u="$2" lim="$3" exp="$4" on est_col est_txt venc venc_col tc nombre clave bc dot
+local n="$1" u="$2" lim="$3" exp="$4" on dot venc venc_col tc nombre clave con=""
 on=$(en_linea "$u")
 if [ "$on" -gt 0 ]; then
-est_txt="online ($on)"; est_col="\e[1;32m"; bc="\e[1;32m"; dot="●"
-tc=$(tiempo_conectado "$u"); [ -n "$tc" ] && est_txt+=" · hace $tc"
-else est_txt="offline"; est_col="\e[2m"; bc="\e[1;38;5;141m"; dot="○"; fi
+dot="\e[1;32m●${N}"
+tc=$(tiempo_conectado "$u"); [ -n "$tc" ] && con="  \e[1;32m${tc}${N}"
+else dot="\e[1;31m●${N}"; fi
 if es_temporal "$u"; then venc="$(temp_restante "$u")"; venc_col="\e[1;38;5;214m"
 else
 venc="$(dias "$exp")"
@@ -641,13 +637,13 @@ venc="$(date -d "$exp" +%d/%m/%Y 2>/dev/null || echo "$exp")"
 fi
 nombre="$(etiqueta_de "$u")"
 clave="$(clave_get "$u")"; [ -n "$clave" ] || clave="-"
-W=36; es_hwid "$u" && W=46; _BC="$bc"
-echo -e " ${bc}$(printf '─%.0s' $(seq 1 40))${N}"
-_fila " [$n] $nombre  $dot" " ${bc}[$n]${N} \e[1;97m$nombre${N}  ${bc}${dot}${N}"
-es_hwid "$u" && _fila "   HWID      $u" "   \e[2mHWID${N}      \e[1;38;5;214m$u${N}"
-_fila "   Clave     $clave" "   \e[2mClave${N}     \e[1;96m$clave${N}"
-_fila "   Estado    $est_txt" "   \e[2mEstado${N}    ${est_col}${est_txt}${N}"
-_fila "   Límite    $lim · Vence $venc" "   \e[2mLímite${N}    \e[1;97m$lim${N} \e[2m· Vence${N} ${venc_col}${venc}${N}"
+if es_hwid "$u"; then
+echo -e " \e[1;38;5;208m[$n]${N} $dot \e[1;97m$nombre${N}"
+echo -e "      \e[2mHWID:${N} \e[1;38;5;214m$u${N}"
+else
+echo -e " \e[1;38;5;208m[$n]${N} $dot \e[1;97m$nombre${N}  \e[2m·${N} \e[1;96m$clave${N}"
+fi
+echo -e "      \e[2mVence:${N} ${venc_col}${venc}${N}  \e[2mLímite:${N} \e[1;97m$lim${N}$con"
 }
 
 listar_usuarios() {
