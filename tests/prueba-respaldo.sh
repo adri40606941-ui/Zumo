@@ -11,7 +11,7 @@ USERS="zrpedro zrana HWIDRESP0001 zrtemp"
 limpiar() { for u in $USERS; do userdel "$u" 2>/dev/null; done; rm -rf "$T"; }
 trap limpiar EXIT
 export ZUMO_DB="$T/usuarios.db" ZUMO_LOCK="$T/lock" ZUMO_DATOS="$T/datos.db" ZUMO_HIST="$T/hist.db" ZUMO_LIMCONF="$T/limit.conf" ZUMO_RESP_DIR="$T/resp"
-DB="$ZUMO_DB"; TEMPDB="$T/temporales.db"; N='\e[0m'; L='---'
+DB="$ZUMO_DB"; TEMPDB="$T/temporales.db"; N='\e[0m'; L='---'; CLAVES="$T/claves.db"
 source "$AQUI/zumo-lib.sh"
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
 for f in msg_ok msg_err fecha_cuenta _merge_por_usuario _respaldo_crear _respaldo_restaurar _respaldo_servidor_py _respaldos_lista; do
