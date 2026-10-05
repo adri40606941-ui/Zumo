@@ -15,9 +15,12 @@ class Tunnel(val socket: Socket, val input: InputStream)
 object Transport {
 
     /** Conecta por TCP (y TLS si se pidió) y, si hay payload, lo envía y consume las respuestas HTTP. */
-    fun connect(c: Config, etapa: (String) -> Unit = {}): Tunnel {
+    fun connect(c: Config, etapa: (String) -> Unit = {}, proteger: (Socket) -> Unit = {}): Tunnel {
         etapa("Conectando a ${c.host}:${c.sshPort}")
         var s = Socket()
+        // Hay que sacar esta conexión de la VPN antes de que exista el túnel (TUN): si no, el
+        // propio tráfico SSH que sostiene la VPN entraría a la VPN y se cortaría en bucle.
+        proteger(s)
         s.tcpNoDelay = true
         s.keepAlive = true
         s.connect(InetSocketAddress(c.host, c.sshPort), 15000)

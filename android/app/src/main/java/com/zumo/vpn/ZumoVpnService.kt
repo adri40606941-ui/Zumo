@@ -149,7 +149,7 @@ class ZumoVpnService : VpnService() {
     private fun bucle(cfg: Config, user: String, pass: String) {
         var espera = 2000L
         while (activo) {
-            val t = SshTunnel(cfg, user, pass) { etapaActual = it }
+            val t = SshTunnel(cfg, user, pass, etapa = { etapaActual = it }, proteger = { sock -> protect(sock) })
             try {
                 estado = "Conectando..."; conectado = false; actualizarNoti()
                 t.connect()
