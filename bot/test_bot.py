@@ -27,9 +27,16 @@ def cargar_bot(tmp):
 
 
 class FalsaTelegram:
-    def __init__(self): self.mensajes, self.docs = [], []
-    def mensaje(self, chat, texto, md=True): self.mensajes.append(texto)
+    def __init__(self): self.mensajes, self.docs, self.botones, self.ediciones = [], [], [], []
+    def mensaje(self, chat, texto, botones=None, md=False):
+        self.mensajes.append(texto); self.botones.append(botones); return len(self.mensajes)
+    def editar(self, chat, mid, texto, botones=None):
+        self.ediciones.append(texto); self.mensajes.append(texto); self.botones.append(botones)
+    def responder_cb(self, *a, **k): pass
     def documento(self, chat, nombre, datos, leyenda=""): self.docs.append((nombre, datos, leyenda))
+
+    def datos_botones(self):
+        return [d for fila in (self.botones[-1] or []) for _, d in fila]
 
 
 class Pruebas(unittest.TestCase):
@@ -45,41 +52,84 @@ class Pruebas(unittest.TestCase):
             zs.descifrar(bytes(alterado), "x")
 
     def test_vector_para_kotlin(self):
-        """El mismo vector lo descifra TunelTest/ZsTest.kt: si cambia el formato, hay que tocar los dos."""
+        """El mismo vector lo descifra ZsTest.kt: si cambia el formato, hay que tocar los dos."""
         blob = zs.cifrar(VECTOR_PERFIL, VECTOR_SECRETO, VECTOR_IV)
         ruta = os.path.join(AQUI, "..", "android", "app", "src", "test", "resources", "vector.zs.hex")
         with open(ruta) as f:
             self.assertEqual(f.read().strip(), blob.hex())
 
-    def test_bot_crear_y_exportar(self):
+    def armar(self, tmp):
+        bot = cargar_bot(tmp)
+        tg = FalsaTelegram()
+        b = bot.Bot(tg, {7}, "sec")
+        txt = lambda t: b.manejar({"chat": {"id": 1}, "from": {"id": 7}, "text": t})
+        btn = lambda d: b.manejar_cb({"id": "c", "from": {"id": 7}, "data": d, "message": {"chat": {"id": 1}, "message_id": 5}})
+        return bot, tg, b, txt, btn
+
+    def test_menu_por_botones_y_exportar(self):
         with tempfile.TemporaryDirectory() as tmp:
-            bot = cargar_bot(tmp)
+            bot, tg, b, txt, btn = self.armar(tmp)
             open(f"{tmp}/usuarios.db", "w").write("cliente1:2:2026-11-05\n")
             open(f"{tmp}/claves.db", "w").write("cliente1:Clave1\n")
-            tg = FalsaTelegram()
-            b = bot.Bot(tg, {7}, "sec")
-            # no admin
-            b.manejar({"chat": {"id": 1}, "from": {"id": 99}, "text": "/ver"})
+            # un extraño no entra
+            b.manejar({"chat": {"id": 1}, "from": {"id": 99}, "text": "hola"})
             self.assertIn("No autorizado", tg.mensajes[-1])
-            adm = lambda t: b.manejar({"chat": {"id": 1}, "from": {"id": 7}, "text": t})
-            adm("/exportar cliente1")
+            # cualquier texto abre el menú con botones
+            txt("hola")
+            self.assertEqual(tg.datos_botones(), ["crear", "lista:0", "srv", "id"])
+            # sin servidor no se puede crear ni exportar
+            btn("crear")
+            self.assertIn("Primero definí el servidor", tg.mensajes[-1])
+            btn("x:cliente1")
             self.assertIn("Falta el servidor", tg.mensajes[-1])
-            adm("/servidor vps.ejemplo.com 80 Mi VPN")
-            adm("/payload\nGET / HTTP/1.1[crlf]Host: x.net[crlf][crlf]")
-            adm("/exportar cliente1")
+            # servidor por botones + texto
+            btn("s:host"); txt("vps.ejemplo.com:8080")
+            self.assertIn("vps.ejemplo.com", tg.mensajes[-1]); self.assertIn("8080", tg.mensajes[-1])
+            btn("s:name"); txt("Mi VPN")
+            btn("s:payload"); txt("GET / HTTP/1.1[crlf]Host: x.net[crlf][crlf]")
+            btn("s:tls"); self.assertIn("TLS: sí", tg.mensajes[-1])
+            btn("s:tls"); self.assertIn("TLS: no", tg.mensajes[-1])
+            # lista y ficha del usuario
+            btn("lista:0"); self.assertIn("u:cliente1", tg.datos_botones())
+            btn("u:cliente1"); self.assertIn("x:cliente1", tg.datos_botones())
+            btn("x:cliente1")
             nombre, datos, _ = tg.docs[-1]
             self.assertEqual(nombre, "Mi_VPN.zs")
             p = zs.descifrar(datos, "sec")
             self.assertEqual((p["user"], p["pass"], p["exp"]), ("cliente1", "Clave1", "2026-11-05"))
-            self.assertEqual(p["cfg"]["host"], "vps.ejemplo.com")
-            self.assertEqual(p["cfg"]["sshPort"], 80)
+            self.assertEqual((p["cfg"]["host"], p["cfg"]["sshPort"]), ("vps.ejemplo.com", 8080))
             self.assertTrue(p["cfg"]["payload"].startswith("GET / HTTP/1.1[crlf]"))
-            adm("/exportar nadie")
-            self.assertIn("no está", tg.mensajes[-1])
-            adm("/usuarios")
-            self.assertIn("cliente1", tg.mensajes[-1])
-            adm("/crear a b")
-            self.assertIn("Uso", tg.mensajes[-1])
+            # límite por botón
+            llamadas = []
+            bot.bash_lib = lambda *a: llamadas.append(a)
+            btn("ln:cliente1:3"); self.assertEqual(llamadas[-1], ("zumo_db_set", "cliente1", "2", "3"))
+
+    def test_crear_usuario_paso_a_paso(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            open(f"{tmp}/usuarios.db", "w").write("")
+            json.dump({"host": "h.com", "port": 80, "name": "N"}, open(f"{tmp}/bot.json", "w"))
+            creados = []
+            def falso_crear(u, clave, dias, lim):
+                creados.append((u, clave, dias, lim))
+                open(f"{tmp}/usuarios.db", "a").write(f"{u}:{lim}:2030-01-01\n")
+                bot.clave_guardar(u, clave)
+            bot.crear_usuario = falso_crear
+            btn("crear")
+            txt("1mal"); self.assertIn("inválido", tg.mensajes[-1])
+            txt("pepe")
+            txt("con espacio"); self.assertIn("inválida", tg.mensajes[-1])
+            txt("Clave9")
+            self.assertIn("cd:30", tg.datos_botones())
+            btn("cd:otro"); txt("abc"); self.assertIn("Escribí un número", tg.mensajes[-1])
+            txt("45")
+            self.assertIn("cl:2", tg.datos_botones())
+            btn("cl:2")
+            self.assertEqual(creados, [("pepe", "Clave9", 45, 2)])
+            self.assertEqual(tg.docs[-1][0], "N.zs")
+            self.assertEqual(zs.descifrar(tg.docs[-1][1], "sec")["user"], "pepe")
+            # cancelar limpia el estado
+            btn("crear"); btn("menu"); self.assertNotIn(1, b.estado)
 
     def test_validaciones(self):
         with tempfile.TemporaryDirectory() as tmp:
