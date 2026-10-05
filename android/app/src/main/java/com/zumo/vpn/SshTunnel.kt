@@ -4,6 +4,8 @@ import com.jcraft.jsch.ChannelDirectTCPIP
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.SocketFactory
+import com.jcraft.jsch.UIKeyboardInteractive
+import com.jcraft.jsch.UserInfo
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.Socket
@@ -25,6 +27,21 @@ class SshTunnel(
             s.setPassword(pass)
             s.setConfig("StrictHostKeyChecking", "no")
             s.setConfig("PreferredAuthentications", "password,keyboard-interactive")
+            // Muchos paneles (SSHPlus y similares) validan límite de conexiones/vencimiento con PAM
+            // usando keyboard-interactive en vez de "password" puro. Sin esto, JSch no responde el
+            // desafío y el login falla aunque el usuario/clave sean correctos (HTTP Custom sí lo hace).
+            s.setUserInfo(object : UserInfo, UIKeyboardInteractive {
+                override fun getPassphrase(): String? = null
+                override fun getPassword(): String = pass
+                override fun promptPassphrase(message: String?): Boolean = false
+                override fun promptPassword(message: String?): Boolean = true
+                override fun promptYesNo(message: String?): Boolean = true
+                override fun showMessage(message: String?) {}
+                override fun promptKeyboardInteractive(
+                    destination: String?, name: String?, instruction: String?,
+                    prompt: Array<out String>?, echo: BooleanArray?,
+                ): Array<String> = Array(prompt?.size ?: 0) { pass }
+            })
             s.setSocketFactory(object : SocketFactory {
                 override fun createSocket(host: String?, port: Int): Socket = tr.socket
                 override fun getInputStream(socket: Socket?): InputStream = tr.input
