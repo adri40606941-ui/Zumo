@@ -54,7 +54,7 @@ jobs:
         run: |
           mkdir -p out
           set -o pipefail
-          gradle -p android testDebugUnitTest --no-daemon --stacktrace 2>&1 | tail -n 150 | tee out/pruebas.log
+          gradle -p android testDebugUnitTest --no-daemon --stacktrace 2>&1 | tee out/pruebas-completo.log | grep -E "^e: |FAILED|PASSED|tests completed|BUILD|Test.*>|AssertionError|Exception" | head -n 120 | tee out/pruebas.log
           cp -r android/app/build/test-results/testDebugUnitTest out/resultados 2>/dev/null || true
 
       - name: Compilar
