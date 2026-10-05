@@ -1651,17 +1651,26 @@ fail2ban-client status sshd 2>/dev/null | sed -n 's/.*Banned IP list:[[:space:]]
 }
 
 f2b_activar() {
+export DEBIAN_FRONTEND=noninteractive
 if ! fail2ban_instalado; then
 echo " Instalando fail2ban..."
-export DEBIAN_FRONTEND=noninteractive
 apt-get update >/dev/null 2>&1
-apt-get install -y --no-install-recommends fail2ban >/dev/null 2>&1 || { msg_err "No se pudo instalar fail2ban"; return 1; }
+# python3-systemd es imprescindible: con backend=systemd, fail2ban no arranca sin él.
+# (por eso NO se usa --no-install-recommends acá, que lo dejaría afuera).
+apt-get install -y fail2ban python3-systemd >/dev/null 2>&1 || { msg_err "No se pudo instalar fail2ban"; return 1; }
 fi
 [ -f "$F2B_JAIL" ] || f2b_escribir_jail "1h"
 systemctl enable fail2ban >/dev/null 2>&1
 systemctl restart fail2ban 2>/dev/null
 sleep 1
-if fail2ban_activo; then msg_ok "fail2ban activado (baneo: $(f2b_bantime))"; else msg_err "No quedó activo (journalctl -u fail2ban)"; fi
+if fail2ban_activo; then msg_ok "fail2ban activado (baneo: $(f2b_bantime))"; return; fi
+# No arrancó: casi siempre falta el binding de systemd. Se instala y se reintenta.
+echo " El primer intento falló, reintentando..."
+apt-get install -y python3-systemd >/dev/null 2>&1
+systemctl restart fail2ban 2>/dev/null; sleep 1
+if fail2ban_activo; then msg_ok "fail2ban activado (baneo: $(f2b_bantime))"; return; fi
+msg_err "fail2ban no quedó activo. Último detalle del sistema:"
+journalctl -u fail2ban -n 8 --no-pager 2>/dev/null | sed 's/^/   /'
 }
 
 f2b_desactivar() {
