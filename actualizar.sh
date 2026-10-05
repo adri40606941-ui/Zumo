@@ -17,6 +17,7 @@ if [ "$(timedatectl show -p Timezone --value 2>/dev/null)" != "$ZUMO_TZ" ]; then
 timedatectl set-timezone "$ZUMO_TZ" 2>/dev/null || { ln -sf "/usr/share/zoneinfo/$ZUMO_TZ" /etc/localtime; echo "$ZUMO_TZ" > /etc/timezone; }
 fi
 mkdir -p /etc/zumo
+( umask 077; touch /etc/zumo/tokens.db )   # tokens de dispositivo (usuario:TOKEN)
 
 # 1) Librería compartida -------------------------------------------------------
 echo -e "${V}[1/4] Librería compartida (zumo-lib.sh)...${N}"
@@ -132,7 +133,14 @@ refrescar desactivar-hcr.sh    DESHCREOF
 refrescar activar-badvpn.sh    ZUMOBADVPNACT
 refrescar desactivar-badvpn.sh DESBVEOF
 refrescar borrar-temporal.sh   BORRARTEMP
-echo -e " \e[2mReactivá los protocolos (PDirect, etc.) para recompilar con la versión nueva.${N}"
+# PDirect: si está activo se recompila y reinicia solo (conserva banner/color/modo).
+# Es lo que hace que el servidor lea el token del dispositivo (X-Zumo-Token).
+if systemctl is-active --quiet pdirect-80 2>/dev/null; then
+	echo -e "${V}Recompilando PDirect...${N}"
+	if bash /etc/zumo/activar-pdirect.sh >/dev/null 2>&1 && systemctl is-active --quiet pdirect-80; then ok "PDirect recompilado y reiniciado"
+	else err "PDirect no quedó activo: reactivalo desde el panel (o bash /etc/zumo/activar-pdirect.sh)"; fi
+fi
+echo -e " \e[2mLos demás protocolos (BHTTP, HCR, etc.) se reactivan desde el panel si querés actualizarlos.${N}"
 else
 err "no se pudo refrescar los activadores (sin install.sh)"
 fi
