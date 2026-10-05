@@ -1,6 +1,5 @@
 package com.zumo.vpn
 
-import com.sun.net.httpserver.HttpServer
 import org.apache.sshd.common.forward.DefaultForwarderFactory
 import org.apache.sshd.server.SshServer
 import org.apache.sshd.server.forward.AcceptAllForwardingFilter
@@ -23,7 +22,7 @@ import java.nio.file.Files
 /** Prueba de punta a punta en la JVM: SSH real (Apache MINA) + proxy WebSocket falso + SOCKS local. */
 class TunelTest {
     private lateinit var sshd: SshServer
-    private lateinit var http: HttpServer
+    private lateinit var http: ServerSocket
     private var sshPort = 0
     private var httpPort = 0
     private val cerrar = mutableListOf<AutoCloseable>()
@@ -39,21 +38,35 @@ class TunelTest {
         sshd.start()
         sshPort = sshd.port
 
-        http = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        http.createContext("/") { ex ->
-            val body = "hola desde el servidor".toByteArray()
-            ex.sendResponseHeaders(200, body.size.toLong())
-            ex.responseBody.use { it.write(body) }
-        }
-        http.start()
-        httpPort = http.address.port
+        http = ServerSocket(0, 10, InetAddress.getByName("127.0.0.1"))
+        Thread {
+            try {
+                while (true) {
+                    val c = http.accept()
+                    Thread {
+                        try {
+                            val i = c.getInputStream()
+                            var fin = 0
+                            while (fin < 4) {
+                                val b = i.read(); if (b < 0) break
+                                fin = when { (b == 13 && (fin == 0 || fin == 2)) || (b == 10 && (fin == 1 || fin == 3)) -> fin + 1; b == 13 -> 1; else -> 0 }
+                            }
+                            val body = "hola desde el servidor"
+                            c.getOutputStream().write("HTTP/1.0 200 OK\r\nContent-Length: ${body.length}\r\n\r\n$body".toByteArray())
+                            c.getOutputStream().flush()
+                        } catch (_: Exception) {} finally { try { c.close() } catch (_: Exception) {} }
+                    }.start()
+                }
+            } catch (_: Exception) {}
+        }.start()
+        httpPort = http.localPort
     }
 
     @After
     fun parar() {
         cerrar.forEach { try { it.close() } catch (_: Exception) {} }
         try { sshd.stop(true) } catch (_: Exception) {}
-        http.stop(0)
+        try { http.close() } catch (_: Exception) {}
     }
 
     /** Proxy que lee un "payload", contesta con [respuesta] y reenvía el resto al SSH. */
