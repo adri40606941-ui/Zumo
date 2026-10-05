@@ -612,9 +612,8 @@ esac
 done
 }
 
-_fila() { # texto_plano texto_coloreado (usa W y _BC de la ficha)
-local pad t="$1"; t=${t//í/i}; t=${t//●/o}; t=${t//○/o}; t=${t//·/.}; pad=$(( W - ${#t} )); [ "$pad" -lt 0 ] && pad=0
-echo -e " ${_BC}┃${N}$2$(printf '%*s' "$pad" '')${_BC}┃${N}"
+_fila() { # texto_plano texto_coloreado (sin borde: solo la línea)
+echo -e " $2"
 }
 
 # Una ficha (cuadro) por usuario, numerada: nombre, clave, estado, límite y vencimiento.
@@ -638,13 +637,12 @@ fi
 nombre="$(etiqueta_de "$u")"
 clave="$(clave_get "$u")"; [ -n "$clave" ] || clave="-"
 W=36; es_hwid "$u" && W=46; _BC="$bc"
-echo -e " ${bc}┏$(printf '━%.0s' $(seq 1 $W))┓${N}"
+echo -e " ${bc}$(printf '─%.0s' $(seq 1 40))${N}"
 _fila " [$n] $nombre  $dot" " ${bc}[$n]${N} \e[1;97m$nombre${N}  ${bc}${dot}${N}"
 es_hwid "$u" && _fila "   HWID      $u" "   \e[2mHWID${N}      \e[1;38;5;214m$u${N}"
 _fila "   Clave     $clave" "   \e[2mClave${N}     \e[1;96m$clave${N}"
 _fila "   Estado    $est_txt" "   \e[2mEstado${N}    ${est_col}${est_txt}${N}"
 _fila "   Límite    $lim · Vence $venc" "   \e[2mLímite${N}    \e[1;97m$lim${N} \e[2m· Vence${N} ${venc_col}${venc}${N}"
-echo -e " ${bc}┗$(printf '━%.0s' $(seq 1 $W))┛${N}"
 }
 
 listar_usuarios() {
