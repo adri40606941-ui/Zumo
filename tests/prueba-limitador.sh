@@ -22,7 +22,7 @@ mkdir -p "$T/run"
 gcc -O2 -Wall -Wextra \
 	-DDB_PATH="\"$T/usuarios.db\"" -DCONF_PATH="\"$T/limit.conf\"" \
 	-DTEMP_DB_PATH="\"$T/temporales.db\"" -DTEMP_SCRIPT="\"$T/borrar.sh\"" \
-	-DRUN_DIR="\"$T/run\"" -DTOKEN_DB_PATH="\"$T/tokens.db\"" -DVENC_LOCK_PATH="\"$T/vencidos.lock\"" -DEXCESOS_PATH="\"$T/excesos.log\"" -o "$T/zumo-limit" "$AQUI/zumo-limit.c" || { echo "no compila"; exit 1; }
+	-DRUN_DIR="\"$T/run\"" -DVENC_LOCK_PATH="\"$T/vencidos.lock\"" -DEXCESOS_PATH="\"$T/excesos.log\"" -o "$T/zumo-limit" "$AQUI/zumo-limit.c" || { echo "no compila"; exit 1; }
 
 for u in ztest1 ztest2 ztest3 ztest4 ztest5 ztest6; do id "$u" >/dev/null 2>&1 || useradd -M -s /bin/false "$u"; done
 for u in ztest1 ztest2 ztest3 ztest4 ztest5 ztest6; do echo "$u:Prueba1" | chpasswd; done   # con contraseña, como los reales
@@ -137,17 +137,6 @@ printf 'EXPIRE_HOUR=23\nEXPIRE_DELETE=1\n' > "$T/limit.conf"; rm -f "$T/borrados
 timeout 20 "$T/zumo-limit" --once 2>/dev/null
 chequear "se manda a borrar" "ztest5" "$(sort -u "$T/borrados.txt" 2>/dev/null)"
 chequear "y no queda bloqueado" "P" "$(est ztest5)"
-
-echo "10) Token por dispositivo: la cuenta con token solo acepta sesiones que lleguen con él"
-printf 'ztest5:1:2099-01-01\nztest6:1:2099-01-01\n' > "$T/usuarios.db"
-printf 'ztest5:A1B2C3D4E5F6\n' > "$T/tokens.db"
-: > "$T/limit.conf"; rm -f "$T/vencidos.lock"
-abrir ztest5; K1=$NUEVO_PID; abrir ztest6; K2=$NUEVO_PID; sleep 0.3
-timeout 20 "$T/zumo-limit" --once --dry-run 2>"$T/tok.log"
-chequear "dry-run no corta" "vivo vivo" "$(estado $K1 $K2)"
-timeout 20 "$T/zumo-limit" --once 2>"$T/tok.log"; sleep 0.3
-chequear "sesión sin token de la cuenta con token: cortada; cuenta sin token: sigue" "cortado vivo" "$(estado $K1 $K2)"
-chequear "queda en el registro" "si" "$(grep -q 'ztest5.*sin-token' "$T/tok.log" && echo si || echo no)"
 
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi

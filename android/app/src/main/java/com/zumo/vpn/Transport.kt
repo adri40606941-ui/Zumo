@@ -72,7 +72,7 @@ object Transport {
     fun primerCorte(out: OutputStream): OutputStream = PrimerCorte(out)
 
     /** Conecta por TCP (y TLS si se pidió) y, si hay payload, lo envía y consume las respuestas HTTP. */
-    fun connect(c: Config, etapa: (String) -> Unit = {}, proteger: (Socket) -> Unit = {}, token: String = ""): Tunnel {
+    fun connect(c: Config, etapa: (String) -> Unit = {}, proteger: (Socket) -> Unit = {}): Tunnel {
         etapa("Conectando a ${c.host}:${c.sshPort}")
         var s = Socket()
         // Hay que sacar esta conexión de la VPN antes de que exista el túnel (TUN): si no, el
@@ -97,7 +97,7 @@ object Transport {
         if (c.payload.isNotBlank()) {
             etapa("Enviando payload")
             s.soTimeout = 15000
-            for ((i, parte) in partir(conToken(expandir(c.payload, c, token), token)).withIndex()) {
+            for ((i, parte) in partir(expandir(c.payload, c)).withIndex()) {
                 if (i > 0) Thread.sleep(150)
                 salida.write(parte.toByteArray(Charsets.ISO_8859_1))
                 salida.flush()
@@ -125,8 +125,7 @@ object Transport {
     }
 
     /** Reemplaza los comodines del payload: [host] [port] [host_port] [crlf] [cr] [lf] [protocol]. */
-    fun expandir(p: String, c: Config, token: String = ""): String = p
-        .replace("[token]", token)
+    fun expandir(p: String, c: Config): String = p
         .replace("\\r", "\r").replace("\\n", "\n")
         .replace("[crlf*2]", "\r\n\r\n")
         .replace("[host_port]", "${c.host}:${c.sshPort}")
@@ -135,18 +134,6 @@ object Transport {
         .replace("[port]", c.sshPort.toString())
         .replace("[protocol]", "HTTP/1.1")
         .replace("[crlf]", "\r\n").replace("[cr]", "\r").replace("[lf]", "\n")
-
-    /** Cabecera con la que el dispositivo se identifica ante el servidor. */
-    const val CABECERA_TOKEN = "X-Zumo-Token"
-
-    /** Si el payload no usó [token], agrega la cabecera X-Zumo-Token justo después de la primera
-     *  línea (el primer pedido es el que el servidor lee antes de abrir el túnel). */
-    fun conToken(p: String, token: String): String {
-        if (token.isBlank() || p.contains("$CABECERA_TOKEN:", ignoreCase = true)) return p
-        val i = p.indexOf('\n')
-        if (i < 0) return p
-        return p.substring(0, i + 1) + "$CABECERA_TOKEN: $token\r\n" + p.substring(i + 1)
-    }
 
     /** [split] y [instant_split] envían el payload en partes. */
     fun partir(p: String): List<String> =

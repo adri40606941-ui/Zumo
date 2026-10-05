@@ -37,7 +37,6 @@ class MainActivity : Activity() {
     private lateinit var btn: Button
     private lateinit var etUser: EditText
     private lateinit var etPass: EditText
-    private lateinit var tvToken: TextView
     private lateinit var boxLogin: LinearLayout
     private lateinit var puntoEstado: View
     private lateinit var tvVelocidad: TextView
@@ -222,7 +221,7 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
-    /** Pantalla de configuración (servidor, login, token, batería) detrás del botón ☰ de la esquina. */
+    /** Pantalla de configuración (servidor, login, batería) detrás del botón ☰ de la esquina. */
     private fun abrirMenu() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
@@ -251,30 +250,6 @@ class MainActivity : Activity() {
         cCfg.addView(botonSecundario("✏️  Editar configuración") { editarConfig() })
         cCfg.addView(botonSecundario("📤  Compartir configuración") { compartir() })
         col.addView(cCfg)
-
-        // Token en su propio cuadro, grande y con botón de copiar (para que no haya error al pasarlo)
-        val cToken = tarjeta()
-        seccion(cToken, "🪪", "Tu token")
-        texto("Es propio de este teléfono y no cambia al reinstalar. Pásaselo a quien te da el servicio: tu cuenta queda atada a este token.", 12f, TEXTO_SUAVE).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) }
-        }.also { cToken.addView(it) }
-        val valorToken = Token.get(this)
-        tvToken = texto(valorToken, 19f, Color.WHITE, true).apply {
-            setTextIsSelectable(true)
-            gravity = Gravity.CENTER
-            typeface = Typeface.MONOSPACE
-            letterSpacing = 0.04f
-            background = redondo(Color.parseColor("#2E2854"), 12)
-            setPadding(dp(14), dp(14), dp(14), dp(14))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        cToken.addView(tvToken)
-        cToken.addView(botonPrimario("📋  Copiar token", ACENTO) {
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("Token", valorToken))
-            aviso("Token copiado")
-        })
-        col.addView(cToken)
 
         // perfil completo (servidor + inicio de sesión) en un archivo para enviar por WhatsApp
         val cPerfil = tarjeta()
@@ -430,7 +405,7 @@ class MainActivity : Activity() {
     private fun borrarDatos() {
         AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
             .setTitle("Borrar datos")
-            .setMessage("Se borra el servidor, el usuario/clave guardados y los archivos de configuración exportados. El token de este teléfono no cambia. Vas a tener que configurar todo de nuevo.")
+            .setMessage("Se borra el servidor, el usuario/clave guardados y los archivos de configuración exportados. Vas a tener que configurar todo de nuevo.")
             .setPositiveButton("Borrar") { _, _ ->
                 if (ZumoVpnService.corriendo) { prefs.wanted = false; ZumoVpnService.detener(this) }
                 prefs.config = null

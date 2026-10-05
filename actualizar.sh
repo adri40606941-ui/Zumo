@@ -17,7 +17,6 @@ if [ "$(timedatectl show -p Timezone --value 2>/dev/null)" != "$ZUMO_TZ" ]; then
 timedatectl set-timezone "$ZUMO_TZ" 2>/dev/null || { ln -sf "/usr/share/zoneinfo/$ZUMO_TZ" /etc/localtime; echo "$ZUMO_TZ" > /etc/timezone; }
 fi
 mkdir -p /etc/zumo
-( umask 077; touch /etc/zumo/tokens.db )   # tokens de dispositivo (usuario:TOKEN)
 
 # 1) Librería compartida -------------------------------------------------------
 echo -e "${V}[1/4] Librería compartida (zumo-lib.sh)...${N}"
@@ -36,6 +35,16 @@ if [ -s /etc/zumo/usuarios.db ]; then
 while IFS=: read -r u _ e; do
 [ -n "$u" ] && id "$u" >/dev/null 2>&1 && [[ "$e" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && usermod -e "$(date -d "$e +1 day" +%F)" "$u" >/dev/null 2>&1
 done < /etc/zumo/usuarios.db
+fi
+
+# Los usuarios HWID tienen límite 2 por defecto: una sola vez, los que estaban en 1 pasan a 2.
+if [ -s /etc/zumo/usuarios.db ] && [ ! -f /etc/zumo/.hwid-limite2 ]; then
+( . /etc/zumo/zumo-lib.sh
+while IFS=: read -r u l _; do
+[ "$l" = "1" ] || continue
+case "$(getent passwd "$u" 2>/dev/null | cut -d: -f5)" in hwid,*) zumo_db_set "$u" 2 2 ;; esac
+done < /etc/zumo/usuarios.db ) 2>/dev/null
+touch /etc/zumo/.hwid-limite2
 fi
 
 # 2) Panel de terminal ---------------------------------------------------------
@@ -134,7 +143,6 @@ refrescar activar-badvpn.sh    ZUMOBADVPNACT
 refrescar desactivar-badvpn.sh DESBVEOF
 refrescar borrar-temporal.sh   BORRARTEMP
 # PDirect: si está activo se recompila y reinicia solo (conserva banner/color/modo).
-# Es lo que hace que el servidor lea el token del dispositivo (X-Zumo-Token).
 if systemctl is-active --quiet pdirect-80 2>/dev/null; then
 	echo -e "${V}Recompilando PDirect...${N}"
 	if bash /etc/zumo/activar-pdirect.sh >/dev/null 2>&1 && systemctl is-active --quiet pdirect-80; then ok "PDirect recompilado y reiniciado"

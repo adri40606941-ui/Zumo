@@ -1,5 +1,5 @@
 #!/bin/bash
-# Prueba de respaldo/restauración: crea usuarios con contraseña, un usuario con mayúsculas y un
+# Prueba de respaldo/restauración: crea usuarios con contraseña, un HWID y un
 # temporal, hace el respaldo, borra todo, restaura y compara. También prueba
 # el servidor de un solo uso (IP y puerto) y la clave incorrecta.
 # Uso: sudo bash tests/prueba-respaldo.sh   (necesita root, openssl, python3, curl)
@@ -7,11 +7,11 @@ set -u
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
 AQUI=$(cd "$(dirname "$0")/.." && pwd)
 T=$(mktemp -d /tmp/zumo-resp.XXXXXX); chmod 755 "$T"; FALLOS=0
-USERS="zrpedro zrana ZrMayus1 zrtemp"
+USERS="zrpedro zrana HWIDRESP0001 zrtemp"
 limpiar() { for u in $USERS; do userdel "$u" 2>/dev/null; done; rm -rf "$T"; }
 trap limpiar EXIT
 export ZUMO_DB="$T/usuarios.db" ZUMO_LOCK="$T/lock" ZUMO_DATOS="$T/datos.db" ZUMO_HIST="$T/hist.db" ZUMO_LIMCONF="$T/limit.conf" ZUMO_RESP_DIR="$T/resp"
-DB="$ZUMO_DB"; TEMPDB="$T/temporales.db"; N='\e[0m'; L='---'; CLAVES="$T/claves.db"; TOKENS="$T/tokens.db"
+DB="$ZUMO_DB"; TEMPDB="$T/temporales.db"; N='\e[0m'; L='---'; CLAVES="$T/claves.db"
 source "$AQUI/zumo-lib.sh"
 extraer() { sed -n "/^$1() {/,/^}$/p" "$AQUI/panel.sh"; }
 for f in msg_ok msg_err fecha_cuenta _merge_por_usuario _respaldo_crear _respaldo_restaurar _respaldo_servidor_py _respaldos_lista; do
@@ -25,15 +25,14 @@ existe() { id "$1" >/dev/null 2>&1 && echo si || echo no; }
 
 useradd -M -s /bin/false -e 2099-01-01 zrpedro; echo "zrpedro:clave123" | chpasswd
 useradd -M -s /bin/false -e 2099-02-02 zrana; echo "zrana:otra456" | chpasswd; usermod -L zrana
-useradd --badname -M -s /bin/false -e 2099-03-03 ZrMayus1; echo "ZrMayus1:ZrMayus1" | chpasswd
+useradd --badname -M -s /bin/false -e 2099-03-03 -c "hwid,Carlos" HWIDRESP0001; echo "HWIDRESP0001:HWIDRESP0001" | chpasswd
 useradd -M -s /bin/false -e 2099-01-01 zrtemp; echo "zrtemp:tmp789" | chpasswd
-printf 'zrpedro:2:2099-01-01\nzrana:1:2099-02-02\nZrMayus1:1:2099-03-03\nzrtemp:1:2099-01-01\n' > "$DB"
+printf 'zrpedro:2:2099-01-01\nzrana:1:2099-02-02\nHWIDRESP0001:1:2099-03-03\nzrtemp:1:2099-01-01\n' > "$DB"
 EP=$(( $(date +%s) + 3000 )); printf 'zrtemp:%s\n' "$EP" > "$TEMPDB"
-printf 'zrpedro:A1B2C3D4E5F6\nzrana:111122223333\n' > "$TOKENS"
 printf 'zrpedro:5000\nzrana:700\n' > "$ZUMO_DATOS"
 printf '2026-10-01:zrpedro:3000\n2026-10-02:zrpedro:2000\n2026-10-02:zrana:700\n' > "$ZUMO_HIST"
 echo "KICK=oldest" > "$ZUMO_LIMCONF"
-H1=$(hash_de zrpedro); H2=$(hash_de zrana); H3=$(hash_de ZrMayus1)
+H1=$(hash_de zrpedro); H2=$(hash_de zrana); H3=$(hash_de HWIDRESP0001)
 
 echo "1) Crear respaldo"
 ARCH="$T/resp/prueba.zbk"
@@ -57,19 +56,17 @@ chequear "avisa DESCARGADO" "si" "$(grep -q DESCARGADO "$T/srv.out" && echo si |
 
 echo "4) Borro todo y restauro (como una VPS nueva)"
 for u in $USERS; do userdel "$u" 2>/dev/null; done
-: > "$DB"; rm -f "$TEMPDB" "$TOKENS" "$ZUMO_DATOS" "$ZUMO_HIST" "$ZUMO_LIMCONF"
+: > "$DB"; rm -f "$TEMPDB" "$ZUMO_DATOS" "$ZUMO_HIST" "$ZUMO_LIMCONF"
 _respaldo_restaurar "$T/bajado.zbk" "Clave1234"; chequear "restaura con la clave buena" "0" "$?"
 chequear "usuarios creados" "4" "$RS_NUEVOS"
-for u in zrpedro zrana ZrMayus1 zrtemp; do chequear "existe $u" "si" "$(existe $u)"; done
+for u in zrpedro zrana HWIDRESP0001 zrtemp; do chequear "existe $u" "si" "$(existe $u)"; done
 chequear "misma contraseña zrpedro" "$H1" "$(hash_de zrpedro)"
 chequear "zrana sigue bloqueada (mismo hash)" "$H2" "$(hash_de zrana)"
-chequear "misma contraseña ZrMayus1" "$H3" "$(hash_de ZrMayus1)"
+chequear "misma contraseña HWID" "$H3" "$(hash_de HWIDRESP0001)"
+chequear "etiqueta del HWID" "hwid,Carlos" "$(getent passwd HWIDRESP0001 | cut -d: -f5)"
 chequear "la cuenta de Linux vence un día después (chage)" "si" "$(chage -l zrpedro | grep -q 'Jan 02, 2099' && echo si || echo no)"
 chequear "base: límite y vencimiento" "zrpedro:2:2099-01-01" "$(grep '^zrpedro:' "$DB")"
 chequear "base: 4 filas" "4" "$(grep -c : "$DB")"
-chequear "tokens.db vuelve (zrpedro)" "A1B2C3D4E5F6" "$(awk -F: '$1=="zrpedro"{print $2}' "$TOKENS")"
-chequear "tokens.db vuelve (zrana)" "111122223333" "$(awk -F: '$1=="zrana"{print $2}' "$TOKENS")"
-chequear "tokens.db modo 600" "600" "$(stat -c %a "$TOKENS")"
 chequear "datos.db vuelve" "zrpedro:5000" "$(grep '^zrpedro:' "$ZUMO_DATOS")"
 chequear "historial vuelve (3 filas)" "3" "$(grep -c : "$ZUMO_HIST")"
 chequear "limit.conf vuelve" "KICK=oldest" "$(cat "$ZUMO_LIMCONF")"
@@ -80,7 +77,6 @@ echo "zrpedro:5000999" > /dev/null
 _respaldo_restaurar "$T/bajado.zbk" "Clave1234"
 chequear "0 creados, 4 existentes" "0/4" "$RS_NUEVOS/$RS_EXISTENTES"
 chequear "base sin duplicados" "4" "$(grep -c : "$DB")"
-chequear "tokens sin duplicados" "2" "$(grep -c : "$TOKENS")"
 chequear "datos sin duplicados" "2" "$(grep -c : "$ZUMO_DATOS")"
 
 echo "6) Un temporal ya vencido no se recrea"

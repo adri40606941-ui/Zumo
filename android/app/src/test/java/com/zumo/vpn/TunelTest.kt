@@ -204,20 +204,6 @@ class TunelTest {
     }
 
     @Test
-    fun el_token_viaja_en_el_primer_pedido() {
-        val px = FalsoProxy(sshPort, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n").also { cerrar += it }
-        val cfg = Config(host = "127.0.0.1", sshPort = px.puerto,
-            payload = "GET /ssh HTTP/1.1[crlf]Host: x.net[crlf]Upgrade: websocket[crlf][crlf]")
-        val t = SshTunnel(cfg, "cliente", "clave1", token = "ABC123DEF456")
-        t.connect()
-        assertEquals("GET /ssh HTTP/1.1\r\nX-Zumo-Token: ABC123DEF456\r\nHost: x.net\r\nUpgrade: websocket\r\n\r\n", px.recibido)
-        assertEquals("A\nX-Zumo-Token: T\r\nB", Transport.conToken("A\nB", "T"))
-        assertEquals("A [token]", Transport.expandir("A [token]", cfg, "T").replace("T", "[token]"))
-        assertEquals("A\nB", Transport.conToken("A\nB", ""))
-        t.close()
-    }
-
-    @Test
     fun limpia_el_host_pegado_por_el_usuario() {
         assertEquals(Config(host = "vps.ejemplo.com", sshPort = 8080), Config(host = " https://vps.ejemplo.com:8080/ruta ", sshPort = 22).limpiar())
         assertEquals(Config(host = "10.0.0.5", sshPort = 443), Config(host = "10.0.0.5:443").limpiar())

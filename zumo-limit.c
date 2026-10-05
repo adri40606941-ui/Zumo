@@ -29,12 +29,6 @@
  *   --once      hace una sola revisión y termina
  *   --dry-run   solo informa lo que cortaría, no corta nada
  *
- *   5. Token por dispositivo: si el usuario tiene un token en TOKEN_DB_PATH
- *      (usuario:TOKEN), solo se aceptan sesiones que lleguen por PDirect con ese
- *      token (cabecera X-Zumo-Token del payload, que pdirect anota en la 2.a línea
- *      de /run/zumo/pmap/<puerto>). Las demás sesiones de ese usuario se cortan.
- *      Los usuarios sin token en la base no se tocan.
- *
  * Aviso: pdirect anota la IP real en /run/zumo/pmap/<puerto>; acá solo se usa
  * para mostrarla en el registro y en /run/zumo/online.db. No interviene en la
  * decisión de cortar. */
@@ -48,7 +42,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -69,9 +62,6 @@
 #endif
 #ifndef VENC_LOCK_PATH
 #define VENC_LOCK_PATH "/etc/zumo/vencidos.lock" /* usuarios bloqueados por vencimiento */
-#endif
-#ifndef TOKEN_DB_PATH
-#define TOKEN_DB_PATH "/etc/zumo/tokens.db" /* usuario:TOKEN (un dispositivo por cuenta) */
 #endif
 #ifndef USERMOD_PATH
 #define USERMOD_PATH "/usr/sbin/usermod"
@@ -102,7 +92,6 @@ typedef struct {
     int limit;
     uid_t uid;
     char exp[11];      /* AAAA-MM-DD o vacío si no se pudo leer */
-    char tok[40];      /* token del dispositivo, vacío = cuenta sin token */
 } UserLim;
 
 /* socket aceptado por sshd (puerto local 22) y su peer */
@@ -118,8 +107,6 @@ typedef struct {
     pid_t pid;
     unsigned long long start;      /* inicio del proceso, en ticks desde el arranque */
     char ip[46];                   /* IP real si se pudo resolver, "" si no */
-    char tok[40];                  /* token con el que llegó por PDirect, "" si no */
-    int dead;                      /* 1 = ya cortada por token, no cuenta para el límite */
 } Sess;
 
 static int g_dry_run = 0;
@@ -215,29 +202,10 @@ static int load_users(UserLim *users) {
         users[n].uid = pw->pw_uid;
         if (valid_date(expstr)) strcpy(users[n].exp, expstr);
         else users[n].exp[0] = '\0';
-        users[n].tok[0] = '\0';
         n++;
     }
     fclose(f);
     return n;
-}
-
-/* Lee usuario:TOKEN y se lo pone a cada usuario cargado. */
-static void load_tokens(UserLim *users, int nusers) {
-    FILE *f = fopen(TOKEN_DB_PATH, "r");
-    if (!f) return;
-    char line[160];
-    while (fgets(line, sizeof(line), f)) {
-        char *c = strchr(line, ':');
-        if (!c) continue;
-        *c = '\0';
-        char *t = c + 1;
-        trim(t);
-        if (!t[0] || strlen(t) >= sizeof(users[0].tok)) continue;
-        for (int i = 0; i < nusers; i++)
-            if (!strcmp(users[i].name, line)) { snprintf(users[i].tok, sizeof(users[i].tok), "%s", t); break; }
-    }
-    fclose(f);
 }
 
 /* --------------------------------------------- IP real (solo informativo) */
@@ -301,29 +269,25 @@ static int scan_sock22(Sock22 *socks) {
     return n;
 }
 
-/* 1.a línea = IP real; 2.a línea (opcional) = token del dispositivo. */
-static int pmap_lookup(int port, char *out, size_t outsz, char *tok, size_t toksz) {
+static int pmap_lookup(int port, char *out, size_t outsz) {
     char path[96];
     snprintf(path, sizeof(path), PMAP_DIR "/%d", port);
-    if (tok && toksz) tok[0] = '\0';
     FILE *f = fopen(path, "r");
     if (!f) return 0;
     if (!fgets(out, (int)outsz, f)) { fclose(f); return 0; }
-    out[strcspn(out, "\r\n")] = '\0';
-    if (tok && toksz && fgets(tok, (int)toksz, f)) tok[strcspn(tok, "\r\n")] = '\0';
     fclose(f);
+    out[strcspn(out, "\r\n")] = '\0';
     return out[0] != '\0';
 }
 
 /* IP real del cliente de una sesión (por el socket que sshd aceptó). */
-static int sshd_real_ip(pid_t pid, const Sock22 *socks, int nsocks, char *out, size_t outsz, char *tok, size_t toksz) {
+static int sshd_real_ip(pid_t pid, const Sock22 *socks, int nsocks, char *out, size_t outsz) {
     char dir[64];
     snprintf(dir, sizeof(dir), "/proc/%d/fd", pid);
     DIR *d = opendir(dir);
     if (!d) return 0;
     struct dirent *de;
     int found = 0;
-    if (tok && toksz) tok[0] = '\0';
     while (!found && (de = readdir(d)) != NULL) {
         char link[320], target[128];
         snprintf(link, sizeof(link), "%s/%s", dir, de->d_name);
@@ -336,7 +300,7 @@ static int sshd_real_ip(pid_t pid, const Sock22 *socks, int nsocks, char *out, s
             if (socks[i].inode != inode) continue;
             if (strcmp(socks[i].rem_ip, "127.0.0.1") == 0) {
                 /* túnel local: la IP real, si existe, la anotó pdirect */
-                if (!pmap_lookup(socks[i].rem_port, out, outsz, tok, toksz)) out[0] = '\0';
+                if (!pmap_lookup(socks[i].rem_port, out, outsz)) out[0] = '\0';
             } else {
                 snprintf(out, outsz, "%s", socks[i].rem_ip);
             }
@@ -415,8 +379,6 @@ static int scan_sessions(Sess *sess, const UserLim *users, int nusers) {
         sess[n].pid = pid;
         sess[n].start = st;
         sess[n].ip[0] = '\0';
-        sess[n].tok[0] = '\0';
-        sess[n].dead = 0;
         n++;
     }
     closedir(d);
@@ -633,28 +595,12 @@ static void handle_expired(const UserLim *users, int nusers, const char *hoy, in
 static void run_cycle(const Conf *cf) {
     int nusers = load_users(g_users);
     if (nusers > 0) {
-        load_tokens(g_users, nusers);
         int ns = scan_sessions(g_sess, g_users, nusers);
         qsort(g_sess, (size_t)ns, sizeof(Sess), cmp_sess);
 
         int nsocks = scan_sock22(g_socks);
         for (int i = 0; i < ns; i++)
-            sshd_real_ip(g_sess[i].pid, g_socks, nsocks, g_sess[i].ip, sizeof(g_sess[i].ip),
-                         g_sess[i].tok, sizeof(g_sess[i].tok));
-
-        /* token por dispositivo: sesiones sin el token de la cuenta se cortan y no cuentan */
-        {
-            int w = 0;
-            for (int i = 0; i < ns; i++) {
-                const UserLim *u = &g_users[g_sess[i].ui];
-                if (u->tok[0] && strcasecmp(u->tok, g_sess[i].tok) != 0) {
-                    cut(&g_sess[i], u, g_sess[i].tok[0] ? "token-distinto" : "sin-token", 1);
-                    continue;
-                }
-                g_sess[w++] = g_sess[i];
-            }
-            ns = w;
-        }
+            sshd_real_ip(g_sess[i].pid, g_socks, nsocks, g_sess[i].ip, sizeof(g_sess[i].ip));
 
         char hoy[11];
         time_t now = time(NULL);

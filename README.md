@@ -34,31 +34,9 @@ entra al mismo `sshd` del puerto 22. No están apilados uno dentro de otro.
 
 ## Usuarios
 
-Todos los usuarios son normales: usuario y contraseña que elegís vos, más un
-**token de dispositivo obligatorio**.
-
-### Token de dispositivo
-
-Es un código de 12 caracteres (letras y números, ej. `A1B2C3D4E5F6`) que la app
-muestra en cada teléfono (☰ > Tu token) y manda en la cabecera `X-Zumo-Token` del
-payload. Al crear un usuario (o con "Cambiar token" en Editar usuario) el panel
-pide el token del cliente; es obligatorio y se guarda en `/etc/zumo/tokens.db`
-(solo root, modo 600, líneas `usuario:TOKEN`). `zumo-limit` corta las sesiones de
-todo usuario listado ahí cuyo token no coincida (sin distinguir mayúsculas).
-Los usuarios que no figuran en `tokens.db` (cuentas viejas) no tienen restricción.
-
-Limitaciones:
-
-- Solo funciona por **PDirect / payload**, que es quien registra el token. Una
-  conexión sin token (SSH directo, BHTTP, HCR) de un usuario con token se corta.
-- Es un **disuasivo**, no seguridad dura: quien conozca el token puede enviarlo.
-- El token se conserva al reinstalar la app solo si el APK se firma con la misma
-  clave y no se hizo restablecimiento de fábrica.
-
-El token viaja en los respaldos del panel y se borra/renombra junto con el usuario.
-
-Despliegue: `git pull` o `actualizar-panel.sh`, reactivar PDirect y reiniciar el
-limitador (`systemctl restart zumo-limit`).
+- **Normal**: usuario y contraseña que vos elegís.
+- **HWID**: el ID del dispositivo del cliente se usa como usuario *y* contraseña.
+  El nombre del cliente queda como etiqueta para identificarlo en el panel.
 
 La base de usuarios está en `/etc/zumo/usuarios.db`, con el formato
 `usuario:limite:vencimiento`. Las operaciones sobre ese archivo pasan todas por
