@@ -16,7 +16,7 @@ class Tunnel(val socket: Socket, val input: InputStream)
  *  el payload o JSch los toquen. Sirve para ver si lo que entra es el protocolo SSH posta o
  *  viene envuelto en algo (WebSocket, una respuesta HTTP mal cortada, etc.). No cambia el
  *  comportamiento del stream, solo mira lo que pasa. */
-private class StreamEspia(private val base: InputStream, private val tope: Int = 220) : InputStream() {
+private class StreamEspia(private val base: InputStream, private val tope: Int = 320) : InputStream() {
     private var total = 0
     override fun read(): Int {
         val v = base.read()
@@ -31,7 +31,7 @@ private class StreamEspia(private val base: InputStream, private val tope: Int =
     @Synchronized private fun registrar(b: ByteArray, off: Int, len: Int) {
         if (total >= tope) return
         val tomar = minOf(len, tope - total)
-        SshDebug.addRaw("[crudo #$total]", b, off, tomar)
+        CrudoDebug.agregar(b, off, tomar)
         total += tomar
     }
 }

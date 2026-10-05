@@ -17,19 +17,41 @@ object SshDebug {
     @Synchronized
     fun limpiar() = buf.clear()
 
-    /** Vuelca bytes crudos (hex + texto) recibidos del servidor, para ver si el transporte
-     *  (payload/TLS) está entregando el protocolo SSH tal cual o algo distinto (p.ej. frames
-     *  de WebSocket sin "desenvolver", o una respuesta HTTP mal cortada). */
+}
+
+/**
+ * Guarda, en un buffer propio (separado del de SshDebug, que JSch va llenando de líneas y
+ * puede "empujar afuera" lo que importa), los primeros bytes crudos recibidos del servidor,
+ * tal cual llegan, antes de que el payload o JSch los toquen. Sirve para ver si lo que entra
+ * es el protocolo SSH posta o viene envuelto en otra cosa (WebSocket, un error de texto plano,
+ * una respuesta HTTP mal cortada, etc.).
+ */
+object CrudoDebug {
+    private const val TOPE = 320
+    private val buf = ByteArray(TOPE)
+    private var total = 0
+
     @Synchronized
-    fun addRaw(etiqueta: String, b: ByteArray, off: Int, len: Int) {
-        if (len <= 0) return
+    fun limpiar() { total = 0 }
+
+    @Synchronized
+    fun agregar(b: ByteArray, off: Int, len: Int) {
+        if (total >= TOPE || len <= 0) return
+        val tomar = minOf(len, TOPE - total)
+        System.arraycopy(b, off, buf, total, tomar)
+        total += tomar
+    }
+
+    @Synchronized
+    fun volcado(): String {
+        if (total == 0) return ""
         val hex = StringBuilder()
         val txt = StringBuilder()
-        for (i in off until off + len) {
-            val v = b[i].toInt() and 0xff
+        for (i in 0 until total) {
+            val v = buf[i].toInt() and 0xff
             hex.append("%02x ".format(v))
             txt.append(if (v in 32..126) v.toChar() else '.')
         }
-        add("$etiqueta (${len}B) hex: $hex texto: $txt")
+        return "[crudo] (${total}B) hex: $hex\ntexto: $txt"
     }
 }

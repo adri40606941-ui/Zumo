@@ -21,6 +21,7 @@ class SshTunnel(
     fun connect() {
         close()
         SshDebug.limpiar()
+        CrudoDebug.limpiar()
         JSch.setLogger(object : com.jcraft.jsch.Logger {
             override fun isEnabled(level: Int) = true
             override fun log(level: Int, message: String?) { SshDebug.add(message ?: "") }
@@ -73,7 +74,11 @@ class SshTunnel(
         } catch (e: Exception) {
             try { tr.socket.close() } catch (_: Exception) {}
             val detalle = SshDebug.ultimas()
-            throw Exception((e.message ?: e.javaClass.simpleName) + if (detalle.isBlank()) "" else "\n\n[ssh] $detalle", e)
+            val crudo = CrudoDebug.volcado()
+            var msg = e.message ?: e.javaClass.simpleName
+            if (detalle.isNotBlank()) msg += "\n\n[ssh] $detalle"
+            if (crudo.isNotBlank()) msg += "\n\n$crudo"
+            throw Exception(msg, e)
         }
     }
 
