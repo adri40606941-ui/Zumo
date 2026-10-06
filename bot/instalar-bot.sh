@@ -10,15 +10,16 @@ mkdir -p /etc/zumo /opt/zumo-bot
 echo "Instalando dependencias..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update >/dev/null 2>&1
-apt-get install -y --no-install-recommends python3 python3-cryptography python3-nacl curl ca-certificates >/dev/null 2>&1 || { echo "✘ No se pudieron instalar las dependencias"; exit 1; }
+apt-get install -y --no-install-recommends python3 python3-nacl curl ca-certificates >/dev/null 2>&1 || { echo "✘ No se pudieron instalar las dependencias"; exit 1; }
 # Para las vistas previas de la apariencia de la app y para achicar el ícono y el fondo. Si no se
 # pueden instalar, el bot anda igual (sin vistas previas).
 apt-get install -y --no-install-recommends python3-pil fonts-dejavu-core >/dev/null 2>&1 || echo "Aviso: sin python3-pil el bot no manda vistas previas de la app (lo demás funciona)."
 
-ARCHIVOS="zs.py servidores.py compilar.py tema.py vista.py marca.py zumo-bot.py"
+ARCHIVOS="servidores.py compilar.py tema.py vista.py marca.py zumo-bot.py"
 for f in $ARCHIVOS; do
 	curl -fsSL "$BASE/$f$NC" -o "/opt/zumo-bot/$f" || { echo "✘ No se pudo bajar $f"; exit 1; }
 done
+rm -f /opt/zumo-bot/zs.py   # el bot ya no arma archivos .zs
 ( cd /opt/zumo-bot && python3 -m py_compile $ARCHIVOS ) || { echo "✘ El bot bajado tiene errores"; exit 1; }
 chmod 755 /opt/zumo-bot/zumo-bot.py
 
@@ -29,8 +30,6 @@ if [ ! -f /etc/zumo/bot.env ]; then
 	  {
 	  echo "BOT_TOKEN=$TOK"
 	  echo "ADMINS=$ADM"
-	  echo "# Secreto del cifrado de los .zs: tiene que ser el mismo que lleva la app"
-	  echo "ZS_SECRET=f14a3636d2aef23c893604756b861ea2"
 	  } > /etc/zumo/bot.env )
 else
 	echo "Se conserva /etc/zumo/bot.env (editalo si querés cambiar el token o los admins)."

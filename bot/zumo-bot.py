@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Bot de Telegram para administrar cuentas de Zumo VPN desde el teléfono.
 
-Se maneja solo con botones (inline). Corre en la VPS como root (crea usuarios SSH reales, igual que el panel) y le manda al
-administrador el archivo .zs que abre la app. Solo responde a los IDs de ADMINS.
+Se maneja solo con botones (inline). Corre en la VPS como root y crea usuarios SSH reales, igual que el panel:
+normales, HWID y temporales. Al crear o renovar manda el mensaje con los datos para pasarle al cliente.
+Solo responde a los IDs de ADMINS.
 
-Configuración: /etc/zumo/bot.env  (BOT_TOKEN, ADMINS, ZS_SECRET)
-Datos del servidor (host, puerto, payload...): /etc/zumo/bot.json (se cambian desde el bot)
+Configuración: /etc/zumo/bot.env  (BOT_TOKEN, ADMINS)
 Servidores de la app Android: /etc/zumo/app-servidores.json (y GITHUB_TOKEN / GITHUB_REPO en bot.env para compilar)
 Apariencia de la app Android: /etc/zumo/app-marca/ (tema.json, icono.png, fondo.jpg); se cambia desde el bot
 """
@@ -29,10 +29,8 @@ import marca  # noqa: E402
 import servidores as srv  # noqa: E402
 import tema as T  # noqa: E402
 import vista  # noqa: E402
-import zs  # noqa: E402
 
 ENV = os.environ.get("ZUMO_BOT_ENV", "/etc/zumo/bot.env")
-ESTADO = os.environ.get("ZUMO_BOT_JSON", "/etc/zumo/bot.json")
 APPSRV = os.environ.get("ZUMO_APP_SERVIDORES", "/etc/zumo/app-servidores.json")
 MARCA = os.environ.get("ZUMO_APP_MARCA", "/etc/zumo/app-marca")
 DB = os.environ.get("ZUMO_DB", "/etc/zumo/usuarios.db")
@@ -40,6 +38,10 @@ CLAVES = os.environ.get("ZUMO_CLAVES", "/etc/zumo/claves.db")
 LIB = os.environ.get("ZUMO_LIB", "/etc/zumo/zumo-lib.sh")
 LIMCONF = os.environ.get("ZUMO_LIMCONF", "/etc/zumo/limit.conf")
 ZUMOID = os.environ.get("ZUMO_ZUMOID", "/usr/local/bin/zumoid")  # control de dispositivo (Android ID)
+PASSWD = os.environ.get("ZUMO_PASSWD", "/etc/passwd")
+TEMPDB = os.environ.get("ZUMO_TEMPDB", "/etc/zumo/temporales.db")
+BORRADOR = os.environ.get("ZUMO_BORRADOR", "/etc/zumo/borrar-temporal.sh")
+PDIRECT_ENV = os.environ.get("ZUMO_PDIRECT_ENV", "/etc/zumo/pdirect.env")
 
 # ---------------------------------------------------------------- configuración
 def leer_env(ruta=ENV):
@@ -53,22 +55,6 @@ def leer_env(ruta=ENV):
     except FileNotFoundError:
         pass
     return d
-
-
-def cargar_estado():
-    try:
-        with open(ESTADO, encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-
-def guardar_estado(d):
-    tmp = ESTADO + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, ESTADO)
 
 
 def cargar_app():
@@ -204,22 +190,182 @@ def fecha_cuenta(exp):
     return (date.fromisoformat(exp) + timedelta(days=1)).isoformat()
 
 
-def crear_usuario(u, clave, dias, limite):
+# Modo HWID (igual que el panel): el usuario y la contraseña de Linux son el HWID del cliente, y el
+# nombre del cliente va en el GECOS como "hwid,<nombre>".
+HWID_RE = re.compile(r"^[A-Za-z0-9]{8,32}$")
+MIN_MAX = 1440          # un temporal dura como mucho un día
+DIAS_TEMPORAL = 2       # vencimiento "de papel" del temporal: lo borra el timer mucho antes
+
+
+def hwids():
+    """{hwid: nombre del cliente} de los usuarios creados en modo HWID."""
+    out = {}
+    try:
+        for linea in open(PASSWD, encoding="utf-8", errors="replace"):
+            p = linea.rstrip("\n").split(":")
+            if len(p) >= 5 and p[4].startswith("hwid,"):
+                out[p[0]] = p[4][5:]
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def limpiar_hwid(t):
+    """Deja solo letras y números (lo que pegan suele traer espacios o guiones)."""
+    return re.sub(r"[^A-Za-z0-9]", "", t)
+
+
+def limpiar_etiqueta(t):
+    """El nombre del cliente va en el GECOS: sin ':' ni caracteres de control, máx. 48."""
+    return re.sub(r"[\x00-\x1f\x7f:]", "", t).strip()[:48] or "cliente"
+
+
+def existe(u):
+    return u in usuarios() or run("id", u).returncode == 0
+
+
+def temporales():
+    """{usuario: epoch en que se borra} de los usuarios temporales."""
+    out = {}
+    try:
+        for linea in open(TEMPDB, encoding="utf-8"):
+            u, _, ep = linea.strip().partition(":")
+            if u and ep.isdigit():
+                out[u] = int(ep)
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def temp_quitar(u):
+    try:
+        l = [x for x in open(TEMPDB, encoding="utf-8") if x.split(":")[0] != u]
+    except FileNotFoundError:
+        return
+    with open(TEMPDB, "w", encoding="utf-8") as f:
+        f.writelines(l)
+
+
+def minutos_restantes(epoch):
+    return max(0, (epoch - int(time.time()) + 59) // 60)
+
+
+def texto_minutos(n):
+    return "1 minuto" if n == 1 else f"{n} minutos"
+
+
+# El mismo script que deja install.sh; el bot lo repone si falta (VPS sin actualizar).
+BORRADOR_SH = """#!/bin/bash
+# Borra un usuario temporal: lo saca del sistema, de la base y del registro temporal.
+u="$1"
+[ -z "$u" ] && exit 0
+[ -f /etc/zumo/zumo-lib.sh ] && source /etc/zumo/zumo-lib.sh
+pkill -9 -u "$u" 2>/dev/null
+userdel "$u" 2>/dev/null
+if command -v zumo_db_del >/dev/null 2>&1; then zumo_db_del "$u"; else sed -i "/^$u:/d" /etc/zumo/usuarios.db 2>/dev/null; fi
+command -v zumo_disp_forget >/dev/null 2>&1 && zumo_disp_forget "$u"
+if [ -f /etc/zumo/temporales.db ]; then grep -v "^$u:" /etc/zumo/temporales.db > /etc/zumo/temporales.db.tmp 2>/dev/null && mv /etc/zumo/temporales.db.tmp /etc/zumo/temporales.db; fi
+exit 0
+"""
+
+
+def programar_borrado(u, minutos):
+    """Anota el temporal y agenda su borrado con systemd-run, como el panel. False si no se pudo agendar
+    (igual queda anotado: el limitador borra los temporales vencidos aunque el timer se pierda)."""
+    if not os.access(BORRADOR, os.X_OK):
+        with open(BORRADOR, "w", encoding="utf-8") as f:
+            f.write(BORRADOR_SH)
+        os.chmod(BORRADOR, 0o755)
+    temp_quitar(u)
+    with open(TEMPDB, "a", encoding="utf-8") as f:
+        f.write(f"{u}:{int(time.time()) + minutos * 60}\n")
+    run("systemctl", "reset-failed", f"zumo-temp-{u}.timer")
+    r = run("systemd-run", "--quiet", "--collect", f"--unit=zumo-temp-{u}", f"--on-active={minutos}min",
+            "--timer-property=AccuracySec=5s", BORRADOR, u)
+    return r.returncode == 0
+
+
+class Aviso(str):
+    """El usuario quedó creado, pero hay algo para avisar (no es un error de alta)."""
+
+
+def _alta(u, clave, limite, dias, minutos, gecos=None):
+    """Crea la cuenta de Linux y la anota en el panel. Con minutos es temporal.
+    Devuelve None, un error (no se creó) o un Aviso (se creó, con una advertencia)."""
+    exp = (date.today() + timedelta(days=DIAS_TEMPORAL if minutos else dias)).isoformat()
+    args = ["useradd"]
+    if gecos or not re.match(r"^[a-z][a-z0-9]*$", u):
+        args.append("--badname")
+    args += ["-M", "-s", "/bin/false", "-e", fecha_cuenta(exp)]
+    if gecos:
+        args += ["-c", gecos]
+    r = run(*args, u)
+    if r.returncode != 0:
+        return "No se pudo crear el usuario: " + (r.stderr.strip() or "error")
+    run("chpasswd", entrada=f"{u}:{clave}\n")
+    if not gecos:
+        clave_guardar(u, clave)   # la de un HWID es el mismo HWID: no se guarda
+    bash_lib("zumo_db_add", u, str(limite), exp)
+    if minutos and not programar_borrado(u, minutos):
+        return Aviso("No se pudo agendar el borrado automático (systemd-run). Lo va a borrar el limitador "
+                     "cuando se cumpla el tiempo; si no, borralo vos desde su ficha.")
+    return None
+
+
+def crear_usuario(u, clave, dias, limite, minutos=None):
+    """Usuario común (usuario y contraseña). Con minutos es temporal: se borra solo al cumplirse."""
     if not NOMBRE_RE.match(u):
         return "Usuario inválido: empieza con letra, solo letras y números, máx. 10."
     if not CLAVE_RE.match(clave):
         return "Contraseña inválida: solo letras y números, de 1 a 10."
-    if run("id", u).returncode == 0:
+    if existe(u):
         return "Ese usuario ya existe."
-    exp = (date.today() + timedelta(days=dias)).isoformat()
-    badname = [] if re.match(r"^[a-z][a-z0-9]*$", u) else ["--badname"]
-    r = run("useradd", *badname, "-M", "-s", "/bin/false", "-e", fecha_cuenta(exp), u)
-    if r.returncode != 0:
-        return "No se pudo crear el usuario: " + (r.stderr.strip() or "error")
-    run("chpasswd", entrada=f"{u}:{clave}\n")
-    clave_guardar(u, clave)
-    bash_lib("zumo_db_add", u, str(limite), exp)
-    return None
+    return _alta(u, clave, limite, dias, minutos)
+
+
+def crear_hwid(hwid, etiqueta, dias, limite, minutos=None):
+    """Usuario en modo HWID: entra con su HWID. Con minutos es temporal."""
+    if not HWID_RE.match(hwid):
+        return "HWID inválido: de 8 a 32 letras y números."
+    if existe(hwid):
+        return "Ese HWID ya está registrado."
+    return _alta(hwid, hwid, limite, dias, minutos, gecos="hwid," + limpiar_etiqueta(etiqueta))
+
+
+def banner_pdirect():
+    """El banner del 101 (PDirect): es la "máquina" que ve el cliente."""
+    try:
+        for linea in open(PDIRECT_ENV, encoding="utf-8"):
+            if linea.startswith("PDIRECT_BANNER="):
+                return linea.split("=", 1)[1].strip() or "ZUMO"
+    except FileNotFoundError:
+        pass
+    return "ZUMO"
+
+
+def fecha_larga(exp, corta=False):
+    try:
+        return date.fromisoformat(exp).strftime("%d/%m" if corta else "%d/%m/%Y")
+    except ValueError:
+        return exp
+
+
+def mensaje_cliente(u):
+    """El mismo mensaje que arma el panel para copiar y mandarle al cliente. None si el usuario no existe."""
+    us = usuarios()
+    if u not in us:
+        return None
+    lim, exp = us[u]
+    temp = temporales().get(u)
+    cliente = hwids().get(u)
+    if cliente is not None:
+        vence = texto_minutos(minutos_restantes(temp)) if temp else fecha_larga(exp)
+        return ("🔐 DATOS DE ACCESO\n├ ☁️ Plan: Privado\n"
+                f"├ ⚙️ Máquina: {banner_pdirect()}\n├ 👤 Usuario: {cliente}\n├ ⏳ Vence: {vence}")
+    vence = texto_minutos(minutos_restantes(temp)) if temp else fecha_larga(exp, corta=True)
+    n = int(lim) if str(lim).isdigit() else 1
+    return (f"👤 {u}\n🔒 {clave_de(u) or '(su clave)'}\n📅 {vence}\n"
+            f"🔌 {'1 dispositivo' if n == 1 else f'{n} dispositivos'}\n📄 {banner_pdirect()}")
 
 
 # ------------------------------------------------------------ dispositivo (Android ID)
@@ -263,6 +409,8 @@ def borrar_usuario(u):
     bash_lib("zumo_db_del", u)
     zid("forget", u)
     clave_borrar(u)
+    run("systemctl", "stop", f"zumo-temp-{u}.timer")
+    temp_quitar(u)
     for tabla, campo in (("/etc/zumo/datos.db", 0), ("/etc/zumo/datos-hist.db", 1)):
         try:
             l = [x for x in open(tabla, encoding="utf-8") if x.split(":")[campo] != u]
@@ -281,24 +429,6 @@ def renovar_usuario(u, dias):
     except FileNotFoundError:
         pass
     return exp
-
-
-# ------------------------------------------------------------------------- .zs
-def armar_zs(u, secreto):
-    """Devuelve (nombre_archivo, bytes) del .zs de un usuario existente, o (None, motivo)."""
-    st = cargar_estado()
-    if not st.get("host"):
-        return None, "Falta el servidor: usá /servidor host [puerto] [nombre]."
-    us = usuarios()
-    if u not in us:
-        return None, "Ese usuario no está en el panel."
-    clave = clave_de(u)
-    if clave is None:
-        return None, "No tengo la contraseña de ese usuario guardada. Cambiala con /clave."
-    p = zs.perfil(st["host"], st.get("port", 80), st.get("payload", ""), st.get("name", "Zumo"),
-                  u, clave, us[u][1], st.get("tls", False), st.get("sni", ""))
-    nombre = re.sub(r"[^A-Za-z0-9_-]", "_", st.get("name", "zumo")) or "zumo"
-    return f"{nombre}.zs", zs.cifrar(p, secreto)
 
 
 # --------------------------------------------------------------------- Telegram
@@ -387,10 +517,20 @@ class Telegram:
 POR_PAGINA = 20
 MENU = [[("➕ Crear usuario", "crear")],
         [("👥 Usuarios", "lista:0")],
-        [("⚙️ Servidor y payload", "srv")],
         [("📱 App Android", "app")],
         [("🪪 Mi ID", "id")]]
 CANCELAR = [[("✖ Cancelar", "menu")]]
+
+
+TIPOS = {"n": "👤 Normal", "h": "🔑 HWID", "t": "⏳ Temporal", "th": "⏳ Temporal HWID"}
+VOLVER = [[("◂ Menú", "menu")]]
+
+
+def teclado_minutos():
+    return [[(f"{n} min", f"cm:{n}") for n in (10, 30, 60)],
+            [(f"{n // 60} horas", f"cm:{n}") for n in (120, 180, 360)],
+            [("✏️ Otro número", "cm:otro")],
+            [("✖ Cancelar", "menu")]]
 
 
 def teclado_dias(prefijo):
@@ -401,8 +541,8 @@ def teclado_dias(prefijo):
 
 
 class Bot:
-    def __init__(self, tg, admins, secreto, gh=None):
-        self.tg, self.admins, self.secreto, self.gh = tg, admins, secreto, gh
+    def __init__(self, tg, admins, gh=None):
+        self.tg, self.admins, self.gh = tg, admins, gh
         self.estado = {}      # chat -> {"paso": ..., datos}
         self.compilando = threading.Lock()
 
@@ -418,15 +558,32 @@ class Bot:
         n = len(usuarios())
         self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + f"🛡 Zumo VPN · {n} usuario(s)\n¿Qué querés hacer?", MENU)
 
+    def pantalla_crear(self, chat, mid):
+        self.estado.pop(chat, None)
+        self.mostrar(chat, mid, "➕ Crear usuario\n¿De qué tipo?\n\n"
+                                "👤 Normal: usuario y contraseña, por días.\n"
+                                "🔑 HWID: entra con el HWID de su celular, por días.\n"
+                                "⏳ Temporal: se borra solo cuando pasan los minutos que elijas.",
+                     [[(TIPOS["n"], "ct:n"), (TIPOS["h"], "ct:h")],
+                      [(TIPOS["t"], "ct:t"), (TIPOS["th"], "ct:th")],
+                      [("◂ Menú", "menu")]])
+
     def pantalla_lista(self, chat, mid, pag):
-        us = sorted(usuarios().items())
+        hw, tm = hwids(), temporales()
+        us = sorted(usuarios().items(), key=lambda x: hw.get(x[0], x[0]).lower())
         if not us:
             return self.mostrar(chat, mid, "No hay usuarios todavía.", [[("➕ Crear usuario", "crear")], [("◂ Menú", "menu")]])
         hoy = date.today().isoformat()
         total = (len(us) - 1) // POR_PAGINA + 1
         pag = max(0, min(pag, total - 1))
         trozo = us[pag * POR_PAGINA:(pag + 1) * POR_PAGINA]
-        botones = [[(f"{'🔴' if e < hoy else '🟢'} {u} · {e[5:] if len(e) == 10 else e}", f"u:{u}")] for u, (_, e) in trozo]
+        botones = [[("➕ Crear usuario", "crear")]]
+        for u, (_, e) in trozo:
+            nombre = f"🔑 {hw[u]}" if u in hw else u
+            if u in tm:
+                botones.append([(f"⏳ {nombre} · {minutos_restantes(tm[u])} min", f"u:{u}")])
+            else:
+                botones.append([(f"{'🔴' if e < hoy else '🟢'} {nombre} · {e[5:] if len(e) == 10 else e}", f"u:{u}")])
         nav = []
         if pag > 0:
             nav.append(("‹ Anterior", f"lista:{pag - 1}"))
@@ -435,19 +592,28 @@ class Bot:
         if nav:
             botones.append(nav)
         botones.append([("◂ Menú", "menu")])
-        self.mostrar(chat, mid, f"👥 Usuarios (pág. {pag + 1}/{total})\n🟢 vigente · 🔴 vencido · se ve el mes-día de vencimiento", botones)
+        self.mostrar(chat, mid, f"👥 Usuarios (pág. {pag + 1}/{total})\n🟢 vigente · 🔴 vencido (mes-día en que vence) · 🔑 HWID · ⏳ temporal", botones)
 
     def pantalla_usuario(self, chat, mid, u):
         us = usuarios()
         if u not in us:
             return self.menu(chat, mid, "Ese usuario ya no existe.")
         lim, exp = us[u]
-        venc = "🔴 vencido" if exp < date.today().isoformat() else "🟢 vigente"
-        txt = f"👤 {u}\nVence: {exp} ({venc})\nLímite de conexiones: {lim}"
-        botones = [
-            [("📤 Enviar .zs", f"x:{u}")],
-            [("🔄 Renovar", f"r:{u}"), ("🔑 Cambiar clave", f"k:{u}")],
-            [("🔢 Límite", f"l:{u}"), ("🗑 Borrar", f"b:{u}")]]
+        cliente = hwids().get(u)
+        temp = temporales().get(u)
+        txt = f"👤 {cliente} (HWID)\nHWID: {u}" if cliente is not None else f"👤 {u}"
+        if temp:
+            txt += f"\n⏳ Temporal: se borra en {texto_minutos(minutos_restantes(temp))}"
+        else:
+            txt += f"\nVence: {exp} ({'🔴 vencido' if exp < date.today().isoformat() else '🟢 vigente'})"
+        txt += f"\nLímite de conexiones: {lim}"
+        botones = [[("📋 Datos para el cliente", f"d:{u}")]]
+        fila = [] if temp else [("🔄 Renovar", f"r:{u}")]          # un temporal no se renueva: se borra solo
+        if cliente is None:
+            fila.append(("🔑 Cambiar clave", f"k:{u}"))          # la clave de un HWID es el mismo HWID
+        if fila:
+            botones.append(fila)
+        botones.append([("🔢 Límite", f"l:{u}"), ("🗑 Borrar", f"b:{u}")])
         d = disp_get(u)
         if d:
             txt += f"\n\n📱 Android ID: {d['id']}\n" + ("🔒 Vinculado: solo ese celular puede entrar" if d["lock"] else "🔓 Sin vincular: entra desde cualquier celular")
@@ -463,17 +629,6 @@ class Bot:
             txt += "\n\n📱 Android ID: todavía no conectó con la app nueva"
         botones.append([("◂ Usuarios", "lista:0")])
         self.mostrar(chat, mid, txt, botones)
-
-    def pantalla_servidor(self, chat, mid):
-        st = cargar_estado()
-        txt = (f"⚙️ Servidor\nHost: {st.get('host') or '(sin definir)'}\nPuerto: {st.get('port', 80)}\n"
-               f"Nombre del archivo: {st.get('name', 'Zumo')}\nTLS: {'sí' if st.get('tls') else 'no'}"
-               f"{' · SNI ' + st['sni'] if st.get('sni') else ''}\n\nPayload:\n{st.get('payload') or '(vacío)'}")
-        self.mostrar(chat, mid, txt, [
-            [("🌐 Host y puerto", "s:host"), ("🏷 Nombre", "s:name")],
-            [("📝 Payload", "s:payload"), ("🧹 Borrar payload", "s:nopayload")],
-            [(f"🔒 TLS: {'sí' if st.get('tls') else 'no'} (cambiar)", "s:tls"), ("SNI", "s:sni")],
-            [("◂ Menú", "menu")]])
 
     def pantalla_app(self, chat, mid, aviso=""):
         l = cargar_app()
@@ -509,12 +664,11 @@ class Bot:
         self.estado[chat] = {"paso": paso, **datos}
         self.tg.mensaje(chat, texto, CANCELAR)
 
-    def enviar_zs(self, chat, u, leyenda):
-        nombre, datos = armar_zs(u, self.secreto)
-        if nombre is None:
-            self.tg.mensaje(chat, "⚠️ " + datos, [[("⚙️ Servidor", "srv")], [("◂ Menú", "menu")]])
-        else:
-            self.tg.documento(chat, nombre, datos, leyenda)
+    def enviar_datos(self, chat, u):
+        """Manda, en un mensaje aparte, los datos listos para reenviarle al cliente."""
+        m = mensaje_cliente(u)
+        if m:
+            self.tg.mensaje(chat, m)
 
     # -- entrada
     def manejar(self, msg):
@@ -564,22 +718,32 @@ class Bot:
             return self.pantalla_lista(chat, mid, int(arg or 0))
         if acc == "u":
             return self.pantalla_usuario(chat, mid, arg)
-        if acc == "srv":
-            self.estado.pop(chat, None)
-            return self.pantalla_servidor(chat, mid)
         if acc == "crear":
-            if not cargar_estado().get("host"):
-                return self.mostrar(chat, mid, "⚠️ Primero definí el servidor (host y puerto).", [[("⚙️ Servidor", "srv")], [("◂ Menú", "menu")]])
-            return self.pedir(chat, "➕ Nuevo usuario\n\nEscribí el nombre de usuario (empieza con letra, solo letras y números, máx. 10):", "c_user")
-        if acc == "cd":      # días elegidos al crear
-            if arg == "otro":
-                self.estado[chat]["paso"] = "c_dias"
-                return self.tg.mensaje(chat, "Escribí la cantidad de días:", CANCELAR)
-            return self.crear_limite(chat, int(arg))
-        if acc == "cl":      # límite elegido al crear
+            return self.pantalla_crear(chat, mid)
+        if acc == "ct":      # tipo de usuario elegido
+            if arg not in TIPOS:
+                return self.pantalla_crear(chat, mid)
+            if arg in ("h", "th"):
+                return self.pedir(chat, f"➕ Nuevo usuario · {TIPOS[arg]}\n\nEscribí el nombre del cliente (solo para identificarlo, no es lo que usa para entrar):", "c_etq", tipo=arg)
+            return self.pedir(chat, f"➕ Nuevo usuario · {TIPOS[arg]}\n\nEscribí el nombre de usuario (empieza con letra, solo letras y números, máx. 10):", "c_user", tipo=arg)
+        if acc in ("cd", "cm", "cl"):      # días, minutos o límite elegidos al crear
+            if chat not in self.estado or "tipo" not in self.estado[chat]:
+                return self.menu(chat, mid, "Eso quedó a medias. Empezá de nuevo desde Crear usuario.")
+            if arg == "otro" and acc != "cl":
+                self.estado[chat]["paso"] = "c_dias" if acc == "cd" else "c_min"
+                return self.tg.mensaje(chat, "Escribí la cantidad de días:" if acc == "cd" else f"Escribí los minutos (1 a {MIN_MAX}):", CANCELAR)
+            temporal = self.estado[chat]["tipo"] in ("t", "th")
+            if not arg.isdigit() or (acc == "cd" and temporal) or (acc == "cm" and not temporal):
+                return self.menu(chat, mid)      # botón de otro alta anterior
+            if acc == "cd":
+                return self.crear_limite(chat, dias=int(arg))
+            if acc == "cm":
+                return self.crear_minutos(chat, int(arg))
             return self.crear_final(chat, int(arg))
-        if acc == "x":
-            return self.enviar_zs(chat, arg, f"Cuenta {arg}")
+        if acc == "d":
+            if arg not in usuarios():
+                return self.menu(chat, mid, "Ese usuario ya no existe.")
+            return self.enviar_datos(chat, arg)
         if acc == "dv":      # vincular / desvincular al celular
             d = disp_get(arg)
             if not d:
@@ -602,6 +766,8 @@ class Bot:
                 return self.pedir(chat, f"Escribí los días para renovar a {u}:", "r_dias", u=u)
             return self.renovar(chat, u, int(n))
         if acc == "k":
+            if arg in hwids():
+                return self.pantalla_usuario(chat, mid, arg)
             return self.pedir(chat, f"🔑 Nueva contraseña para {arg} (letras y números, 1 a 10):", "k_clave", u=arg)
         if acc == "l":
             return self.mostrar(chat, mid, f"🔢 Límite de conexiones de {arg}", [
@@ -616,12 +782,11 @@ class Bot:
         if acc == "bs":
             borrar_usuario(arg)
             return self.pantalla_lista(chat, mid, 0)
-        if acc == "s":
-            return self.boton_servidor(chat, mid, arg)
         if acc == "t":
             return self.boton_tema(chat, mid, arg)
         if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs"):
             return self.boton_app(chat, mid, acc, arg)
+        return self.menu(chat, mid)      # botón de una versión anterior del bot
 
     def boton_app(self, chat, mid, acc, arg):
         self.estado.pop(chat, None)
@@ -683,46 +848,41 @@ class Bot:
             guardar_app(l)
             return self.pantalla_app(chat, mid, f"🗑 {nombre} borrado. Compilá para que se vaya de la app.")
 
-    def boton_servidor(self, chat, mid, arg):
-        st = cargar_estado()
-        if arg == "host":
-            return self.pedir(chat, "🌐 Escribí el dominio o IP del servidor, con el puerto si no es el 80.\nEj: vps.ejemplo.com  o  vps.ejemplo.com:443", "s_host")
-        if arg == "name":
-            return self.pedir(chat, "🏷 Escribí el nombre del archivo (por ejemplo: nombre → nombre.zs):", "s_name")
-        if arg == "payload":
-            return self.pedir(chat, "📝 Pegá el payload en un solo mensaje (podés usar [crlf], [host], [split]...).", "s_payload")
-        if arg == "nopayload":
-            st["payload"] = ""
-            guardar_estado(st)
-        elif arg == "tls":
-            st["tls"] = not st.get("tls", False)
-            guardar_estado(st)
-        elif arg == "sni":
-            return self.pedir(chat, "Escribí el SNI (o - para dejarlo vacío):", "s_sni")
-        self.pantalla_servidor(chat, mid)
-
     # -- texto escrito
     def texto_libre(self, chat, t):
         e = self.estado[chat]
         paso = e["paso"]
+        if paso == "c_etq":
+            e.update(paso="c_hwid", etq=limpiar_etiqueta(t))
+            return self.tg.mensaje(chat, f"Cliente: {e['etq']}\nAhora pegá el HWID del cliente (8 a 32 letras y números):", CANCELAR)
+        if paso == "c_hwid":
+            h = limpiar_hwid(t)
+            if not HWID_RE.match(h):
+                return self.tg.mensaje(chat, f"⚠️ HWID inválido: tienen que quedar de 8 a 32 letras y números (quedaron {len(h)}). Pegalo de nuevo:", CANCELAR)
+            if existe(h):
+                return self.tg.mensaje(chat, "⚠️ Ese HWID ya está registrado. Pegá otro:", CANCELAR)
+            e.update(hwid=h)
+            return self.pedir_duracion(chat, e, f"HWID: {h}\n")
         if paso == "c_user":
             if not NOMBRE_RE.match(t):
                 return self.tg.mensaje(chat, "⚠️ Nombre inválido. Probá de nuevo (empieza con letra, solo letras y números, máx. 10):", CANCELAR)
-            if t in usuarios() or run("id", t).returncode == 0:
+            if existe(t):
                 return self.tg.mensaje(chat, "⚠️ Ese usuario ya existe. Escribí otro nombre:", CANCELAR)
             e.update(paso="c_clave", u=t)
             return self.tg.mensaje(chat, f"Usuario: {t}\nAhora la contraseña (letras y números, 1 a 10):", CANCELAR)
         if paso == "c_clave":
             if not CLAVE_RE.match(t):
                 return self.tg.mensaje(chat, "⚠️ Contraseña inválida. Solo letras y números, de 1 a 10:", CANCELAR)
-            e.update(paso="c_dias_btn", clave=t)
-            return self.tg.mensaje(chat, "¿Cuántos días de duración?", [[(f"{n} días", f"cd:{n}") for n in (7, 15, 30)],
-                                                                    [(f"{n} días", f"cd:{n}") for n in (60, 90, 180)],
-                                                                    [("✏️ Otro número", "cd:otro")], [("✖ Cancelar", "menu")]])
+            e.update(clave=t)
+            return self.pedir_duracion(chat, e)
         if paso == "c_dias":
             if not (t.isdigit() and 1 <= int(t) <= 3650):
                 return self.tg.mensaje(chat, "⚠️ Escribí un número de días (1 a 3650):", CANCELAR)
-            return self.crear_limite(chat, int(t))
+            return self.crear_limite(chat, dias=int(t))
+        if paso == "c_min":
+            if not (t.isdigit() and 1 <= int(t) <= MIN_MAX):
+                return self.tg.mensaje(chat, f"⚠️ Escribí un número de minutos (1 a {MIN_MAX}):", CANCELAR)
+            return self.crear_minutos(chat, int(t))
         if paso == "r_dias":
             if not (t.isdigit() and 1 <= int(t) <= 3650):
                 return self.tg.mensaje(chat, "⚠️ Escribí un número de días (1 a 3650):", CANCELAR)
@@ -734,32 +894,14 @@ class Bot:
             self.estado.pop(chat, None)
             run("chpasswd", entrada=f"{u}:{t}\n")
             clave_guardar(u, t)
-            self.tg.mensaje(chat, f"✅ Contraseña de {u} cambiada. Va el archivo nuevo:")
-            self.enviar_zs(chat, u, f"Cuenta {u} con la clave nueva")
+            self.tg.mensaje(chat, f"✅ Contraseña de {u} cambiada. Los datos para el cliente:")
+            self.enviar_datos(chat, u)
             return self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + u, f"u:{u}")], [("◂ Menú", "menu")]])
         if paso.startswith("a_"):
             return self.texto_app(chat, e, paso, t)
         if paso.startswith("t_"):
             return self.texto_tema(chat, e, paso, t)
-        st = cargar_estado()
-        if paso == "s_host":
-            host, _, puerto = t.partition(":")
-            host = host.strip().removeprefix("https://").removeprefix("http://").strip("/")
-            if not host or " " in host or (puerto and not (puerto.isdigit() and 1 <= int(puerto) <= 65535)):
-                return self.tg.mensaje(chat, "⚠️ Host o puerto inválido. Ej: vps.ejemplo.com:80", CANCELAR)
-            st["host"] = host
-            st["port"] = int(puerto) if puerto else st.get("port", 80)
-        elif paso == "s_name":
-            st["name"] = t[:40]
-        elif paso == "s_payload":
-            st["payload"] = t
-        elif paso == "s_sni":
-            st["sni"] = "" if t == "-" else t
-        else:
-            return self.menu(chat)
-        guardar_estado(st)
-        self.estado.pop(chat, None)
-        self.pantalla_servidor(chat, None)
+        return self.menu(chat)
 
     def borrar_entrada(self, chat, e):
         """Borra del chat el mensaje con el payload que escribiste (para que no quede a la vista)."""
@@ -1268,31 +1410,61 @@ class Bot:
             self.enviar_vista(chat, None, "👁 Así queda.")
 
     # -- acciones
-    def crear_limite(self, chat, dias):
-        self.estado[chat].update(paso="c_lim_btn", dias=dias)
-        self.tg.mensaje(chat, f"{dias} días. ¿Cuántas conexiones a la vez (dispositivos)?",
+    def pedir_duracion(self, chat, e, antes=""):
+        """Los temporales duran minutos; el resto, días."""
+        if e["tipo"] in ("t", "th"):
+            e["paso"] = "c_min_btn"
+            return self.tg.mensaje(chat, antes + "¿Cuántos minutos dura?", teclado_minutos())
+        e["paso"] = "c_dias_btn"
+        self.tg.mensaje(chat, antes + "¿Cuántos días de duración?", teclado_dias("cd"))
+
+    def crear_minutos(self, chat, minutos):
+        if not 1 <= minutos <= MIN_MAX:
+            return self.tg.mensaje(chat, f"⚠️ Los minutos van de 1 a {MIN_MAX}.", CANCELAR)
+        if self.estado[chat]["tipo"] == "th":      # temporal HWID: una sola conexión, como en el panel
+            self.estado[chat]["minutos"] = minutos
+            return self.crear_final(chat, 1)
+        self.crear_limite(chat, minutos=minutos)
+
+    def crear_limite(self, chat, dias=None, minutos=None):
+        e = self.estado[chat]
+        e.update(paso="c_lim_btn", dias=dias, minutos=minutos)
+        cuanto = texto_minutos(minutos) if minutos else f"{dias} días"
+        nota = "\n(En HWID lo habitual es 2.)" if e["tipo"] == "h" else ""
+        self.tg.mensaje(chat, f"{cuanto}. ¿Cuántas conexiones a la vez (dispositivos)?{nota}",
                         [[(str(n), f"cl:{n}") for n in (1, 2, 3, 5)], [("✖ Cancelar", "menu")]])
 
     def crear_final(self, chat, limite):
         e = self.estado.pop(chat, None)
-        if not e or "dias" not in e:
+        if not e or not (e.get("dias") or e.get("minutos")):
             return self.menu(chat)
-        err = crear_usuario(e["u"], e["clave"], e["dias"], limite)
-        if err:
-            return self.tg.mensaje(chat, "⚠️ " + err, [[("◂ Menú", "menu")]])
-        u = e["u"]
-        self.tg.mensaje(chat, f"✅ Usuario {u} creado ({e['dias']} días, {limite} conexión/es). Va su archivo:")
-        self.enviar_zs(chat, u, f"Cuenta {u} · vence {usuarios()[u][1]}")
-        self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + u, f"u:{u}")], [("➕ Crear otro", "crear")], [("◂ Menú", "menu")]])
+        dias, minutos = e.get("dias"), e.get("minutos")
+        if e["tipo"] in ("h", "th"):
+            u = e["hwid"]
+            err = crear_hwid(u, e["etq"], dias, limite, minutos)
+            quien = f"{limpiar_etiqueta(e['etq'])} (HWID {u})"
+        else:
+            u = e["u"]
+            err = crear_usuario(u, e["clave"], dias, limite, minutos)
+            quien = u
+        if err and not isinstance(err, Aviso):
+            return self.tg.mensaje(chat, "⚠️ " + err, VOLVER)
+        cuanto = f"temporal, {texto_minutos(minutos)}" if minutos else f"{dias} días"
+        self.tg.mensaje(chat, f"✅ Usuario {quien} creado ({cuanto}, {limite} conexión/es). Los datos para el cliente:")
+        self.enviar_datos(chat, u)
+        if err:      # quedó creado, pero no se pudo agendar el borrado
+            self.tg.mensaje(chat, "⚠️ " + err)
+        self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + (e.get("etq") or u), f"u:{u}")], [("➕ Crear otro", "crear")], [("◂ Menú", "menu")]])
 
     def renovar(self, chat, u, dias):
         self.estado.pop(chat, None)
         if u not in usuarios():
             return self.menu(chat, None, "Ese usuario no está en el panel.")
         exp = renovar_usuario(u, dias)
-        self.tg.mensaje(chat, f"✅ {u} vence el {exp}. Va el archivo nuevo:")
-        self.enviar_zs(chat, u, f"Cuenta {u} renovada · vence {exp}")
-        self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + u, f"u:{u}")], [("◂ Menú", "menu")]])
+        nombre = hwids().get(u, u)
+        self.tg.mensaje(chat, f"✅ {nombre} vence el {exp}. Los datos para el cliente:")
+        self.enviar_datos(chat, u)
+        self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + nombre, f"u:{u}")], [("◂ Menú", "menu")]])
 
 
 def main():
@@ -1301,12 +1473,11 @@ def main():
     if not token:
         sys.exit("Falta BOT_TOKEN en " + ENV)
     admins = {int(x) for x in re.split(r"[,\s]+", env.get("ADMINS", "")) if x.strip().lstrip("-").isdigit()}
-    secreto = env.get("ZS_SECRET") or zs.SECRETO_POR_DEFECTO
     gh = None
     if env.get("GITHUB_TOKEN"):
         gh = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
                              rama=env.get("GITHUB_REF") or "main")
-    bot = Bot(Telegram(token), admins, secreto, gh)
+    bot = Bot(Telegram(token), admins, gh)
     print("zumo-bot: listo, admins:", sorted(admins) or "ninguno (mandá /id al bot)", flush=True)
     offset = 0
     while True:
