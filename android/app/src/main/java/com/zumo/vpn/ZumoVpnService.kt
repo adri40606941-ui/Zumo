@@ -20,7 +20,7 @@ import java.io.File
 
 /**
  * Servicio de VPN en primer plano. Mantiene el TUN abierto, el túnel SSH y el proxy SOCKS.
- * Si el SSH se cae, reintenta cada 2 segundos y al cambiar de red.
+ * Si el SSH se cae, se reconecta solo con espera creciente y al cambiar de red.
  */
 class ZumoVpnService : VpnService() {
 
@@ -247,6 +247,7 @@ class ZumoVpnService : VpnService() {
     }
 
     private fun bucle(cfg: Config, user: String, pass: String) {
+        var espera = 2000L
         var sinInternet = false
         var fallosAuth = 0
         while (activo) {
@@ -269,7 +270,7 @@ class ZumoVpnService : VpnService() {
                 tunel = t
                 estado = "Conectado"; conectado = true; ultimoError = ""; actualizarNoti()
                 Registro.add("✔ Conectado")
-                fallosAuth = 0
+                espera = 2000L; fallosAuth = 0
                 while (activo && t.conectado && !forzarReconexion) Thread.sleep(1000)
                 forzarReconexion = false
                 if (activo) { ultimoError = "Conexión perdida, reconectando..."; Registro.add("Conexión perdida, reconectando…") }
@@ -292,17 +293,16 @@ class ZumoVpnService : VpnService() {
             }
             if (!activo) break
             estado = "Reconectando..."; actualizarNoti()
-            // Reintento fijo cada 2 segundos: así vuelve rápido cuando el sistema corta la red un
-            // momento. Si antes aparece red de nuevo (vigilarRed -> forzarReconexion), reintenta ya.
             try {
                 var w = 0L
-                while (activo && w < 2000L && !forzarReconexion) { Thread.sleep(250); w += 250 }
+                while (activo && w < espera && !forzarReconexion) { Thread.sleep(500); w += 500 }
             } catch (e: InterruptedException) {
                 // Pasa si el usuario presiona Desconectar justo durante la espera entre reintentos
                 // (apagar() interrumpe este hilo). Si no se captura acá, tumba toda la app.
                 break
             }
             forzarReconexion = false
+            espera = minOf(espera * 2, 20000L)
         }
     }
 
