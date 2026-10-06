@@ -73,6 +73,28 @@ dos personas comparten un usuario, se van sacando una a la otra.
 Ver qué cortó: `journalctl -u zumo-limit -f`. Probar sin cortar nada:
 `zumo-limit --once --dry-run`.
 
+## App Android (Zumo VPN)
+
+El código está en `android/`. GitHub la compila sola cada vez que cambia algo en esa carpeta, y
+también a mano desde **Actions → Compilar app Android → Run workflow**. El APK queda en la rama
+`apk` (`zumo-vpn.apk`). Las compilaciones de otras ramas van a `apk-prueba`, para no pisar el
+APK publicado.
+
+El cliente carga su cuenta de dos formas:
+
+- **Servidor + usuario y contraseña**: elige un servidor de la lista que trae la app y escribe
+  sus datos. El host y el payload no se ven.
+- **Archivo `.zs`**: trae servidor, payload, usuario, clave y vencimiento.
+
+La lista de servidores está en `android/servidores.txt` (un bloque por servidor, cada uno con su
+payload; el formato está explicado en el mismo archivo). Dentro del APK va cifrada. Si el
+repositorio es público y no querés que se lean los payloads, pegá la lista en el secreto
+`ZUMO_SERVIDORES` (Settings → Secrets and variables → Actions) y dejá el archivo sin servidores:
+la compilación usa el secreto. Sin servidores cargados, la app funciona solo con `.zs`.
+
+Para cambiar un payload: editá la lista (o el secreto), compilá y pasales el APK nuevo a los
+clientes. Si no le cambiás el nombre al servidor, no tienen que volver a elegirlo.
+
 ## Archivos del repo
 
 | Archivo | Descripción |
@@ -88,6 +110,7 @@ Ver qué cortó: `journalctl -u zumo-limit -f`. Probar sin cortar nada:
 | `hcr-install.sh` / `hcr-server` | Instalador y binario de HCR. |
 | `bhttp-server-*` / `bhttp-shim-*` | Binarios de BHTTP por arquitectura. |
 | `main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
+| `android/` | App Android (Zumo VPN). `android/servidores.txt` es la lista de servidores que trae la app. |
 | `diagnostico.sh` | Chequeos de estado. |
 
 ## Quitar el panel web de una VPS

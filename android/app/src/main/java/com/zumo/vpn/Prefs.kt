@@ -19,6 +19,11 @@ class Prefs(ctx: Context) {
         get() = sp.getString("pass", "") ?: ""
         set(v) { sp.edit().putString("pass", v).apply() }
 
+    /** Nombre del servidor elegido de la lista que trae la app; vacío si la cuenta vino de un .zs. */
+    var servidor: String
+        get() = sp.getString("servidor", "") ?: ""
+        set(v) { sp.edit().putString("servidor", v).apply() }
+
     /** Vencimiento de la cuenta (AAAA-MM-DD), o vacío. */
     var exp: String
         get() = sp.getString("exp", "") ?: ""

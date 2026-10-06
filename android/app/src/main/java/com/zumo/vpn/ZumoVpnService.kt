@@ -101,13 +101,14 @@ class ZumoVpnService : VpnService() {
 
     private fun encender() {
         val prefs = Prefs(this)
+        Servidores.refrescar(this, prefs)   // servidor de la lista de la app: toma su payload actual
         val cfg = prefs.config
         val user = prefs.user
         val pass = prefs.pass
         crearCanal()
         startForeground(NOTI_ID, notificacion("Conectando..."))
         if (cfg == null || !cfg.valida() || user.isBlank() || pass.isBlank()) {
-            ultimoError = "No hay una cuenta cargada. Abrí el archivo .zs que te pasaron."
+            ultimoError = "Falta la cuenta: elegí un servidor y poné tu usuario y contraseña, o abrí tu archivo .zs."
             Registro.add("✘ $ultimoError")
             estado = "Error"; prefs.wanted = false
             stopSelf(); return
