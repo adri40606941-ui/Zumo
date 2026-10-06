@@ -10,12 +10,13 @@ mkdir -p /etc/zumo /opt/zumo-bot
 echo "Instalando dependencias..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update >/dev/null 2>&1
-apt-get install -y --no-install-recommends python3 python3-cryptography python3-nacl curl ca-certificates >/dev/null 2>&1 || { echo "✘ No se pudieron instalar las dependencias"; exit 1; }
+apt-get install -y --no-install-recommends python3 python3-nacl curl ca-certificates >/dev/null 2>&1 || { echo "✘ No se pudieron instalar las dependencias"; exit 1; }
 
-for f in zs.py servidores.py compilar.py zumo-bot.py; do
+for f in servidores.py compilar.py zumo-bot.py; do
 	curl -fsSL "$BASE/$f$NC" -o "/opt/zumo-bot/$f" || { echo "✘ No se pudo bajar $f"; exit 1; }
 done
-python3 -m py_compile /opt/zumo-bot/zs.py /opt/zumo-bot/servidores.py /opt/zumo-bot/compilar.py /opt/zumo-bot/zumo-bot.py || { echo "✘ El bot bajado tiene errores"; exit 1; }
+rm -f /opt/zumo-bot/zs.py   # el bot ya no arma archivos .zs
+python3 -m py_compile /opt/zumo-bot/servidores.py /opt/zumo-bot/compilar.py /opt/zumo-bot/zumo-bot.py || { echo "✘ El bot bajado tiene errores"; exit 1; }
 chmod 755 /opt/zumo-bot/zumo-bot.py
 
 if [ ! -f /etc/zumo/bot.env ]; then
@@ -25,8 +26,6 @@ if [ ! -f /etc/zumo/bot.env ]; then
 	  {
 	  echo "BOT_TOKEN=$TOK"
 	  echo "ADMINS=$ADM"
-	  echo "# Secreto del cifrado de los .zs: tiene que ser el mismo que lleva la app"
-	  echo "ZS_SECRET=f14a3636d2aef23c893604756b861ea2"
 	  } > /etc/zumo/bot.env )
 else
 	echo "Se conserva /etc/zumo/bot.env (editalo si querés cambiar el token o los admins)."

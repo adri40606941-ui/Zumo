@@ -84,7 +84,8 @@ El cliente carga su cuenta de dos formas:
 
 - **Servidor + usuario y contraseña**: elige un servidor de la lista que trae la app y escribe
   sus datos. El host y el payload no se ven.
-- **Archivo `.zs`**: trae servidor, payload, usuario, clave y vencimiento.
+- **Archivo `.zs`**: trae servidor, payload, usuario, clave y vencimiento. La app todavía los abre,
+  pero el bot ya no los genera.
 
 La lista de servidores está en `android/servidores.txt` (un bloque por servidor, cada uno con su
 payload; el formato está explicado en el mismo archivo). Dentro del APK va cifrada. Si el
@@ -94,6 +95,18 @@ la compilación usa el secreto. Sin servidores cargados, la app funciona solo co
 
 Para cambiar un payload: editá la lista (o el secreto), compilá y pasales el APK nuevo a los
 clientes. Si no le cambiás el nombre al servidor, no tienen que volver a elegirlo.
+
+### Usuarios desde el bot de Telegram
+
+En el bot: **➕ Crear usuario** (también está arriba de la lista de **👥 Usuarios**). Crea lo mismo que el panel:
+
+- **👤 Normal**: usuario, contraseña, días y conexiones.
+- **🔑 HWID**: nombre del cliente, su HWID (8 a 32 letras y números), días y conexiones.
+- **⏳ Temporal** y **⏳ Temporal HWID**: duran los minutos que elijas (hasta 1440) y se borran solos.
+
+Al crear, renovar o cambiar la clave, el bot manda en un mensaje aparte los datos listos para reenviarle al
+cliente (el mismo texto que muestra el panel). En la ficha de cada usuario, **📋 Datos para el cliente** los
+vuelve a mandar. El bot no genera archivos `.zs`.
 
 ### Compilar la app desde el bot de Telegram
 
