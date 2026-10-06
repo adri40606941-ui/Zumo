@@ -29,7 +29,7 @@ for f in db_orden etiqueta_de es_hwid en_linea msg_ok msg_err lista_para_borrar 
 	eval "$src"
 done
 banner() { :; }
-pausa() { :; }
+pausa() { PAUSAS=$((${PAUSAS:-0}+1)); }
 
 mk() { useradd -M -s /bin/false "$1" 2>/dev/null; }
 mkhwid() { useradd --badname -M -s /bin/false -c "hwid,$2" "$1" 2>/dev/null; }
@@ -73,10 +73,12 @@ printf 'root\nnoexiste\n\n' | eliminar_usuario >/dev/null
 chequear "root sigue existiendo" "si" "$(existe root)"
 chequear "zbjuan sigue" "si" "$(en_db zbjuan)"
 
-echo "6) Se puede borrar uno tras otro sin salir; el temporal sale de temporales.db"
-printf 'zbjuan\nzbana\n\n' | eliminar_usuario >/dev/null
+echo "6) Al borrar avisa y vuelve al menú sin recargar la lista; el temporal sale de temporales.db"
+printf 'zbjuan\nzbana\n' | eliminar_usuario >/dev/null
 chequear "zbjuan borrado" "no" "$(en_db zbjuan)"
-chequear "zbana borrado" "no" "$(en_db zbana)"
+chequear "vuelve al menú: no sigue pidiendo (zbana no se borra)" "si" "$(en_db zbana)"
+printf 'zbana\n' | eliminar_usuario >/dev/null
+chequear "zbana borrado en otra pasada" "no" "$(en_db zbana)"
 chequear "zbana fuera de temporales.db" "0" "$(grep -c '^zbana:' "$TEMPDB")"
 
 echo "7) Escribir el número de la lista borra a ese usuario"

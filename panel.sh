@@ -505,7 +505,7 @@ buscar_usuario "$q"; rc=$?
 case $rc in
 0) nombre="$(etiqueta_de "$SEL")"
 borrar_usuario_completo "$SEL"
-msg_ok "Usuario $nombre eliminado"; sleep 1 ;;
+msg_ok "Usuario $nombre eliminado"; pausa; return ;;
 2) msg_err "Hay varios clientes con el nombre \"$q\". Escribí el HWID:"
 for h in "${AMBIGUOS[@]}"; do echo -e "     \e[1;38;5;214m$h${N}"; done
 pausa ;;
