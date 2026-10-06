@@ -20,7 +20,9 @@ VECTOR_PERFIL = zs.perfil("vps.ejemplo.com", 80, "GET / HTTP/1.1[crlf]Host: x.ne
 def cargar_bot(tmp):
     os.environ.update({"ZUMO_BOT_ENV": f"{tmp}/bot.env", "ZUMO_BOT_JSON": f"{tmp}/bot.json",
                        "ZUMO_DB": f"{tmp}/usuarios.db", "ZUMO_CLAVES": f"{tmp}/claves.db",
-                       "ZUMO_APP_SERVIDORES": f"{tmp}/app-servidores.json"})
+                       "ZUMO_APP_SERVIDORES": f"{tmp}/app-servidores.json",
+                       "ZUMO_ZUMOID": f"{tmp}/zumoid", "ZUMO_DISP_DB": f"{tmp}/disp.db",
+                       "ZUMO_DISP_LOCK": f"{tmp}/disp.lock", "ZUMO_DISP_LOG": f"{tmp}/disp.log"})
     spec = importlib.util.spec_from_file_location("zumo_bot", os.path.join(AQUI, "zumo-bot.py"))
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
@@ -262,6 +264,76 @@ class Pruebas(unittest.TestCase):
                     else:
                         self.assertNotIn("ZUMO_KEYSTORE_B64", gh.sec)
                         self.assertIn("ya estaba guardada", tg.mensajes[-1])
+
+    def _con_zumoid(self, tmp):
+        """Copia el binario real de zumoid (o lo compila) a tmp/zumoid. Devuelve False si no se pudo."""
+        import platform, shutil, subprocess
+        repo = os.path.join(AQUI, "..")
+        src = os.path.join(repo, "zumoid-amd64")
+        if platform.machine() in ("x86_64", "AMD64") and os.path.exists(src):
+            shutil.copy(src, f"{tmp}/zumoid")
+        else:
+            r = subprocess.run(["go", "build", "-o", f"{tmp}/zumoid", "."], cwd=os.path.join(repo, "zumoid"),
+                               capture_output=True, env={**os.environ, "CGO_ENABLED": "0"})
+            if r.returncode != 0:
+                return False
+        os.chmod(f"{tmp}/zumoid", 0o755)
+        return True
+
+    def test_dispositivo_ver_vincular_olvidar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            if not self._con_zumoid(tmp):
+                self.skipTest("no hay binario zumoid ni Go para compilarlo")
+            bot, tg, b, txt, btn = self.armar(tmp)
+            open(f"{tmp}/usuarios.db", "w").write("ana:1:2030-01-01\n")
+            # todavía no mandó su ID: se avisa, sin botones de vincular
+            btn("u:ana")
+            self.assertIn("todavía no conectó", tg.mensajes[-1])
+            self.assertNotIn("dv:ana", tg.datos_botones())
+            # ya mandó su ID (lo escribe el servicio)
+            open(f"{tmp}/disp.db", "w").write("ana:aaaaaaaaaaaaaaaa:0:1700000000:1700003600\n")
+            btn("u:ana")
+            self.assertIn("Android ID: aaaaaaaaaaaaaaaa", tg.mensajes[-1])
+            self.assertIn("Sin vincular", tg.mensajes[-1])
+            self.assertIn("dv:ana", tg.datos_botones()); self.assertIn("dx:ana", tg.datos_botones())
+            # vincular
+            btn("dv:ana")
+            self.assertIn("Vinculado", tg.mensajes[-1])
+            self.assertIn(":1:", open(f"{tmp}/disp.db").read())
+            # intento de otro celular
+            open(f"{tmp}/disp.log", "w").write("1700007200\tana\totro-dispositivo\tbbbbbbbbbbbbbbbb\n")
+            btn("u:ana")
+            self.assertIn("Intento bloqueado: otro celular (bbbbbbbbbbbbbbbb)", tg.mensajes[-1])
+            # desvincular
+            btn("dv:ana")
+            self.assertIn("Sin vincular", tg.mensajes[-1])
+            # olvidar pide confirmación
+            btn("dx:ana"); self.assertIn("dxs:ana", tg.datos_botones())
+            self.assertIn("aaaaaaaaaaaaaaaa", open(f"{tmp}/disp.db").read())
+            btn("dxs:ana")
+            self.assertNotIn("aaaaaaaaaaaaaaaa", open(f"{tmp}/disp.db").read())
+            self.assertIn("todavía no conectó", tg.mensajes[-1])
+
+    def test_dispositivo_sin_servicio_instalado(self):
+        with tempfile.TemporaryDirectory() as tmp:  # no hay tmp/zumoid: VPS sin actualizar
+            bot, tg, b, txt, btn = self.armar(tmp)
+            open(f"{tmp}/usuarios.db", "w").write("ana:1:2030-01-01\n")
+            btn("u:ana")
+            self.assertNotIn("Android", tg.mensajes[-1])
+            self.assertNotIn("dv:ana", tg.datos_botones())
+            btn("dv:ana")  # un botón viejo no rompe nada
+            self.assertIn("ana", tg.mensajes[-1])
+
+    def test_borrar_usuario_olvida_el_celular(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            if not self._con_zumoid(tmp):
+                self.skipTest("no hay binario zumoid ni Go para compilarlo")
+            bot = cargar_bot(tmp)
+            open(f"{tmp}/disp.db", "w").write("ana:aaaaaaaaaaaaaaaa:1:1:1\nbeto:bbbbbbbbbbbbbbbb:0:1:1\n")
+            bot.run = lambda *a, **k: None
+            bot.bash_lib = lambda *a: None
+            bot.borrar_usuario("ana")
+            self.assertEqual(open(f"{tmp}/disp.db").read(), "beto:bbbbbbbbbbbbbbbb:0:1:1\n")
 
 
 if __name__ == "__main__":
