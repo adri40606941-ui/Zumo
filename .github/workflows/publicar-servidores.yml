@@ -1,0 +1,54 @@
+name: Publicar servidores de la app
+
+# Publica la lista de servidores cifrada (servidores.bin) en la rama "apk", para que la app la baje
+# con el botón ↻ sin recompilar. Lo dispara el bot (📡 Actualizar servidores en la app).
+# Toma la lista del secreto ZUMO_SERVIDORES (lo pone el bot) o, si no está, de android/servidores.txt.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publicar:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Armar servidores.bin
+        env:
+          ZUMO_SERVIDORES: ${{ secrets.ZUMO_SERVIDORES }}
+        run: |
+          pip install --quiet cryptography
+          if [ -n "$ZUMO_SERVIDORES" ]; then
+            printf '%s\n' "$ZUMO_SERVIDORES" > android/servidores.txt
+          fi
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "bot")
+          import zs
+          with open("android/servidores.txt", encoding="utf-8") as f:
+              texto = f.read()
+          with open("servidores.bin", "wb") as f:
+              f.write(zs.cifrar_lista(texto))
+          print("servidores:", sum(1 for l in texto.splitlines() if l.strip().startswith("[") and l.strip().endswith("]")))
+          PY
+
+      - name: Publicar en la rama apk
+        run: |
+          REPO="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          rm -rf apkbranch
+          if git clone --depth 1 --branch apk "$REPO" apkbranch 2>/dev/null; then
+            :
+          else
+            mkdir apkbranch && cd apkbranch && git init -q && git checkout -q -b apk && cd ..
+          fi
+          cp servidores.bin apkbranch/servidores.bin
+          cd apkbranch
+          git config user.name ci
+          git config user.email ci@users.noreply.github.com
+          git add servidores.bin
+          git commit -qm "Servidores ${GITHUB_RUN_NUMBER}" || { echo "sin cambios"; exit 0; }
+          git push "$REPO" apk

@@ -506,6 +506,7 @@ def teclado_dias(prefijo):
 class Bot(centro.CentroMixin):
     def __init__(self, tg, admins, gh=None):
         self.tg, self.admins, self.gh = tg, admins, gh
+        self.gh_pub = None    # workflow liviano para publicar la lista de servidores (botón ↻ de la app)
         self.estado = {}      # chat -> {"paso": ..., datos}
         self.compilando = threading.Lock()
 
@@ -589,6 +590,7 @@ class Bot(centro.CentroMixin):
             "Todavía no cargaste servidores en el bot.\nAl compilar sin servidores, la app usa lo que ya haya en el secreto ZUMO_SERVIDORES del repo.")
         botones = [[(f"{i + 1}. {s['name']}", f"a:{i}")] for i, s in enumerate(l)]
         botones += [[("➕ Agregar servidor", "aadd"), ("📥 Pegar lista", "apegar")],
+                    [("📡 Actualizar servidores en la app (↻)", "apub")],
                     [("🎨 Apariencia de la app", "t")],
                     [(self.etiqueta_compilar(), "acomp")],
                     [("🔑 Asegurar clave de firma", "aclave")],
@@ -724,7 +726,7 @@ class Bot(centro.CentroMixin):
             return self.pantalla_lista(chat, mid, 0)
         if acc == "t":
             return self.boton_tema(chat, mid, arg)
-        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs", "asp", "aqp"):
+        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "apub", "apub_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs", "asp", "aqp"):
             return self.boton_app(chat, mid, acc, arg)
         return self.menu(chat, mid)      # botón de una versión anterior del bot
 
@@ -757,6 +759,17 @@ class Bot(centro.CentroMixin):
                                 [[("✅ Compilar en GitHub", "acomp_si"), ("✖ No", "app")]])
         if acc == "acomp_si":
             return self.compilar_app(chat)
+        if acc == "apub":
+            if not self.gh_pub:
+                return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "app")]])
+            n = len(cargar_app())
+            return self.mostrar(chat, mid, "📡 Actualizar servidores en la app\n\n"
+                                f"Publica los {n} servidor(es) de la lista para que la app los baje con el botón ↻, "
+                                "sin recompilar ni reinstalar. Tarda menos de un minuto. Los clientes tocan ↻ y los tienen.\n\n"
+                                "Sirve para cambios de host, puerto o payload. Para cambiar la apariencia o el ícono, hay que compilar.",
+                                [[("✅ Publicar ahora", "apub_si"), ("✖ No", "app")]])
+        if acc == "apub_si":
+            return self.publicar_servidores(chat)
         if acc == "aclave":
             if not self.gh:
                 return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "app")]])
@@ -930,14 +943,45 @@ class Bot(centro.CentroMixin):
             return self.tg.mensaje(chat, "⏳ Ya hay una compilación en curso. Esperá a que termine.")
         threading.Thread(target=self._compilar, args=(chat, asegurar), daemon=True).start()
 
-    def _correr(self, chat):
+    def publicar_servidores(self, chat):
+        """Dispara el workflow liviano que publica la lista cifrada en la rama apk (botón ↻ de la app)."""
+        if not self.gh_pub:
+            return self.tg.mensaje(chat, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "app")]])
+        if not self.compilando.acquire(blocking=False):
+            return self.tg.mensaje(chat, "⏳ Hay otra tarea de GitHub en curso. Esperá a que termine.")
+        threading.Thread(target=self._publicar_servidores, args=(chat,), daemon=True).start()
+
+    def _publicar_servidores(self, chat):
+        try:
+            lista = cargar_app()
+            if lista:
+                self.gh.subir_secreto("ZUMO_SERVIDORES", srv.a_texto(lista))
+            mid = self.tg.mensaje(chat, "📡 Publicando la lista para la app…")
+            r = self._correr(chat, gh=self.gh_pub, mid=mid, etiqueta="📡 Publicando la lista para la app…")
+            if r.get("conclusion") == "success":
+                self.tg.editar(chat, mid, f"✅ Lista publicada ({len(lista)} servidor/es). "
+                                          "En la app, tocá el botón ↻ de arriba para bajar los cambios.")
+                self.tg.mensaje(chat, "Listo.", [[("📱 App Android", "app")], [("◂ Menú", "menu")]])
+            else:
+                self.tg.editar(chat, mid, f"❌ No se pudo publicar ({r.get('conclusion')}). {r.get('html_url', '')}")
+                self.tg.mensaje(chat, "Probá de nuevo.", [[("📱 App Android", "app")]])
+        except compilar.ErrorGitHub as ex:
+            self.tg.mensaje(chat, f"⚠️ {ex}", [[("📱 App Android", "app")]])
+        except Exception as ex:
+            self.tg.mensaje(chat, f"⚠️ Error inesperado: {ex}", [[("📱 App Android", "app")]])
+        finally:
+            self.compilando.release()
+
+    def _correr(self, chat, gh=None, mid=None, etiqueta="⏳ En cola en GitHub…"):
         """Lanza el workflow y espera a que termine. Devuelve el run."""
-        gh = self.gh
+        gh = gh or self.gh
+        publicando = gh is self.gh_pub
         antes = gh.ultimo_run()
         gh.lanzar()
         rid = gh.run_nuevo(antes)
         t0 = time.time()
-        mid = self.tg.mensaje(chat, "⏳ En cola en GitHub…")
+        if mid is None:
+            mid = self.tg.mensaje(chat, etiqueta)
         ult = ""
         while True:
             r = gh.run(rid)
@@ -945,19 +989,22 @@ class Bot(centro.CentroMixin):
                 r["id"] = rid
                 return r
             if time.time() - t0 > 45 * 60:
-                raise compilar.ErrorGitHub("La compilación tardó más de 45 minutos. Revisala en GitHub → Actions.")
+                raise compilar.ErrorGitHub("La tarea tardó demasiado. Revisala en GitHub → Actions.")
             m = int((time.time() - t0) // 60)
-            done = total = 0
-            actual = None
-            try:
-                done, total, actual = gh.pasos(rid)
-            except Exception:
-                pass
-            txt = self._barra_compilacion(r.get("status"), done, total, actual, m)
+            if publicando:
+                txt = etiqueta + f"  ({m} min)" if m else etiqueta
+            else:
+                done = total = 0
+                actual = None
+                try:
+                    done, total, actual = gh.pasos(rid)
+                except Exception:
+                    pass
+                txt = self._barra_compilacion(r.get("status"), done, total, actual, m)
             if txt != ult:
                 ult = txt
                 self.tg.editar(chat, mid, txt)
-            time.sleep(15)
+            time.sleep(8 if publicando else 15)
 
     @staticmethod
     def _barra_compilacion(status, done, total, actual, minutos):
@@ -1473,6 +1520,10 @@ def main():
     bot = Bot(Telegram(token), admins, gh)
     bot.leer_env_fn = leer_env
     centro.ENV = ENV
+    # Workflow liviano que publica la lista de servidores para el botón ↻ de la app (sin recompilar).
+    if gh:
+        bot.gh_pub = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
+                                     workflow="publicar-servidores.yml", rama=env.get("GITHUB_REF") or "main")
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()
     print("zumo-bot: listo, admins:", sorted(admins) or "ninguno (mandá /id al bot)", flush=True)
     offset = 0

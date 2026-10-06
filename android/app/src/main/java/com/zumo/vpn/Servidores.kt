@@ -1,11 +1,20 @@
 package com.zumo.vpn
 
 import android.content.Context
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 /**
- * Servidores que vienen dentro de la app. Salen de android/servidores.txt, que al compilar se
- * guarda cifrado en assets/servidores.bin (ver Zs.descifrarLista). El cliente elige uno de la
- * lista y solo pone su usuario y contraseña: el host y el payload no se ven en pantalla.
+ * Servidores que ve el cliente. Hay dos fuentes:
+ *  - la que viene dentro del APK (assets/servidores.bin), horneada al compilar;
+ *  - la que la app baja de internet con el botón ↻ (se guarda en servidores-online.bin).
+ *
+ * Si hay una lista bajada y válida, se usa esa; si no, la del APK. Así, cuando cambiás un
+ * servidor o un payload en el bot, el cliente toca ↻ y lo tiene al instante, sin reinstalar.
+ *
+ * Las dos van cifradas con el mismo formato (ver Zs.descifrarLista) y el mismo SECRETO. La URL de
+ * descarga la hornea Gradle en assets/actualizar.url (sale del centro al compilar).
  *
  * Formato del texto (un bloque por servidor; las líneas que empiezan con # no cuentan):
  *
@@ -18,19 +27,52 @@ import android.content.Context
  */
 object Servidores {
     private const val ASSET = "servidores.bin"
+    private const val ASSET_URL = "actualizar.url"
+    private const val ARCHIVO_ONLINE = "servidores-online.bin"
+    private const val MAX_BYTES = 512 * 1024      // una lista de servidores nunca pesa tanto
+
+    enum class Estado { OK, SIN_INTERNET, SIN_URL, VACIA, ERROR }
+    data class Resultado(val estado: Estado, val cantidad: Int = 0)
 
     @Volatile private var cache: List<Config>? = null
 
     fun lista(ctx: Context): List<Config> {
         cache?.let { return it }
-        val l = try {
-            val datos = ctx.applicationContext.assets.open(ASSET).use { it.readBytes() }
-            Zs.descifrarLista(datos)?.let { parsear(it) } ?: emptyList()
-        } catch (e: Exception) {
-            emptyList()
-        }
+        val l = leerOnline(ctx) ?: leerAsset(ctx) ?: emptyList()
         cache = l
         return l
+    }
+
+    private fun leerAsset(ctx: Context): List<Config>? = try {
+        val datos = ctx.applicationContext.assets.open(ASSET).use { it.readBytes() }
+        Zs.descifrarLista(datos)?.let { parsear(it) }
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun archivoOnline(ctx: Context) = File(ctx.applicationContext.filesDir, ARCHIVO_ONLINE)
+
+    /** Lista bajada de internet, o null si no hay, no se puede abrir o quedó vacía. */
+    private fun leerOnline(ctx: Context): List<Config>? {
+        val f = archivoOnline(ctx)
+        if (!f.isFile) return null
+        return try {
+            val l = Zs.descifrarLista(f.readBytes())?.let { parsear(it) }
+            if (l.isNullOrEmpty()) null else l
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** true si el cliente ya bajó una lista alguna vez (para mostrar "actualizada" en la pantalla). */
+    fun hayOnline(ctx: Context): Boolean = archivoOnline(ctx).isFile
+
+    /** La URL de descarga que horneó el centro al compilar; vacía si la app se compiló sin centro. */
+    fun urlActualizar(ctx: Context): String = try {
+        ctx.applicationContext.assets.open(ASSET_URL).use { it.readBytes() }
+            .toString(Charsets.UTF_8).trim()
+    } catch (e: Exception) {
+        ""
     }
 
     fun buscar(ctx: Context, nombre: String): Config? =
@@ -38,11 +80,60 @@ object Servidores {
 
     /**
      * Si la cuenta usa un servidor de la lista, vuelve a tomar sus datos de la app. Así, cuando se
-     * instala una versión con el payload cambiado, se usa el nuevo sin que el cliente toque nada.
+     * actualiza la lista (bajada o reinstalada), se usa el nuevo sin que el cliente toque nada.
      */
     fun refrescar(ctx: Context, prefs: Prefs) {
         val s = buscar(ctx, prefs.servidor) ?: return
         if (s != prefs.config) prefs.config = s
+    }
+
+    /**
+     * Baja la lista de internet y la guarda. No corre en el hilo principal (hace red).
+     * Nunca rompe la lista que ya hay: si lo que baja no sirve, se deja la anterior.
+     */
+    fun descargar(ctx: Context): Resultado {
+        val url = urlActualizar(ctx)
+        if (url.isBlank()) return Resultado(Estado.SIN_URL)
+        val datos = try {
+            val c = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10000; readTimeout = 10000; useCaches = false
+                setRequestProperty("User-Agent", "ZumoVPN")
+            }
+            try {
+                if (c.responseCode != 200) return Resultado(Estado.ERROR)
+                c.inputStream.use { it.readBytes(MAX_BYTES) }
+            } finally {
+                c.disconnect()
+            }
+        } catch (e: Exception) {
+            return Resultado(Estado.SIN_INTERNET)
+        }
+        val l = Zs.descifrarLista(datos)?.let { parsear(it) }
+        if (l.isNullOrEmpty()) return Resultado(Estado.VACIA)
+        return try {
+            val f = archivoOnline(ctx)
+            val tmp = File(f.parentFile, "$ARCHIVO_ONLINE.tmp")
+            tmp.writeBytes(datos)
+            if (!tmp.renameTo(f)) { tmp.copyTo(f, overwrite = true); tmp.delete() }
+            cache = l
+            Resultado(Estado.OK, l.size)
+        } catch (e: Exception) {
+            Resultado(Estado.ERROR)
+        }
+    }
+
+    private fun java.io.InputStream.readBytes(max: Int): ByteArray {
+        val buf = java.io.ByteArrayOutputStream()
+        val b = ByteArray(8192)
+        var total = 0
+        while (true) {
+            val n = read(b)
+            if (n < 0) break
+            total += n
+            if (total > max) throw java.io.IOException("lista demasiado grande")
+            buf.write(b, 0, n)
+        }
+        return buf.toByteArray()
     }
 
     private val SI = setOf("si", "sí", "s", "yes", "y", "true", "1", "on")

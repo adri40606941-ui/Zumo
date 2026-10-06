@@ -115,6 +115,25 @@ el payload de cualquiera y tocás **🔨 Compilar y enviarme el APK**. El bot su
 `ZUMO_SERVIDORES` del repo, lanza la compilación en GitHub, espera y te manda el APK por Telegram. Si falla,
 te muestra el final del registro. El mensaje con el payload que escribís se borra del chat.
 
+### Actualizar servidores sin recompilar (botón ↻ de la app)
+
+Para cambiar un host, un puerto o un payload **no hace falta recompilar ni reinstalar** la app.
+En el bot, después de editar la lista, tocá **📡 Actualizar servidores en la app (↻)**: sube la lista
+al secreto `ZUMO_SERVIDORES` y dispara el workflow *Publicar servidores de la app*, que escribe la
+lista cifrada (`servidores.bin`) en la rama `apk`. Tarda menos de un minuto.
+
+En la app hay un botón **↻** arriba a la derecha: al tocarlo, baja esa lista de
+`https://raw.githubusercontent.com/<repo>/apk/servidores.bin`, la descifra y la usa en el acto. Si tu
+cuenta usaba un servidor cuyo payload cambió, toma el nuevo sin tocar nada. Si la descarga falla, se
+queda con la lista que ya tenía.
+
+- El `servidores.bin` va cifrado con el mismo secreto que ya viaja dentro del APK, así que publicarlo
+  en una rama pública no agrega exposición.
+- La URL se hornea al compilar (variable `ZUMO_ACTUALIZAR_URL`): una app compilada antes de este
+  cambio no muestra el botón hasta que la recompiles una vez.
+- Cambiar el nombre, el ícono, los colores o el fondo **sí** necesita recompilar (eso no viaja en la lista).
+- No hace falta tocar el token de GitHub: el workflow publica con el token propio de Actions.
+
 ### Apariencia de la app (nombre, colores, ícono, fondo)
 
 En el bot: **📱 App Android → 🎨 Apariencia de la app**. Desde ahí se cambia, sin tocar código:

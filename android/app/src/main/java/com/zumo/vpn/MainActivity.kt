@@ -45,6 +45,8 @@ class MainActivity : Activity() {
     private lateinit var tvEstado: TextView
     private lateinit var tvError: TextView
     private lateinit var btn: Button
+    private var btnActualizar: TextView? = null
+    @Volatile private var actualizando = false
     private lateinit var puntoEstado: View
     private lateinit var tvVelocidad: TextView
     private lateinit var tvTiempo: TextView
@@ -59,7 +61,7 @@ class MainActivity : Activity() {
     private lateinit var cVence: LinearLayout
     private var cargando = false                      // se están poniendo textos por código: no guardar
     private var claveVisible = false
-    private val servidores: List<Config> by lazy { Servidores.lista(this) }
+    private var servidores: List<Config> = emptyList()
     private lateinit var tvVence: TextView
     private lateinit var tvVenceDetalle: TextView
 
@@ -97,6 +99,7 @@ class MainActivity : Activity() {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         prefs = Prefs(this)
+        servidores = Servidores.lista(this)
         armarUi()
         cargarCuenta()
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7)
@@ -232,7 +235,22 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
         })
-        filaCab.addView(cab)
+        // botón ↻ arriba a la derecha: baja la lista de servidores actualizada desde internet.
+        // Solo aparece si la app se compiló con una URL de actualización (desde el centro).
+        if (Servidores.urlActualizar(this).isNotBlank()) {
+            btnActualizar = texto("↻", 22f, ACENTO, true).apply {
+                gravity = Gravity.CENTER
+                background = redondo(conOpacidad(CAMPO), radio(0.9f), trazo = 1, colorTrazo = BORDE)
+                layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+                setOnClickListener { actualizarServidores() }
+            }
+            // espaciador a la izquierda del mismo ancho, para que el título quede centrado
+            filaCab.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)) })
+            filaCab.addView(cab)
+            filaCab.addView(btnActualizar)
+        } else {
+            filaCab.addView(cab)
+        }
         col.addView(filaCab)
 
         // app sin servidores adentro y sin cuenta cargada: solo se pide abrir el .zs
@@ -614,6 +632,34 @@ class MainActivity : Activity() {
         d = dialogo("Elegí el servidor", scroll).setNegativeButton("Cancelar", null).create()
         d.setOnShowListener { d.window?.setBackgroundDrawable(redondo(CARD, radio(0.9f))) }
         d.show()
+    }
+
+    /** Baja la lista de servidores actualizada desde internet (botón ↻). */
+    private fun actualizarServidores() {
+        if (actualizando) return
+        actualizando = true
+        btnActualizar?.apply { text = "…"; isEnabled = false }
+        Thread {
+            val r = Servidores.descargar(this)
+            runOnUiThread {
+                actualizando = false
+                btnActualizar?.apply { text = "↻"; isEnabled = true }
+                when (r.estado) {
+                    Servidores.Estado.OK -> {
+                        servidores = Servidores.lista(this)
+                        Servidores.refrescar(this, prefs)   // si tu servidor cambió de payload, se toma el nuevo
+                        cargarCuenta()
+                        refrescar()
+                        aviso("Servidores actualizados (${r.cantidad})")
+                        Registro.add("Servidores actualizados desde internet: ${r.cantidad}")
+                    }
+                    Servidores.Estado.SIN_INTERNET -> aviso("Sin internet: probá de nuevo")
+                    Servidores.Estado.VACIA -> aviso("La lista descargada está vacía")
+                    Servidores.Estado.SIN_URL -> aviso("Esta app no tiene servidor de actualización")
+                    Servidores.Estado.ERROR -> aviso("No se pudo actualizar: probá más tarde")
+                }
+            }
+        }.start()
     }
 
     private fun usarServidor(s: Config) {

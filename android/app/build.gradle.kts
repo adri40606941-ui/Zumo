@@ -121,7 +121,12 @@ abstract class CifrarServidores : DefaultTask() {
         dir.deleteRecursively()
         dir.mkdirs()
         dir.resolve("servidores.bin").writeBytes("ZL1".toByteArray(Charsets.US_ASCII) + iv + c.doFinal(texto))
+        // URL desde donde la app baja la lista actualizada (la pone el centro al compilar). Vacía = sin botón ↻.
+        dir.resolve("actualizar.url").writeText(urlActualizar.get().trim())
     }
+
+    @get:Input
+    abstract val urlActualizar: Property<String>
 }
 
 val cifrarServidores = tasks.register<CifrarServidores>("cifrarServidores") {
@@ -130,6 +135,7 @@ val cifrarServidores = tasks.register<CifrarServidores>("cifrarServidores") {
     secreto.set(providers.provider {
         Regex("SECRETO\\s*=\\s*\"([^\"]+)\"").find(file("src/main/java/com/zumo/vpn/Zs.kt").readText())!!.groupValues[1]
     })
+    urlActualizar.set(providers.environmentVariable("ZUMO_ACTUALIZAR_URL").orElse(""))
     // la carpeta de salida la pone el plugin de Android (addGeneratedSourceDirectory)
 }
 

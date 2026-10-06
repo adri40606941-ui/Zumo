@@ -10,6 +10,7 @@ import os
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 MAGIA = b"ZS1"
+MAGIA_LISTA = b"ZL1"
 SECRETO_POR_DEFECTO = "f14a3636d2aef23c893604756b861ea2"
 
 
@@ -37,3 +38,20 @@ def descifrar(blob, secreto=SECRETO_POR_DEFECTO):
         raise ValueError("no es un .zs")
     iv, resto = blob[3:15], blob[15:]
     return json.loads(AESGCM(_clave(secreto)).decrypt(iv, resto, None).decode("utf-8"))
+
+
+def cifrar_lista(texto, secreto=SECRETO_POR_DEFECTO):
+    """Lista de servidores cifrada igual que el APK (assets/servidores.bin, formato ZL1).
+    El IV sale del propio texto (SHA-256[:12]) para que la misma lista dé siempre el mismo archivo,
+    byte a byte como lo genera Gradle (tarea CifrarServidores). La abre Zs.descifrarLista de la app.
+    """
+    datos = texto.encode("utf-8")
+    iv = hashlib.sha256(datos).digest()[:12]
+    return MAGIA_LISTA + iv + AESGCM(_clave(secreto)).encrypt(iv, datos, None)
+
+
+def descifrar_lista(blob, secreto=SECRETO_POR_DEFECTO):
+    if len(blob) < 3 + 12 + 16 or blob[:3] != MAGIA_LISTA:
+        raise ValueError("no es una lista ZL1")
+    iv, resto = blob[3:15], blob[15:]
+    return AESGCM(_clave(secreto)).decrypt(iv, resto, None).decode("utf-8")
