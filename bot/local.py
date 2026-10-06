@@ -117,6 +117,11 @@ def compilar(texto_servidores, progreso=None, actualizar=True):
     cola = "\n".join([l for l in log if re.search(r"^e: |FAILED|BUILD|error:|Exception", l)][-25:] or log[-25:])
     apks = glob.glob(os.path.join(SRC, "android/app/build/outputs/apk/release/*.apk"))
     if p.returncode == 0 and apks:
+        r16 = subprocess.run(["python3", "-I", os.path.join(SRC, "android", "comprobar-16kb.py"), apks[0]],
+                             capture_output=True, text=True)
+        if r16.returncode != 0 and os.path.isfile(os.path.join(SRC, "android", "comprobar-16kb.py")):
+            aviso = (aviso + " " if aviso else "") + "La app no quedó lista para celulares con páginas de 16 KB: " + \
+                    (r16.stdout.strip().splitlines() or ["?"])[0][:160]
         with open(apks[0], "rb") as f:
             return {"ok": True, "numero": n, "apk": f.read(), "log": cola, "aviso": aviso}
     return {"ok": False, "numero": n, "apk": b"", "log": cola, "aviso": aviso}
