@@ -145,7 +145,8 @@ class InstalacionMixin:
         if self.codigos is None:
             self.codigos = Codigos()
         c = self.codigos.crear()
-        self.tg.mensaje(chat, "🖥 Instalar en una VPS nueva (Ubuntu/Debian, como root):\n\n```\n" + comando(c) + "\n```\n"
+        self.tg.mensaje(chat, "🖥 Instalar el panel en una VPS nueva (Ubuntu 22.04 o Debian 12, como root):\n\n```\n" + comando(c) + "\n```\n"
+                              "Instala solo el panel (usuarios, protocolos y limitador). No instala el bot ni la app.\n"
                               "⏱ Sirve una sola vez y vence en 15 minutos. Si no lo usás, tocá el botón de nuevo para otro.",
                         [[("🖥 Otro código", "ivps")], [("◂ Menú", "menu")]], md=True)
         return True
