@@ -482,48 +482,6 @@ class Pruebas(unittest.TestCase):
             btn("app")
             self.assertIn("🔨 Compilar en GitHub y enviarme el APK", str(tg.botones[-1]))
             btn("acomp"); self.assertIn("Compilar en GitHub", str(tg.botones[-1]))
-            b.local_activo = True
-            btn("app")
-            self.assertIn("🔨 Compilar en esta VPS y enviarme el APK", str(tg.botones[-1]))
-            btn("acomp"); self.assertIn("Compilar en esta VPS", str(tg.botones[-1]))
-            self.assertNotIn("GitHub", str(tg.botones[-1]))
-
-    def test_menu_del_centro_sin_usuarios(self):
-        import instalacion
-        with tempfile.TemporaryDirectory() as tmp:
-            bot, tg, b, txt, btn = self.armar(tmp)
-            instalacion.BASE_URL = f"{tmp}/base.url"
-            open(instalacion.BASE_URL, "w").write("https://d.example/sec\n")
-            b.local_activo = True
-            txt("hola")
-            self.assertEqual(tg.datos_botones(), ["app", "ivps", "resp"])
-            self.assertNotIn("usuario(s)", tg.mensajes[-1])
-            b.local_activo = False
-            txt("hola")
-            self.assertIn("crear", tg.datos_botones()); self.assertIn("lista:0", tg.datos_botones())
-
-    def test_compilar_en_la_vps(self):
-        import shutil
-        import subprocess
-        import local
-        import respaldo
-        with tempfile.TemporaryDirectory() as tmp:
-            bot, tg, b, txt, btn = self.armar(tmp)
-            b.local_activo = True
-            respaldo.FIRMA = f"{tmp}/firma"
-            local.SRC = f"{tmp}/src"; local.CONTADOR = f"{tmp}/n"
-            os.makedirs(f"{local.SRC}/android")
-            open(f"{local.SRC}/android/servidores.txt", "w").write("[X]\n")
-            subprocess.run(["git", "-C", local.SRC, "init", "-q"], check=True)
-            respaldo.guardar_clave_firma(b"J" * 600, "pw")
-            open(f"{tmp}/gradle", "w").write("#!/bin/bash\nD=" + local.SRC + "/android/app/build/outputs/apk/release; mkdir -p $D; echo APK > $D/a.apk\n")
-            os.chmod(f"{tmp}/gradle", 0o755); local.GRADLE = f"{tmp}/gradle"
-            local.actualizar_codigo = lambda: ""
-            btn("app"); self.assertIn("resp", tg.datos_botones()); self.assertNotIn("aclave", tg.datos_botones())
-            btn("acomp"); self.assertIn("esta VPS", tg.mensajes[-1])
-            b.compilando.acquire(); b._compilar(1)
-            self.assertEqual(tg.docs[-1][0], "zumo-vpn.apk")
-            self.assertEqual(tg.docs[-1][1], b"APK\n")
 
 
     # ------------------------------------------------------------ apariencia de la app
@@ -804,23 +762,6 @@ class Pruebas(unittest.TestCase):
             btn("t:rs"); self.assertIn("t:rs_si", tg.datos_botones())
             btn("t:rs_si"); self.assertEqual(bot.cargar_tema(), T.normalizar({}))
             self.assertTrue(bot.tema_guardado())                      # queda guardado: al compilar pisa lo que hubiera en el repo
-
-    def test_boton_instalar_vps_nueva_da_un_codigo_cada_vez(self):
-        import instalacion
-        with tempfile.TemporaryDirectory() as tmp:
-            bot, tg, b, txt, btn = self.armar(tmp)
-            instalacion.BASE_URL = f"{tmp}/base.url"
-            btn("menu")
-            self.assertNotIn("ivps", tg.datos_botones())    # sin dominio no se ofrece
-            open(instalacion.BASE_URL, "w").write("https://d.example/sec\n")
-            b.codigos = instalacion.Codigos(f"{tmp}/codigos.json")
-            btn("menu")
-            self.assertIn("ivps", tg.datos_botones())
-            btn("ivps"); btn("ivps")
-            cmds = [m for m in tg.mensajes if "https://d.example/i/" in m]
-            self.assertEqual(len(cmds), 2)
-            self.assertNotIn("/sec/", cmds[0])                                       # no muestra el código secreto del centro
-            self.assertNotEqual(cmds[0], cmds[1])
 
     def test_apariencia_imagenes_y_vista_previa(self):
         import io, vista

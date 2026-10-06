@@ -1,4 +1,4 @@
-"""Funciones del bot para la VPS "centro": respaldo cifrado, clave de firma y compilación local.
+"""Funciones del bot para la VPS "centro": respaldo cifrado, clave de firma.
 
 Se mezcla en la clase Bot de zumo-bot.py (usa self.tg, self.estado, self.mostrar, self.pedir...).
 """
@@ -9,7 +9,6 @@ import time
 from datetime import datetime
 
 import compilar
-import local
 import respaldo
 
 ENV = "/etc/zumo/bot.env"                 # zumo-bot.py lo ajusta al arrancar
@@ -39,7 +38,6 @@ def reiniciar_bot():
 
 
 class CentroMixin:
-    local_activo = False          # True si el bot compila en esta VPS
     leer_env_fn = None            # lo pone zumo-bot.py
 
     # ------------------------------------------------------------------ pantallas
@@ -51,9 +49,9 @@ class CentroMixin:
         txt += "Respaldo automático diario: " + ("sí" if env.get("RESPALDO_PASS") and env.get("RESPALDO_AUTO") != "0" else "no") + "\n"
         if c:
             h = respaldo.huella_clave()
-            txt += "Clave de firma de la app: ✅ en esta VPS" + (f"\nHuella: {h}" if h else "") + "\n"
+            txt += "Clave de firma de la app: ✅ en este servidor" + (f"\nHuella: {h}" if h else "") + "\n"
         else:
-            txt += "Clave de firma de la app: ⚠️ no hay en esta VPS\n"
+            txt += "Clave de firma de la app: ⚠️ no hay en este servidor\n"
         txt += "\nEl respaldo se manda cifrado a este chat. Sin la contraseña no se puede abrir: guardala aparte."
         filas = [[("💾 Respaldar ahora", "rnow")],
                  [("🔒 Contraseña del respaldo", "rpass"), ("♻️ Restaurar", "rrest")],
@@ -89,7 +87,7 @@ class CentroMixin:
             self.pedir(chat, "📥 Mandame el archivo clave-firma.enc como documento.", "k_archivo")
         elif acc == "kexp":
             if not respaldo.clave_firma():
-                return self.pantalla_resp(chat, mid, "No hay clave de firma en esta VPS.") or True
+                return self.pantalla_resp(chat, mid, "No hay clave de firma en este servidor.") or True
             self.pedir(chat, "📤 Elegí una contraseña para proteger el archivo (mínimo 8 caracteres). Mandame la contraseña:", "kexp_clave")
         elif acc == "ghtok":
             self.pedir(chat, "🔐 Pegá el token de GitHub (fine-grained, solo el repo Zumo; permisos Actions: Read and write, "
@@ -97,7 +95,7 @@ class CentroMixin:
         elif acc == "ksubir":
             if not getattr(self, "gh", None):
                 return self.pantalla_resp(chat, mid, "Falta el token de GitHub.") or True
-            self.mostrar(chat, mid, "⬆️ Usar la clave de esta VPS en GitHub\n\nGuarda la clave de firma de esta VPS como secreto fijo del repo "
+            self.mostrar(chat, mid, "⬆️ Usar la clave de este servidor en GitHub\n\nGuarda la clave de firma de este servidor como secreto fijo del repo "
                                     "(ZUMO_KEYSTORE_B64 y ZUMO_KS_PASS). Desde ahí, las compilaciones de GitHub salen con la misma firma que las de acá "
                                     "y se actualizan una encima de la otra.\n\n"
                                     "⚠️ Si tus clientes tienen una app firmada con la clave de GitHub de antes, no van a poder actualizar encima: "
@@ -109,7 +107,7 @@ class CentroMixin:
             if not getattr(self, "gh", None):
                 return self.pantalla_resp(chat, mid, "Falta el token de GitHub.") or True
             hay = respaldo.clave_firma() is not None
-            self.mostrar(chat, mid, "☁️ Traer la clave de firma de GitHub\n\nHace una compilación en GitHub, saca la clave actual cifrada y la guarda en esta VPS. "
+            self.mostrar(chat, mid, "☁️ Traer la clave de firma de GitHub\n\nHace una compilación en GitHub, saca la clave actual cifrada y la guarda en este servidor. "
                                     "La app no cambia" + (" (la que tenés acá queda guardada como copia .ant-…)" if hay else "") + ". "
                                     "Sirve para que las compilaciones de acá salgan con la misma firma que las de GitHub.",
                          [[("✅ Hacerlo ahora", "ktraer_si"), ("✖ No", "resp")]])
@@ -215,11 +213,11 @@ class CentroMixin:
 
     # -------------------------------------------------- clave de firma: igualar con GitHub
     def subir_clave_github(self, chat):
-        """Guarda la clave de esta VPS como secreto fijo del repo: GitHub firma igual que acá."""
+        """Guarda la clave de este servidor como secreto fijo del repo: GitHub firma igual que acá."""
         import base64
         c = respaldo.clave_firma()
         if not c:
-            return self.tg.mensaje(chat, "⚠️ No hay clave de firma en esta VPS.", [[("◂ Respaldo", "resp")]])
+            return self.tg.mensaje(chat, "⚠️ No hay clave de firma en este servidor.", [[("◂ Respaldo", "resp")]])
         try:
             with open(c[0], "rb") as f:
                 jks = f.read()
@@ -227,7 +225,7 @@ class CentroMixin:
             self.gh.subir_secreto("ZUMO_KS_PASS", c[1])
         except compilar.ErrorGitHub as ex:
             return self.tg.mensaje(chat, "⚠️ " + str(ex), [[("◂ Respaldo", "resp")]])
-        self.tg.mensaje(chat, "✅ Listo: GitHub ahora firma con la clave de esta VPS"
+        self.tg.mensaje(chat, "✅ Listo: GitHub ahora firma con la clave de este servidor"
                               + (f" (huella {respaldo.huella_clave()})" if respaldo.huella_clave() else "")
                               + ". Los APK de las dos partes se actualizan uno encima del otro.",
                         [[("◂ Respaldo", "resp")]])
@@ -265,35 +263,3 @@ class CentroMixin:
             except Exception as ex:
                 print("zumo-bot: respaldo diario:", ex, flush=True)
             time.sleep(3600)
-
-    # ----------------------------------------------------------- compilación local
-    def _compilar_local(self, chat, lista):
-        import servidores as srv
-        mid = self.tg.mensaje(chat, "🔨 Compilando en esta VPS… 0 min")
-        ult = {"txt": ""}
-
-        def progreso(minutos, tarea, hechas=0, total=0):
-            if total:
-                pct = min(99, int(hechas * 100 / total))
-                barra = "▓" * (pct // 10) + "░" * (10 - pct // 10)
-                txt = f"🔨 Compilando en esta VPS… {barra} {pct}%  (paso {hechas}/{total})"
-            else:
-                txt = "🔨 Compilando en esta VPS…"
-            if tarea:
-                txt += f"\n⚙️ {tarea}"
-            txt += f"\n⏱ {minutos} min"
-            if txt != ult["txt"]:
-                ult["txt"] = txt
-                self.tg.editar(chat, mid, txt)
-        try:
-            r = local.compilar(srv.a_texto(lista) if lista else "", progreso)
-        except local.ErrorLocal as ex:
-            return self.tg.mensaje(chat, f"⚠️ {ex}", [[("📱 App Android", "app")]])
-        if r["aviso"]:
-            self.tg.mensaje(chat, "ℹ️ " + r["aviso"])
-        if r["ok"]:
-            self.tg.documento(chat, "zumo-vpn.apk", r["apk"], f"✅ Compilación {r['numero']} en esta VPS · {len(lista)} servidor(es)")
-            self.tg.mensaje(chat, "✅ Listo. Instalá el APK encima de la versión anterior: se actualiza sin perder nada.",
-                            [[("📱 App Android", "app")], [("◂ Menú", "menu")]])
-        else:
-            self.tg.mensaje(chat, f"❌ La compilación en esta VPS falló.\n{r['log']}", [[("📱 App Android", "app")]])
