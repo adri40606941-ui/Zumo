@@ -204,7 +204,6 @@ local ssh out
 ssh=$(awk 'tolower($1)=="port"{print $2; exit}' /etc/ssh/sshd_config 2>/dev/null)
 out="SSH ${ssh:-22}"
 systemctl is-active --quiet pdirect-80 2>/dev/null && out+=" · WebSocket 80"
-systemctl is-active --quiet zumo-go-80 2>/dev/null && out+=" · Zumo Go 80"
 systemctl is-active --quiet udpgw-7300 2>/dev/null && out+=" · BadVPN 7300"
 if systemctl is-active --quiet bhttp-server 2>/dev/null && systemctl is-active --quiet bhttp-shim 2>/dev/null; then out+=" · BHTTP $(bhttp_port)"; fi
 systemctl is-active --quiet hcr-server 2>/dev/null && out+=" · HCR $(hcr_port)"
@@ -896,48 +895,6 @@ esac
 done
 }
 
-menu_zumo_go() {
-while true; do
-banner; echo -e " \e[1;38;5;141mZUMO GO (WebSocket 80)${N}\n"
-echo -e " \e[2mAlternativa a PDirect, en Go. Puerto 80 → SSH, respuesta 101 y el mismo banner.\n Activar Zumo Go apaga PDirect (los dos usan el puerto 80).${N}\n"
-if systemctl is-active --quiet zumo-go-80; then
-echo -e " \e[1;32m● Zumo Go: activo (80 → SSH)${N}\n"
-else
-echo -e " \e[1;31m● Zumo Go: inactivo${N}\n"
-fi
-op 1 "⚡" "Activar"
-op 2 "✖" "Desactivar"
-op 0 "◂" "Volver"
-echo -e "\n $L"; read -rp " Opción: " o
-case $o in
-1) if systemctl is-active --quiet zumo-go-80; then
-msg_err "Ya está activo"; pausa
-elif [ ! -f /etc/zumo/activar-zumo-go.sh ]; then
-msg_err "Falta activar-zumo-go.sh; actualizá el panel con actualizar.sh"; pausa
-else
-BAN=""; COL=""
-read -rp " ¿Personalizar el banner? [s/N]: " pb
-if [[ "$pb" =~ ^[sS]$ ]]; then
-read -rp " Texto del banner [ZUMO]: " BAN; BAN=${BAN:-ZUMO}
-COL="yellow"
-fi
-echo -e " \e[1;38;5;141mDescargando e instalando, aguardá...${N}"
-if bash /etc/zumo/activar-zumo-go.sh "$BAN" "$COL"; then
-msg_ok "Zumo Go activo (80 → SSH). PDirect quedó apagado."
-[ -n "$BAN" ] && echo -e "   Banner: \e[1;38;5;214m$BAN${N}  Color: \e[1;38;5;214m${COL:-yellow}${N}"
-else
-msg_err "Falló; revisá 'journalctl -u zumo-go-80'"
-fi; pausa
-fi ;;
-2) echo -e " \e[1;38;5;141mLiberando puerto 80...${N}"
-bash /etc/zumo/desactivar-zumo-go.sh 2>/dev/null
-msg_ok "Zumo Go desactivado; puerto 80 liberado"; pausa ;;
-0) return ;;
-*) msg_err "Opción inválida"; sleep 1 ;;
-esac
-done
-}
-
 menu_badvpn() {
 while true; do
 banner; echo -e " \e[1;38;5;141mBADVPN (UDPGW 7300)${N}\n"
@@ -1056,18 +1013,16 @@ menu_protocolos() {
 while true; do
 banner; echo -e " \e[1;38;5;141mPROTOCOLOS${N}\n"
 op 1 "⚡" "PDirect (WebSocket)"
-op 2 "⚡" "Zumo Go (WebSocket)"
-op 3 "⚡" "BadVPN"
-op 4 "⚡" "BHTTP"
-op 5 "⚡" "HCR Server"
+op 2 "⚡" "BadVPN"
+op 3 "⚡" "BHTTP"
+op 4 "⚡" "HCR Server"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) menu_pdirect ;;
-2) menu_zumo_go ;;
-3) menu_badvpn ;;
-4) menu_bhttp ;;
-5) menu_hcr ;;
+2) menu_badvpn ;;
+3) menu_bhttp ;;
+4) menu_hcr ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
