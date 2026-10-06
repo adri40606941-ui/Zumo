@@ -95,6 +95,19 @@ la compilación usa el secreto. Sin servidores cargados, la app funciona solo co
 Para cambiar un payload: editá la lista (o el secreto), compilá y pasales el APK nuevo a los
 clientes. Si no le cambiás el nombre al servidor, no tienen que volver a elegirlo.
 
+### Compilar la app desde el bot de Telegram
+
+En el bot: **📱 App Android**. Ahí cargás los servidores de la app (nombre, host, puerto, payload), cambiás
+el payload de cualquiera y tocás **🔨 Compilar y enviarme el APK**. El bot sube la lista cifrada al secreto
+`ZUMO_SERVIDORES` del repo, lanza la compilación en GitHub, espera y te manda el APK por Telegram. Si falla,
+te muestra el final del registro. El mensaje con el payload que escribís se borra del chat.
+
+Token de GitHub (una sola vez): github.com → Settings → Developer settings → Personal access tokens →
+**Fine-grained tokens** → *Generate new token*; en *Repository access* elegí solo `Zumo`; permisos:
+**Actions: Read and write**, **Secrets: Read and write**, **Contents: Read-only**. Lo pegás cuando el
+instalador del bot lo pide (queda en `/etc/zumo/bot.env`, nunca en el repo). Para cargarlo en un bot ya
+instalado, volvé a correr `bot/instalar-bot.sh`.
+
 ## Archivos del repo
 
 | Archivo | Descripción |

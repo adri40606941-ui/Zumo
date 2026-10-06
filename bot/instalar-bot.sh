@@ -10,12 +10,12 @@ mkdir -p /etc/zumo /opt/zumo-bot
 echo "Instalando dependencias..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update >/dev/null 2>&1
-apt-get install -y --no-install-recommends python3 python3-cryptography curl ca-certificates >/dev/null 2>&1 || { echo "✘ No se pudieron instalar las dependencias"; exit 1; }
+apt-get install -y --no-install-recommends python3 python3-cryptography python3-nacl curl ca-certificates >/dev/null 2>&1 || { echo "✘ No se pudieron instalar las dependencias"; exit 1; }
 
-for f in zs.py zumo-bot.py; do
+for f in zs.py servidores.py compilar.py zumo-bot.py; do
 	curl -fsSL "$BASE/$f$NC" -o "/opt/zumo-bot/$f" || { echo "✘ No se pudo bajar $f"; exit 1; }
 done
-python3 -m py_compile /opt/zumo-bot/zs.py /opt/zumo-bot/zumo-bot.py || { echo "✘ El bot bajado tiene errores"; exit 1; }
+python3 -m py_compile /opt/zumo-bot/zs.py /opt/zumo-bot/servidores.py /opt/zumo-bot/compilar.py /opt/zumo-bot/zumo-bot.py || { echo "✘ El bot bajado tiene errores"; exit 1; }
 chmod 755 /opt/zumo-bot/zumo-bot.py
 
 if [ ! -f /etc/zumo/bot.env ]; then
@@ -30,6 +30,19 @@ if [ ! -f /etc/zumo/bot.env ]; then
 	  } > /etc/zumo/bot.env )
 else
 	echo "Se conserva /etc/zumo/bot.env (editalo si querés cambiar el token o los admins)."
+fi
+
+# Compilar la app desde el bot: token de GitHub (fine-grained, solo el repo Zumo, permisos
+# Actions: Read and write, Secrets: Read and write, Contents: Read-only). Se puede dejar vacío.
+if ! grep -q '^GITHUB_TOKEN=.\+' /etc/zumo/bot.env; then
+	echo
+	echo "Para compilar la app desde el bot hace falta un token de GitHub (ver README, sección Bot)."
+	read -rp "Token de GitHub (vacío = sin compilar desde el bot): " GHT </dev/tty
+	if [ -n "$GHT" ]; then
+		sed -i '/^GITHUB_TOKEN=/d;/^GITHUB_REPO=/d' /etc/zumo/bot.env
+		( umask 077; { echo "GITHUB_TOKEN=$GHT"; echo "GITHUB_REPO=adri40606941-ui/Zumo"; } >> /etc/zumo/bot.env )
+		chmod 600 /etc/zumo/bot.env
+	fi
 fi
 
 cat > /etc/systemd/system/zumo-bot.service <<'U'
