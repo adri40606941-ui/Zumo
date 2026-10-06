@@ -85,7 +85,7 @@ class ZumoVpnService : VpnService() {
         if (intent == null && !prefs.wanted) { stopSelf(); return START_NOT_STICKY }
         prefs.wanted = true
         if (!activo) encender()
-        return START_STICKY
+        return START_NOT_STICKY   // si el sistema la mata, no se vuelve a encender sola
     }
 
     override fun onRevoke() {
@@ -122,7 +122,6 @@ class ZumoVpnService : VpnService() {
         Registro.add("Iniciando…")
         activo = true; corriendo = true; desde = System.currentTimeMillis()
         tomarBloqueos()
-        Watchdog.programar(this)
         try {
             abrirTun()
             socks = SocksServer(SOCKS_PORT) { tunel }.also { it.start() }
@@ -315,7 +314,6 @@ class ZumoVpnService : VpnService() {
 
     private fun apagar() {
         activo = false; corriendo = false; conectado = false; estado = "Desconectado"
-        if (!Prefs(this).wanted) Watchdog.cancelar(this)
         try { (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(cb!!) } catch (_: Exception) {}
         cb = null
         hilo?.interrupt(); hilo = null
