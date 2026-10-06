@@ -3,7 +3,8 @@
 
 Para las librerías de 64 bits (arm64-v8a, x86_64) pide dos cosas:
   1. cada segmento PT_LOAD del .so está alineado a 16 KB o más;
-  2. el .so va sin comprimir dentro del APK y empieza en un múltiplo de 16 KB.
+  2. si el .so va sin comprimir dentro del APK, empieza en un múltiplo de 16 KB (si va comprimido,
+     el sistema lo extrae al instalar, como pide useLegacyPackaging, y no hace falta).
 Las de 32 bits no se tocan: en 32 bits el sistema sigue usando páginas de 4 KB.
 
 Uso: comprobar-16kb.py app.apk     (sale con 0 si está todo bien)
@@ -43,9 +44,7 @@ def revisar(ruta):
                 problemas.append(f"{info.filename}: no es un ELF de 64 bits legible")
             elif not al or min(al) < PAGINA:
                 problemas.append(f"{info.filename}: segmentos alineados a {min(al) if al else '?'} (hacen falta {PAGINA})")
-            if info.compress_type != zipfile.ZIP_STORED:
-                problemas.append(f"{info.filename}: está comprimido dentro del APK")
-            else:
+            if info.compress_type == zipfile.ZIP_STORED:
                 with open(ruta, "rb") as f:
                     f.seek(info.header_offset + 26)
                     n, m = struct.unpack("<HH", f.read(4))
