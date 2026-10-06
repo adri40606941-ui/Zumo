@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
@@ -56,7 +57,6 @@ class MainActivity : Activity() {
     private val servidores: List<Config> by lazy { Servidores.lista(this) }
     private lateinit var tvVence: TextView
     private lateinit var tvVenceDetalle: TextView
-    private lateinit var tvRegistro: TextView
 
     private val BG = Color.parseColor("#14102B")
     private val CARD = Color.parseColor("#201A3D")
@@ -308,28 +308,18 @@ class MainActivity : Activity() {
         cStats.addView(filaStats)
         col.addView(cStats)
 
-        // registro del proceso de conexión
-        val cReg = tarjeta()
-        seccion(cReg, "📝", "Registro")
-        // pulsación larga en el título: copia el registro con el detalle técnico del último error
-        (cReg.getChildAt(0) as ViewGroup).setOnLongClickListener {
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("Registro", Registro.texto(80) + "\n\n" + Registro.detalle))
-            aviso("Registro técnico copiado"); true
-        }
-        tvRegistro = texto("", 12f, TEXTO_SUAVE).apply {
-            typeface = Typeface.MONOSPACE
-            minLines = 4
-            background = redondo(Color.parseColor("#2E2854"), 10)
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-        }
-        cReg.addView(tvRegistro)
-        cReg.addView(botonSecundario("📋  Copiar registro") {
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("Registro", Registro.texto(80)))
-            aviso("Registro copiado")
+        // ajustes del teléfono que ayudan a conectar: DNS privado y batería
+        val cTel = tarjeta()
+        seccion(cTel, "📶", "Ajustes del teléfono")
+        cTel.addView(texto("Si la VPN no conecta, desactivá el DNS privado y sacale el límite de batería a la app.", 12.5f, TEXTO_SUAVE).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) }
         })
-        col.addView(cReg)
+        cTel.addView(botonPrimario("🌐  DNS privado", ACENTO) { abrirDnsPrivado() })
+        cTel.addView(botonPrimario("🔋  Uso de batería", NARANJA) {
+            PowerGuide.pedirExclusion(this)
+            aviso(if (PowerGuide.sinOptimizar(this)) "La app ya está sin límite de batería" else "Permití \"Sin restricciones\" para esta app")
+        })
+        col.addView(cTel)
 
         setContentView(root)
     }
@@ -410,8 +400,6 @@ class MainActivity : Activity() {
         tvVelocidad.text = if (con && ZumoVpnService.velocidad.isNotBlank()) ZumoVpnService.velocidad else "--"
         tvDatos.text = if (con && ZumoVpnService.datosUsados.isNotBlank()) ZumoVpnService.datosUsados else "--"
         tvTiempo.text = if (con && ZumoVpnService.desde > 0) formatearDuracion(System.currentTimeMillis() - ZumoVpnService.desde) else "--"
-
-        tvRegistro.text = Registro.texto(12).ifBlank { "Todavía no hay actividad." }
     }
 
     private fun formatearDuracion(ms: Long): String {
@@ -471,6 +459,21 @@ class MainActivity : Activity() {
         super.onActivityResult(req, res, data)
         if (req == 1 && res == RESULT_OK) ZumoVpnService.iniciar(this)
         if (req == 2 && res == RESULT_OK) data?.data?.let { leerArchivo(it) }
+    }
+
+    /** Abre la pantalla de DNS privado para que el usuario lo ponga en "Desactivado".
+     *  Android no deja que una app lo apague sola (es un ajuste protegido del sistema). */
+    private fun abrirDnsPrivado() {
+        aviso("Poné el DNS privado en \"Desactivado\" / \"Off\" y volvé a la app")
+        val intentos = listOf(
+            Intent("android.settings.PRIVATE_DNS_SETTINGS"),
+            Intent(Settings.ACTION_WIRELESS_SETTINGS),
+            Intent(Settings.ACTION_SETTINGS)
+        )
+        for (i in intentos) {
+            try { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(i); return } catch (_: Exception) {}
+        }
+        aviso("Abrí Ajustes → Conexiones/Red → DNS privado y ponelo en Desactivado")
     }
 
     private fun aviso(t: String) = Toast.makeText(this, t, Toast.LENGTH_LONG).show()
