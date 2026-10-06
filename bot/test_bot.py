@@ -766,6 +766,20 @@ class Pruebas(unittest.TestCase):
             btn("t:rs_si"); self.assertEqual(bot.cargar_tema(), T.normalizar({}))
             self.assertTrue(bot.tema_guardado())                      # queda guardado: al compilar pisa lo que hubiera en el repo
 
+    def test_servidor_de_la_app_sin_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            btn("aadd"); txt("Directo"); txt("1.2.3.4:22")
+            self.assertIn("asp", tg.datos_botones())                 # ofrece seguir sin payload
+            btn("asp")
+            l = b.cargar_app() if hasattr(b, "cargar_app") else bot.cargar_app()
+            self.assertEqual((l[-1]["host"], l[-1]["port"], l[-1]["payload"]), ("1.2.3.4", 22, ""))
+            btn("ap:0"); self.assertIn("aqp:0", tg.datos_botones())
+            txt("GET / HTTP/1.1[crlf][crlf]"); self.assertTrue(bot.cargar_app()[0]["payload"])
+            btn("aqp:0"); self.assertEqual(bot.cargar_app()[0]["payload"], "")   # quitar payload
+            btn("ap:0"); txt("GET / HTTP/1.1[crlf][crlf]"); btn("ap:0"); txt("-")
+            self.assertEqual(bot.cargar_app()[0]["payload"], "")
+
     def test_apariencia_imagenes_y_vista_previa(self):
         import io, vista
         if not vista.HAY_PIL:

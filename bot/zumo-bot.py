@@ -583,7 +583,7 @@ class Bot(centro.CentroMixin):
     def pantalla_app(self, chat, mid, aviso=""):
         l = cargar_app()
         filas = "\n".join(f"{i + 1}. {s['name']} · {s['host']}:{s['port']}{' · TLS' if s.get('tls') else ''}"
-                          f"{'' if s.get('payload') else ' · ⚠️ sin payload'}" for i, s in enumerate(l))
+                          f"{'' if s.get('payload') else ' · directo'}" for i, s in enumerate(l))
         txt = (aviso + "\n\n" if aviso else "") + "📱 App Android\n" + (
             f"Servidores en la app ({len(l)}):\n{filas}" if l else
             "Todavía no cargaste servidores en el bot.\nAl compilar sin servidores, la app usa lo que ya haya en el secreto ZUMO_SERVIDORES del repo.")
@@ -612,7 +612,7 @@ class Bot(centro.CentroMixin):
 
     def pedir(self, chat, texto, paso, **datos):
         self.estado[chat] = {"paso": paso, **datos}
-        self.tg.mensaje(chat, texto, CANCELAR)
+        self.tg.mensaje(chat, texto, datos.get("_extra", []) + CANCELAR)
 
     def enviar_datos(self, chat, u):
         """Manda, en un mensaje aparte, los datos listos para reenviarle al cliente."""
@@ -724,12 +724,19 @@ class Bot(centro.CentroMixin):
             return self.pantalla_lista(chat, mid, 0)
         if acc == "t":
             return self.boton_tema(chat, mid, arg)
-        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs"):
+        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs", "asp", "aqp"):
             return self.boton_app(chat, mid, acc, arg)
         return self.menu(chat, mid)      # botón de una versión anterior del bot
 
     def boton_app(self, chat, mid, acc, arg):
-        self.estado.pop(chat, None)
+        e = self.estado.pop(chat, None)
+        if acc == "asp":      # servidor nuevo sin payload: se conecta directo por IP y puerto
+            if not e or e.get("paso") != "a_payload_nuevo":
+                return self.pantalla_app(chat, mid)
+            l = cargar_app()
+            l.append(srv.nuevo(e["nombre"], e["host"], e["port"], ""))
+            guardar_app(l)
+            return self.pantalla_app_servidor(chat, None, len(l) - 1)
         if acc == "app":
             return self.pantalla_app(chat, mid)
         if acc == "aadd":
@@ -767,9 +774,14 @@ class Bot(centro.CentroMixin):
         s = l[i]
         if acc == "a":
             return self.pantalla_app_servidor(chat, mid, i)
+        if acc == "aqp":
+            l[i]["payload"] = ""
+            guardar_app(l)
+            return self.pantalla_app_servidor(chat, mid, i)
         if acc == "ap":
             return self.pedir(chat, f"📝 Pegá el payload nuevo de {s['name']} en un solo mensaje (podés usar [crlf], [host], [split]...).\n"
-                                    "Si cambiás solo el payload, no le cambies el nombre: así a los clientes les sigue andando al actualizar.", "a_payload", i=i)
+                                    "Si cambiás solo el payload, no le cambies el nombre: así a los clientes les sigue andando al actualizar.\n"
+                                    "Para quitarlo (conexión directa por IP y puerto) tocá el botón o escribí -", "a_payload", i=i, _extra=[[("🚫 Quitar payload", f"aqp:{i}")]])
         if acc == "ah":
             return self.pedir(chat, "🌐 Escribí el dominio o IP, con el puerto si no es el 80.\nEj: vps.ejemplo.com  o  vps.ejemplo.com:443", "a_host", i=i)
         if acc == "an":
@@ -878,15 +890,17 @@ class Bot(centro.CentroMixin):
                 self.estado.pop(chat, None)
                 return self.pantalla_app_servidor(chat, None, i)
             e.update(paso="a_payload_nuevo", host=host, port=int(puerto) if puerto else 80)
-            return self.tg.mensaje(chat, "Ahora pegá el payload en un solo mensaje (podés usar [crlf], [host], [split]...).\nSi no usa payload, escribí -", CANCELAR)
+            return self.tg.mensaje(chat, "Ahora pegá el payload en un solo mensaje (podés usar [crlf], [host], [split]...).\n"
+                                         "Si no usa payload, la app se conecta directo por IP y puerto: tocá el botón.",
+                                   [[("➡️ Sin payload (directo)", "asp")]] + CANCELAR)
         if paso == "a_payload_nuevo":
-            l.append(srv.nuevo(e["nombre"], e["host"], e["port"], "" if t == "-" else t))
+            l.append(srv.nuevo(e["nombre"], e["host"], e["port"], "" if t.strip() in ("-", "") else t))
             guardar_app(l)
             self.estado.pop(chat, None)
             self.borrar_entrada(chat, e)
             return self.pantalla_app_servidor(chat, None, len(l) - 1)
         if paso == "a_payload":
-            l[i]["payload"] = srv.limpiar_linea(t)
+            l[i]["payload"] = "" if t.strip() == "-" else srv.limpiar_linea(t)
             guardar_app(l)
             self.estado.pop(chat, None)
             self.borrar_entrada(chat, e)
