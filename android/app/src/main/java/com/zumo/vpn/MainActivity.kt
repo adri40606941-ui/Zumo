@@ -516,19 +516,25 @@ class MainActivity : Activity() {
     private fun abrirDnsPrivado() {
         val ruta = rutaDnsPrivado()
         val resaltar = ":settings:fragment_args_key"
+        val q = "DNS privado"
+        // 0: buscador de Ajustes con "DNS privado" escrito · 1: pantalla de DNS privado directa · 2: Conexiones/Ajustes
         val intentos = listOf(
-            Intent().setClassName("com.android.settings", "com.android.settings.Settings\$PrivateDnsSettingsActivity"),
-            Intent("android.settings.PRIVATE_DNS_SETTINGS"),
-            Intent(Settings.ACTION_WIRELESS_SETTINGS).putExtra(resaltar, "private_dns_settings"),
-            Intent(Settings.ACTION_SETTINGS).putExtra(resaltar, "private_dns_settings")
+            0 to Intent("android.settings.APP_SEARCH_SETTINGS").putExtra(android.app.SearchManager.QUERY, q).putExtra("query", q),
+            0 to Intent(Intent.ACTION_SEARCH).setPackage("com.android.settings").putExtra(android.app.SearchManager.QUERY, q),
+            1 to Intent().setClassName("com.android.settings", "com.android.settings.Settings\$PrivateDnsSettingsActivity"),
+            1 to Intent("android.settings.PRIVATE_DNS_SETTINGS"),
+            2 to Intent(Settings.ACTION_WIRELESS_SETTINGS).putExtra(resaltar, "private_dns_settings"),
+            2 to Intent(Settings.ACTION_SETTINGS).putExtra(resaltar, "private_dns_settings")
         )
-        for ((n, i) in intentos.withIndex()) {
+        for ((tipo, i) in intentos) {
             try {
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(i)
-                // las dos primeras caen directo en DNS privado; las otras abren Conexiones y hay que seguir el camino
-                aviso(if (n <= 1) "Poné el DNS privado en \"Desactivado\" / \"Off\" y volvé a la app"
-                      else "Buscá: $ruta\nPonelo en \"Desactivado\" y volvé a la app")
+                aviso(when (tipo) {
+                    0 -> "Si el buscador está vacío, escribí: $q\nPonelo en \"Desactivado\" y volvé a la app"
+                    1 -> "Poné el DNS privado en \"Desactivado\" / \"Off\" y volvé a la app"
+                    else -> "Buscá: $ruta\nPonelo en \"Desactivado\" y volvé a la app"
+                })
                 return
             } catch (_: Exception) {}
         }
