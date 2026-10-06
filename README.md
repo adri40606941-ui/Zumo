@@ -115,6 +115,35 @@ el payload de cualquiera y tocás **🔨 Compilar y enviarme el APK**. El bot su
 `ZUMO_SERVIDORES` del repo, lanza la compilación en GitHub, espera y te manda el APK por Telegram. Si falla,
 te muestra el final del registro. El mensaje con el payload que escribís se borra del chat.
 
+### Apariencia de la app (nombre, colores, ícono, fondo)
+
+En el bot: **📱 App Android → 🎨 Apariencia de la app**. Desde ahí se cambia, sin tocar código:
+
+- **Plantillas**: diez diseños listos (oscuros y claros). El bot manda una imagen con todos y otra en
+  grande del que elijas, ya con tu nombre e ícono, antes de aplicarlo.
+- **Nombre y lema**: el nombre es el que aparece debajo del ícono, arriba en la pantalla y en la notificación.
+- **Colores**: fondo, tarjetas, títulos y botones, letra, botón Conectar y botón Desconectar. Se eligen
+  de una paleta o escribiendo el código (`#B388FF`); los bordes y tonos intermedios se acomodan solos.
+- **Fondo**: color liso, degradado de dos colores o una imagen (mandás una foto). Se puede oscurecer
+  la imagen y hacer las tarjetas translúcidas.
+- **Ícono y logo**: importás una imagen y pasa a ser el ícono de la app; también puede ir arriba del
+  título en lugar del emoji.
+- **Letras**: tipo de letra, tamaño y título en mayúsculas o como lo escribiste.
+- **Menús y secciones**: mostrar u ocultar Vencimiento, Velocidad y datos, Ajustes del teléfono e
+  Importar `.zs`; forma de las esquinas; y hasta 3 botones de contacto en el menú ☰ (WhatsApp, Telegram, web).
+- **Vista previa**: en cualquier momento el bot manda una imagen de cómo queda.
+
+Los cambios se guardan en la VPS (`/etc/zumo/app-marca/`) y llegan a los clientes cuando tocás
+**🔨 Compilar y enviarme el APK** y les pasás el APK nuevo: el bot sube la apariencia al repo como
+secretos (`ZUMO_MARCA` y `ZUMO_MARCA_1`…`14`) y la compilación la usa. La firma y el identificador de
+la app no cambian, así que se instala encima de la anterior aunque cambie de nombre e ícono.
+
+Sin bot, lo mismo se hace a mano en `android/marca/`: `tema.json` (nombre, colores, etc.) y,
+opcionalmente, `icono.png` y `fondo.jpg`.
+
+Para las vistas previas el bot usa `python3-pil` (lo instala `bot/instalar-bot.sh`). En un bot ya
+instalado, volvé a correr el instalador para actualizarlo: conserva tu configuración.
+
 Token de GitHub (una sola vez): github.com → Settings → Developer settings → Personal access tokens →
 **Fine-grained tokens** → *Generate new token*; en *Repository access* elegí solo `Zumo`; permisos:
 **Actions: Read and write**, **Secrets: Read and write**, **Contents: Read-only**. Lo pegás cuando el

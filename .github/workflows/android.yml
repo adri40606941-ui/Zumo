@@ -3,7 +3,7 @@ name: Compilar app Android
 on:
   push:
     branches: [main]
-    paths: ['android/**', '.github/workflows/android.yml', '.gitmodules']
+    paths: ['android/**', '.github/workflows/android.yml', '.gitmodules', 'bot/marca.py']
   workflow_dispatch:
 
 jobs:
@@ -96,6 +96,33 @@ jobs:
             echo "Lista de servidores: android/servidores.txt"
           fi
           echo "Servidores cargados: $(grep -c '^[[:space:]]*\[[^]=[]\+\][[:space:]]*$' android/servidores.txt || true)"
+
+      # Apariencia de la app (nombre, colores, letra, ícono, fondo). Por defecto sale de android/marca.
+      # Si el bot subió una, viene partida en los secretos ZUMO_MARCA (cabecera) y ZUMO_MARCA_1..14
+      # (un secreto guarda como mucho 48 KB); bot/marca.py las junta y reemplaza android/marca.
+      - name: Apariencia de la app (secreto opcional)
+        env:
+          ZUMO_MARCA: ${{ secrets.ZUMO_MARCA }}
+          ZUMO_MARCA_1: ${{ secrets.ZUMO_MARCA_1 }}
+          ZUMO_MARCA_2: ${{ secrets.ZUMO_MARCA_2 }}
+          ZUMO_MARCA_3: ${{ secrets.ZUMO_MARCA_3 }}
+          ZUMO_MARCA_4: ${{ secrets.ZUMO_MARCA_4 }}
+          ZUMO_MARCA_5: ${{ secrets.ZUMO_MARCA_5 }}
+          ZUMO_MARCA_6: ${{ secrets.ZUMO_MARCA_6 }}
+          ZUMO_MARCA_7: ${{ secrets.ZUMO_MARCA_7 }}
+          ZUMO_MARCA_8: ${{ secrets.ZUMO_MARCA_8 }}
+          ZUMO_MARCA_9: ${{ secrets.ZUMO_MARCA_9 }}
+          ZUMO_MARCA_10: ${{ secrets.ZUMO_MARCA_10 }}
+          ZUMO_MARCA_11: ${{ secrets.ZUMO_MARCA_11 }}
+          ZUMO_MARCA_12: ${{ secrets.ZUMO_MARCA_12 }}
+          ZUMO_MARCA_13: ${{ secrets.ZUMO_MARCA_13 }}
+          ZUMO_MARCA_14: ${{ secrets.ZUMO_MARCA_14 }}
+        run: |
+          python3 bot/marca.py android/marca || {
+            mkdir -p out
+            echo "error: la apariencia que subió el bot llegó incompleta o dañada. Compilá de nuevo desde el bot." > out/compilacion.log
+            exit 1
+          }
 
       - name: Pruebas del túnel (SSH + WebSocket + SOCKS)
         continue-on-error: true
