@@ -1101,8 +1101,31 @@ class Bot:
         if not vista.HAY_PIL:
             return self.tg.mensaje(chat, "👁 Para ver las vistas previas falta una herramienta en la VPS. Corré de nuevo el instalador del bot "
                                          "(o: apt install -y python3-pil fonts-dejavu-core && systemctl restart zumo-bot).", botones)
-        img = vista.captura(t or cargar_tema(), imagen_marca("icono.png"), imagen_marca("fondo.jpg"))
-        self.tg.foto(chat, img, (leyenda + "\n\n" if leyenda else "") + self.NOTA_VISTA, botones)
+        t = t or cargar_tema()
+        icono = imagen_marca("icono.png")
+        img = vista.captura(t, icono, imagen_marca("fondo.jpg"))
+        self.tg.foto(chat, img, (leyenda + "\n\n" if leyenda else "") + self.notas_vista(t, icono), botones)
+
+    def notas_vista(self, t, icono=None, menu=False):
+        """Pie de la vista previa: lo que esta imagen no puede mostrar tal cual, para que no parezca que no cambió."""
+        notas = [self.NOTA_VISTA]
+        if t["fuente"] in vista.APROXIMADAS:
+            notas.append(f"ℹ️ La letra «{dict(T.FUENTES)[t['fuente']]}» acá es solo una aproximación (inclinada o más ancha): en el teléfono se ve con su letra real.")
+        if t["logo"] and not (t["logo_imagen"] and icono) and not vista.HAY_EMOJI and not menu:
+            notas.append(f"ℹ️ Tu emoji {t['logo']} no se puede dibujar acá: se muestra un escudo de muestra. En la app sí se ve tu emoji. "
+                         "Para verlo en la vista previa: apt install -y fonts-noto-color-emoji && systemctl restart zumo-bot")
+        return "\n".join(notas)
+
+    def enviar_vista_menu(self, chat):
+        """Manda cómo queda el menú ☰ de la app (contactos, importar cuenta, evitar desconexiones)."""
+        botones = [[("📋 Menús y secciones", "t:me")], [("🎨 Apariencia", "t")]]
+        if not vista.HAY_PIL:
+            return self.tg.mensaje(chat, "👁 Para ver las vistas previas falta una herramienta en la VPS. Corré de nuevo el instalador del bot "
+                                         "(o: apt install -y python3-pil fonts-dejavu-core && systemctl restart zumo-bot).", botones)
+        t = cargar_tema()
+        img = vista.captura_menu(t, imagen_marca("icono.png"), imagen_marca("fondo.jpg"))
+        hay = "con tus botones de contacto" if t["enlaces"] else "sin botones de contacto (agregalos en «Menús y secciones»)"
+        self.tg.foto(chat, img, f"👁 El menú ☰ de la app, {hay}.\n\n" + self.notas_vista(t, menu=True), botones)
 
     def pantalla_plantillas(self, chat, mid):
         botones, fila = [], []
@@ -1208,11 +1231,12 @@ class Bot:
         botones += [[(f"🗑 Quitar: {e['texto']}", f"t:mq:{i}")] for i, e in enumerate(t["enlaces"])]
         if len(t["enlaces"]) < T.MAX_ENLACES:
             botones.append([("➕ Botón de contacto", "t:ma")])
-        botones += [[("👁 Vista previa", "t:v")], [("◂ Apariencia", "t")]]
+        botones += [[("👁 Pantalla principal", "t:v"), ("👁 Menú ☰", "t:vm")], [("◂ Apariencia", "t")]]
         self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") +
                      f"📋 Menús y secciones\n\nQué se ve en la app (tocá para mostrar u ocultar):\n{secciones}\n\n"
                      f"Esquinas de las tarjetas y botones: {dict(T.RADIOS).get(t['radio'], str(t['radio']))}\n\n"
-                     f"Botones de contacto del menú ☰ (WhatsApp, Telegram, tu web):\n{contactos}", botones)
+                     f"Botones de contacto del menú ☰ (WhatsApp, Telegram, tu web):\n{contactos}\n\n"
+                     "Los contactos y «Importar .zs» están en el menú ☰, no en la pantalla principal: para verlos tocá «Menú ☰».", botones)
 
     def boton_tema(self, chat, mid, arg):
         self.estado.pop(chat, None)
@@ -1236,6 +1260,8 @@ class Bot:
             return self.enviar_vista(chat, nueva, f"🧩 {p[1]}: {p[2]}", botones)
         if acc == "v":
             return self.enviar_vista(chat, t, "👁 Así queda tu app ahora.")
+        if acc == "vm":
+            return self.enviar_vista_menu(chat)
         if acc == "n":
             return self.pedir(chat, "🏷 Escribí el nombre de la app (el que aparece debajo del ícono y arriba en la pantalla). Máx. 30 letras.", "t_nombre")
         if acc == "le":

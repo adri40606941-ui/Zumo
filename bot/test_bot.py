@@ -591,6 +591,102 @@ class Pruebas(unittest.TestCase):
         import marca
         self.assertLess(vista.MAX_ICONO + vista.MAX_FONDO + 8192, marca.MAX_PAQUETE)
 
+    def _vps_basica(self):
+        """Simula una VPS con solo fonts-dejavu-core (sin las letras Condensed ni ExtraLight). Devuelve cómo deshacerlo."""
+        import vista
+        original = vista.ImageFont.truetype
+        def sin_extras(nombre, *a, **k):
+            if "Condensed" in str(nombre) or "ExtraLight" in str(nombre):
+                raise OSError("no instalada (simulado)")
+            return original(nombre, *a, **k)
+        vista.ImageFont.truetype = sin_extras
+        vista._cache_fuentes.clear()
+        def deshacer():
+            vista.ImageFont.truetype = original
+            vista._cache_fuentes.clear()
+        self.addCleanup(deshacer)
+
+    def test_vista_previa_cada_letra_se_ve_distinta(self):
+        """Con solo fonts-dejavu-core, las 8 letras caían en la misma y la vista previa «no cambiaba» al elegir otra."""
+        import hashlib, tema as T, vista
+        if not vista.HAY_PIL:
+            self.skipTest("sin Pillow")
+        self._vps_basica()
+        hashes = {}
+        for f, nombre in T.FUENTES:
+            png = vista.captura(T.normalizar({"fuente": f}))
+            hashes.setdefault(hashlib.md5(png).hexdigest(), []).append(nombre)
+        self.assertEqual(len(hashes), len(T.FUENTES), [v for v in hashes.values() if len(v) > 1])
+
+    def test_vista_previa_del_emoji_del_logo(self):
+        import tema as T, vista
+        if not vista.HAY_PIL:
+            self.skipTest("sin Pillow")
+        if vista.HAY_EMOJI:        # con la letra de emojis: cada emoji se dibuja de verdad
+            cohete, fuego = (vista.captura(T.normalizar({"logo": e})) for e in ("🚀", "🔥"))
+            self.assertNotEqual(cohete, fuego)
+            self.assertNotEqual(cohete, vista.captura(T.normalizar({"logo": ""})))
+        original, vista.HAY_EMOJI = vista.HAY_EMOJI, False
+        self.addCleanup(setattr, vista, "HAY_EMOJI", original)
+        # sin la letra de emojis: un escudo de muestra, igual para cualquier emoji (y el bot avisa; ver abajo)
+        self.assertEqual(vista.captura(T.normalizar({"logo": "🚀"})), vista.captura(T.normalizar({"logo": "🔥"})))
+
+    def test_vista_previa_del_menu(self):
+        import io, tema as T, vista
+        if not vista.HAY_PIL:
+            self.skipTest("sin Pillow")
+        from PIL import Image
+        base = T.normalizar({})
+        enl = [{"texto": "Soporte por WhatsApp", "url": "https://wa.me/549111"}]
+        sin = vista.captura_menu(base)
+        self.assertEqual(Image.open(io.BytesIO(sin)).format, "PNG")
+        # los contactos y «Importar .zs» solo existen en el menú: la pantalla principal no cambia, el menú sí
+        con_enlace = T.normalizar({**base, "enlaces": enl})
+        sin_importar = T.normalizar({**base, "ver_importar": False})
+        self.assertEqual(vista.captura(base), vista.captura(con_enlace))
+        self.assertEqual(vista.captura(base), vista.captura(sin_importar))
+        self.assertNotEqual(sin, vista.captura_menu(con_enlace))
+        self.assertNotEqual(sin, vista.captura_menu(sin_importar))
+        self.assertLess(Image.open(io.BytesIO(vista.captura_menu(sin_importar))).size[1], Image.open(io.BytesIO(sin)).size[1])
+        # sigue el tema: colores y esquinas
+        self.assertNotEqual(sin, vista.captura_menu(T.aplicar_plantilla(base, "claro")))
+        self.assertNotEqual(sin, vista.captura_menu(T.normalizar({**base, "radio": 4})))
+        # aguanta lo más grande: 3 contactos, letra muy grande, imagen de fondo
+        grande = T.normalizar({**base, "escala": 130, "enlaces": enl * 3, "fuente": "cursive"})
+        im = Image.open(io.BytesIO(vista.captura_menu(grande, None, self._png(300, 600))))
+        self.assertEqual(im.size[0], 720)
+
+    def test_vista_previa_por_el_bot_avisa_lo_que_no_puede_mostrar(self):
+        import tema as T, vista
+        if not vista.HAY_PIL:
+            self.skipTest("sin Pillow")
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            # «Menús y secciones» ofrece las dos vistas, y el menú ☰ manda su propia imagen
+            btn("t:me"); self.assertIn("t:v", tg.datos_botones()); self.assertIn("t:vm", tg.datos_botones())
+            self.assertIn("menú ☰", tg.mensajes[-1])
+            n = len(tg.fotos)
+            btn("t:vm"); self.assertEqual(len(tg.fotos), n + 1)
+            self.assertEqual(tg.fotos[-1][0][:4], b"\x89PNG"); self.assertIn("sin botones de contacto", tg.fotos[-1][1])
+            t = bot.cargar_tema(); t["enlaces"] = [{"texto": "Soporte", "url": "https://wa.me/1"}]; bot.guardar_tema(t)
+            btn("t:vm"); self.assertIn("con tus botones de contacto", tg.fotos[-1][1])
+            # una letra que solo se aproxima lo dice; una que se dibuja bien, no
+            t = bot.cargar_tema(); t["fuente"] = "cursive"; bot.guardar_tema(t)
+            btn("t:v"); self.assertIn("Manuscrita", tg.fotos[-1][1]); self.assertIn("aproximación", tg.fotos[-1][1])
+            t["fuente"] = "sans-serif-medium"; bot.guardar_tema(t)
+            btn("t:v"); self.assertNotIn("aproximación", tg.fotos[-1][1])
+            # sin la letra de emojis, avisa que el emoji se ve en la app y cómo instalarla
+            original, vista.HAY_EMOJI = vista.HAY_EMOJI, False
+            self.addCleanup(setattr, vista, "HAY_EMOJI", original)
+            t["logo"] = "🚀"; bot.guardar_tema(t)
+            btn("t:v"); self.assertIn("🚀 no se puede dibujar", tg.fotos[-1][1]); self.assertIn("fonts-noto-color-emoji", tg.fotos[-1][1])
+            vista.HAY_EMOJI = True
+            btn("t:v"); self.assertNotIn("no se puede dibujar", tg.fotos[-1][1])
+            # con un ícono propio puesto como logo, el emoji no importa
+            vista.HAY_EMOJI = False
+            t["logo_imagen"] = True; bot.guardar_tema(t); bot.guardar_imagen_marca("icono.png", self._png(64, 64))
+            btn("t:v"); self.assertNotIn("no se puede dibujar", tg.fotos[-1][1])
+
     def test_apariencia_desde_el_bot(self):
         import tema as T, vista
         with tempfile.TemporaryDirectory() as tmp:

@@ -131,7 +131,10 @@ En el bot: **📱 App Android → 🎨 Apariencia de la app**. Desde ahí se cam
 - **Letras**: tipo de letra, tamaño y título en mayúsculas o como lo escribiste.
 - **Menús y secciones**: mostrar u ocultar Vencimiento, Velocidad y datos, Ajustes del teléfono e
   Importar `.zs`; forma de las esquinas; y hasta 3 botones de contacto en el menú ☰ (WhatsApp, Telegram, web).
-- **Vista previa**: en cualquier momento el bot manda una imagen de cómo queda.
+- **Vista previa**: en cualquier momento el bot manda una imagen de cómo queda la pantalla principal, y
+  **👁 Menú ☰** (en «Menús y secciones») manda cómo queda el menú con los botones de contacto y «Importar .zs».
+  Es una vista aproximada: las ocho letras se simulan con las de la VPS (Informal y Manuscrita solo de forma
+  aproximada) y el emoji del logo se ve a color si la VPS tiene `fonts-noto-color-emoji` (lo instala `bot/instalar-bot.sh`).
 
 Los cambios se guardan en la VPS (`/etc/zumo/app-marca/`) y llegan a los clientes cuando tocás
 **🔨 Compilar y enviarme el APK** y les pasás el APK nuevo: el bot sube la apariencia al repo como
