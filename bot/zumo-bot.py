@@ -558,6 +558,13 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
 
     def menu(self, chat, mid=None, aviso=""):
         self.estado.pop(chat, None)
+        if self.local_activo:
+            # VPS centro: no hay clientes acá; solo la app, instalar VPS y respaldo
+            botones = [[("📱 App Android", "app")]]
+            if instalacion.base_publica():
+                botones.append([("🖥 Instalar VPS nueva", "ivps")])
+            botones.append([("💾 Respaldo", "resp")])
+            return self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + "🛡 Zumo · centro\n¿Qué querés hacer?", botones)
         n = len(usuarios())
         self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + f"🛡 Zumo VPN · {n} usuario(s)\n¿Qué querés hacer?",
                     MENU[:3] + [[("🖥 Instalar VPS nueva", "ivps")]] + MENU[3:] if instalacion.base_publica() else MENU)

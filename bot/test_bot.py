@@ -509,6 +509,20 @@ class Pruebas(unittest.TestCase):
                 txt("pass-export-1")
                 self.assertEqual(open(respaldo.clave_firma()[0], "rb").read(), viejo)
 
+    def test_menu_del_centro_sin_usuarios(self):
+        import instalacion
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            instalacion.BASE_URL = f"{tmp}/base.url"
+            open(instalacion.BASE_URL, "w").write("https://d.example/sec\n")
+            b.local_activo = True
+            txt("hola")
+            self.assertEqual(tg.datos_botones(), ["app", "ivps", "resp"])
+            self.assertNotIn("usuario(s)", tg.mensajes[-1])
+            b.local_activo = False
+            txt("hola")
+            self.assertIn("crear", tg.datos_botones()); self.assertIn("lista:0", tg.datos_botones())
+
     def test_compilar_en_la_vps(self):
         import shutil
         import subprocess
