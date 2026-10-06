@@ -1229,7 +1229,7 @@ while true; do
 hoy=$(date +%F)
 banner; echo -e " \e[1;38;5;141mUSO DE DATOS${N}\n"
 if ! systemctl is-active --quiet zumo-datos 2>/dev/null; then
-echo -e " \e[1;31m● El contador no está activo (actualizá con actualizar.sh)${N}\n"
+echo -e " \e[1;31m● El contador no está activo (actualizá con: zumo-actualizar)${N}\n"
 fi
 hh=$(awk -F: -v h="$hoy" '$1==h{d[$2]+=$3} END{for(u in d) printf "%s %.0f\n", u, d[u]}' "$HIST" 2>/dev/null)
 total=0; totd=0; n=0

@@ -1217,6 +1217,18 @@ echo -e " \e[1;31m✘ No se pudo descargar un panel.sh válido desde el repo.\e[
 exit 1
 fi
 ok "panel instalado en /usr/local/bin/zumo"
+# Comando "zumo-actualizar": actualiza esta VPS desde la misma dirección de donde se instaló.
+cat > /usr/local/bin/zumo-actualizar <<'ZACT'
+#!/bin/bash
+[ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+B="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
+T=$(mktemp) || exit 1
+if ! curl -fsSL "$B/actualizar.sh?nocache=$(date +%s)" -o "$T" || ! bash -n "$T" 2>/dev/null; then
+	echo "No se pudo bajar actualizar.sh desde $B"; rm -f "$T"; exit 1
+fi
+bash "$T"; r=$?; rm -f "$T"; exit $r
+ZACT
+chmod 755 /usr/local/bin/zumo-actualizar
 paso "Finalizando"
 echo
 
