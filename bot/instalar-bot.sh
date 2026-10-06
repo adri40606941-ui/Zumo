@@ -17,7 +17,7 @@ apt-get install -y --no-install-recommends python3 python3-nacl curl ca-certific
 # pueden instalar, el bot anda igual (sin vistas previas).
 apt-get install -y --no-install-recommends python3-pil fonts-dejavu-core >/dev/null 2>&1 || echo "Aviso: sin python3-pil el bot no manda vistas previas de la app (lo demás funciona)."
 
-ARCHIVOS="servidores.py compilar.py tema.py vista.py marca.py respaldo.py local.py centro.py zumo-bot.py"
+ARCHIVOS="servidores.py compilar.py tema.py vista.py marca.py respaldo.py local.py centro.py instalacion.py zumo-bot.py"
 for f in $ARCHIVOS; do
 	if [ -n "${ZUMO_BOT_SRC:-}" ]; then   # VPS centro: se copian del clon local
 		cp "$ZUMO_BOT_SRC/$f" "/opt/zumo-bot/$f" || { echo "✘ No se pudo copiar $f"; exit 1; }

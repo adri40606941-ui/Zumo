@@ -163,6 +163,8 @@ server {
 	autoindex off;
 	server_tokens off;
 	location /$SECRETO/ { try_files \$uri =404; }
+	# códigos de un solo uso para instalar (los atiende el bot en 127.0.0.1:7391)
+	location /i/ { proxy_pass http://127.0.0.1:7391; proxy_set_header X-Real-IP \$remote_addr; proxy_read_timeout 15s; }
 	location / { return 404; }
 }
 NG

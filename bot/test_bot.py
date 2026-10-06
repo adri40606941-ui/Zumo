@@ -716,6 +716,23 @@ class Pruebas(unittest.TestCase):
             btn("t:rs_si"); self.assertEqual(bot.cargar_tema(), T.normalizar({}))
             self.assertTrue(bot.tema_guardado())                      # queda guardado: al compilar pisa lo que hubiera en el repo
 
+    def test_boton_instalar_vps_nueva_da_un_codigo_cada_vez(self):
+        import instalacion
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            instalacion.BASE_URL = f"{tmp}/base.url"
+            btn("menu")
+            self.assertNotIn("ivps", tg.datos_botones())    # sin dominio no se ofrece
+            open(instalacion.BASE_URL, "w").write("https://d.example/sec\n")
+            b.codigos = instalacion.Codigos(f"{tmp}/codigos.json")
+            btn("menu")
+            self.assertIn("ivps", tg.datos_botones())
+            btn("ivps"); btn("ivps")
+            cmds = [m for m in tg.mensajes if "https://d.example/i/" in m]
+            self.assertEqual(len(cmds), 2)
+            self.assertNotIn("/sec/", cmds[0])                                       # no muestra el código secreto del centro
+            self.assertNotEqual(cmds[0], cmds[1])
+
     def test_apariencia_imagenes_y_vista_previa(self):
         import io, vista
         if not vista.HAY_PIL:
