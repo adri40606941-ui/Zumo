@@ -135,8 +135,6 @@ rm -f "$tmp"
 }
 refrescar activar-pdirect.sh   ZUMOPDIRECTACT
 refrescar desactivar-pdirect.sh DESPDEOF
-refrescar activar-zumo-go.sh   ZUMOGOACT
-refrescar desactivar-zumo-go.sh DESGOEOF
 refrescar activar-zumoid.sh    ZUMOIDACT
 refrescar activar-bhttp.sh     ZUMOBHTTPACT
 refrescar desactivar-bhttp.sh  DESBHTTPEOF
