@@ -25,6 +25,7 @@ from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import centro  # noqa: E402
+import instalacion  # noqa: E402
 import compilar  # noqa: E402
 import marca  # noqa: E402
 import servidores as srv  # noqa: E402
@@ -542,7 +543,7 @@ def teclado_dias(prefijo):
             [("✖ Cancelar", "menu")]]
 
 
-class Bot(centro.CentroMixin):
+class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
     def __init__(self, tg, admins, gh=None):
         self.tg, self.admins, self.gh = tg, admins, gh
         self.estado = {}      # chat -> {"paso": ..., datos}
@@ -558,7 +559,8 @@ class Bot(centro.CentroMixin):
     def menu(self, chat, mid=None, aviso=""):
         self.estado.pop(chat, None)
         n = len(usuarios())
-        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + f"🛡 Zumo VPN · {n} usuario(s)\n¿Qué querés hacer?", MENU)
+        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + f"🛡 Zumo VPN · {n} usuario(s)\n¿Qué querés hacer?",
+                    MENU[:3] + [[("🖥 Instalar VPS nueva", "ivps")]] + MENU[3:] if instalacion.base_publica() else MENU)
 
     def pantalla_crear(self, chat, mid):
         self.estado.pop(chat, None)
@@ -717,7 +719,7 @@ class Bot(centro.CentroMixin):
         acc, _, arg = d.partition(":")
         if acc == "menu":
             return self.menu(chat, mid)
-        if self.boton_resp(chat, mid, acc):
+        if self.boton_resp(chat, mid, acc) or self.boton_instalar(chat, mid, acc):
             return
         if acc == "lista":
             self.estado.pop(chat, None)
@@ -1506,6 +1508,13 @@ def main():
     bot.leer_env_fn = leer_env
     centro.ENV = ENV
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()
+    if instalacion.base_publica():      # VPS centro: entrega el install.sh con códigos de un solo uso
+        try:
+            bot.codigos = instalacion.Codigos()
+            srv = instalacion.hacer_servidor(bot.codigos, bot.aviso_codigo_usado)
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+        except OSError as e:
+            print("zumo-bot: no se pudo abrir el servidor de códigos de instalación:", e, flush=True)
     print("zumo-bot: listo, admins:", sorted(admins) or "ninguno (mandá /id al bot)", flush=True)
     offset = 0
     while True:

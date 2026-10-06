@@ -215,6 +215,13 @@ Pregunta el dominio, el token del bot, tu ID de Telegram y una contraseña de re
   `bash <(curl -fsSL https://dominio/<código>/install.sh)`: los scripts publicados ya traen esa dirección como origen, no hace falta `ZUMO_BASE=`. La dirección lleva un código secreto: no la compartas.
   La VPS que se instala o actualiza así recuerda la dirección (`/etc/zumo/base.url`) y sigue
   usándola. El centro actualiza lo publicado cada hora desde GitHub (`zumo-publicar`).
+- **Instalar una VPS nueva con un código de un solo uso:** en el bot del centro, botón
+  "🖥 Instalar VPS nueva". Cada toque da un comando `bash <(curl -fsSL https://dominio/i/<código>/install.sh)`
+  con un código aleatorio que sirve una sola vez y vence a los 15 minutos; al usarse el bot te avisa
+  desde qué IP. Ojo: el código solo protege ese primer paso. El resto de la instalación (y las
+  actualizaciones) sigue usando la dirección con el código secreto del centro, que queda guardada en
+  `/etc/zumo/base.url` de cada VPS. Para activarlo en un centro que ya instalaste, corré de nuevo
+  `instalar-centro.sh` (agrega la ruta `/i/` a nginx y actualiza el bot).
 - **Compilar la app:** botón "📱 App Android → Compilar" del bot; se compila en la VPS con la
   clave de `/etc/zumo/firma/`. Para que la app no cambie de firma, traé la clave que ya usás:
   en el bot de la VPS vieja, "💾 Respaldo → ☁️ Traer la clave de GitHub" y "📤 Exportar clave";
