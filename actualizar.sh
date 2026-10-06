@@ -69,7 +69,7 @@ if ! command -v gcc >/dev/null 2>&1; then
 	apt-get install -y --no-install-recommends gcc libc6-dev >/dev/null 2>&1
 fi
 TMP=$(mktemp -d)
-if curl -fsSL "$BASE/zumo-limit.c$NC" -o "$TMP/zumo-limit.c" && [ -s "$TMP/zumo-limit.c" ]; then
+if curl -fsSL "$BASE/fuentes/zumo-limit.c$NC" -o "$TMP/zumo-limit.c" && [ -s "$TMP/zumo-limit.c" ]; then
 	if gcc -O2 -o "$TMP/zumo-limit" "$TMP/zumo-limit.c" 2>"$TMP/err.log"; then
 		systemctl stop zumo-limit 2>/dev/null
 		install -m 0755 "$TMP/zumo-limit" /usr/local/bin/zumo-limit
@@ -78,7 +78,7 @@ if curl -fsSL "$BASE/zumo-limit.c$NC" -o "$TMP/zumo-limit.c" && [ -s "$TMP/zumo-
 			sed -i 's/^Restart=always$/Restart=always\nRestartSec=2/' /etc/systemd/system/zumo-limit.service
 			systemctl daemon-reload 2>/dev/null
 		fi
-		[ -f /etc/zumo/limit.conf ] || curl -fsSL "$BASE/limit.conf$NC" -o /etc/zumo/limit.conf 2>/dev/null || true
+		[ -f /etc/zumo/limit.conf ] || curl -fsSL "$BASE/config/limit.conf$NC" -o /etc/zumo/limit.conf 2>/dev/null || true
 		systemctl start zumo-limit 2>/dev/null
 		if systemctl is-active --quiet zumo-limit; then ok "recompilado y reiniciado"; else err "recompilado pero no quedó activo (journalctl -u zumo-limit)"; fi
 	else
@@ -91,7 +91,7 @@ fi
 echo -e "${V}Contador de datos (zumo-datos)...${N}"
 
 # Contador de datos por usuario (iptables owner + datos.db)
-if curl -fsSL "$BASE/zumo-datos.sh$NC" -o /tmp/zumo-datos.sh && bash -n /tmp/zumo-datos.sh; then
+if curl -fsSL "$BASE/scripts/zumo-datos.sh$NC" -o /tmp/zumo-datos.sh && bash -n /tmp/zumo-datos.sh; then
 install -m 0755 /tmp/zumo-datos.sh /usr/local/bin/zumo-datos
 cat > /etc/systemd/system/zumo-datos.service <<'DATEOF'
 [Unit]
@@ -158,7 +158,7 @@ rm -rf "$TMP"
 
 if systemctl list-unit-files 2>/dev/null | grep -q '^zumo-web.service'; then
 	echo -e " ${V}—${N} El panel web ya no forma parte de Zumo y no se actualiza. Para quitarlo de esta VPS:"
-	echo -e "   curl -fsSL \"$BASE/quitar-panelweb.sh\" | bash"
+	echo -e "   curl -fsSL \"$BASE/scripts/quitar-panelweb.sh\" | bash"
 fi
 
 # El control de dispositivo por Android ID ya no forma parte de Zumo. Si una versión anterior lo

@@ -878,7 +878,7 @@ paso "Compilando limitador de conexiones (gcc)"
 
 LIMWORK=$(mktemp -d)
 ZUMO_RAW="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
-if ! curl -fsSL "$ZUMO_RAW/zumo-limit.c" -o "$LIMWORK/zumo-limit.c" || [ ! -s "$LIMWORK/zumo-limit.c" ]; then
+if ! curl -fsSL "$ZUMO_RAW/fuentes/zumo-limit.c" -o "$LIMWORK/zumo-limit.c" || [ ! -s "$LIMWORK/zumo-limit.c" ]; then
 echo -e " \e[1;31m✘ No se pudo descargar zumo-limit.c desde el repo.\e[0m"
 rm -rf "$LIMWORK"
 exit 1
@@ -894,7 +894,7 @@ rm -rf "$LIMWORK"
 exit 1
 fi
 # Configuración del limitador: solo se baja si no existe (no pisa tus cambios).
-[ -f /etc/zumo/limit.conf ] || curl -fsSL "$ZUMO_RAW/limit.conf" -o /etc/zumo/limit.conf 2>/dev/null || true
+[ -f /etc/zumo/limit.conf ] || curl -fsSL "$ZUMO_RAW/config/limit.conf" -o /etc/zumo/limit.conf 2>/dev/null || true
 rm -rf "$LIMWORK"
 
 cat > /etc/systemd/system/zumo-limit.service <<'SVCEOF'
@@ -916,7 +916,7 @@ ok "limitador compilado y activo"
 
 # Contador de datos por usuario
 paso "Instalando contador de datos de usuarios"
-if curl -fsSL "$ZUMO_RAW/zumo-datos.sh" -o /tmp/zumo-datos.sh && bash -n /tmp/zumo-datos.sh; then
+if curl -fsSL "$ZUMO_RAW/scripts/zumo-datos.sh" -o /tmp/zumo-datos.sh && bash -n /tmp/zumo-datos.sh; then
 install -m 0755 /tmp/zumo-datos.sh /usr/local/bin/zumo-datos
 cat > /etc/systemd/system/zumo-datos.service <<'DATEOF'
 [Unit]
@@ -986,8 +986,8 @@ install -d -o root -g root -m 0755 "$DIR"
 BIN_TMP="$DIR/.hcr-server.tmp"
 INS_TMP="$DIR/.install.tmp"
 rm -f "$BIN_TMP" "$INS_TMP"
-curl -fsSL "$BASE/hcr-server" -o "$BIN_TMP" || { rm -f "$BIN_TMP"; echo "No se pudo descargar hcr-server"; exit 1; }
-curl -fsSL "$BASE/hcr-install.sh" -o "$INS_TMP" || { rm -f "$BIN_TMP" "$INS_TMP"; echo "No se pudo descargar hcr-install.sh"; exit 1; }
+curl -fsSL "$BASE/binarios/hcr-server" -o "$BIN_TMP" || { rm -f "$BIN_TMP"; echo "No se pudo descargar hcr-server"; exit 1; }
+curl -fsSL "$BASE/binarios/hcr-install.sh" -o "$INS_TMP" || { rm -f "$BIN_TMP" "$INS_TMP"; echo "No se pudo descargar hcr-install.sh"; exit 1; }
 chown root:root "$BIN_TMP" "$INS_TMP"
 chmod 0755 "$BIN_TMP" "$INS_TMP"
 "$BIN_TMP" -version >/dev/null 2>&1 || { rm -f "$BIN_TMP" "$INS_TMP"; echo "El binario descargado no es válido para esta VPS"; exit 1; }
@@ -1083,8 +1083,8 @@ fi
 echo "[2/4] Descargando y verificando BHTTP (${ARCH})..."
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-curl -fsSL "$ZUMO/$NAME" -o "$TMP/bhttp" || { echo "No se pudo descargar $NAME (subilo a la raíz del repo)"; exit 1; }
-curl -fsSL "$ZUMO/bhttp-server.sha256" -o "$TMP/SHA256SUMS.txt" || { echo "No se pudo descargar bhttp-server.sha256"; exit 1; }
+curl -fsSL "$ZUMO/binarios/$NAME" -o "$TMP/bhttp" || { echo "No se pudo descargar $NAME (subilo a la carpeta binarios/ del repo)"; exit 1; }
+curl -fsSL "$ZUMO/binarios/bhttp-server.sha256" -o "$TMP/SHA256SUMS.txt" || { echo "No se pudo descargar bhttp-server.sha256"; exit 1; }
 ESPERADO=$(awk -v n="$NAME" '{f=$2; sub(/^\*/,"",f)} f==n{print $1; exit}' "$TMP/SHA256SUMS.txt")
 [ -n "$ESPERADO" ] || { echo "bhttp-server.sha256 no lista $NAME"; exit 1; }
 REAL=$(sha256sum "$TMP/bhttp" | awk '{print $1}')
@@ -1097,7 +1097,7 @@ echo "$AYUDA" | grep -q -- "$f" || { echo "Este binario no tiene la opción $f; 
 done
 
 echo "      Adaptador BHTTP (${SHIM})..."
-curl -fsSL "$ZUMO/$SHIM" -o "$TMP/shim" || { echo "No se pudo descargar $SHIM del repositorio (subilo a la raíz del repo)"; exit 1; }
+curl -fsSL "$ZUMO/binarios/$SHIM" -o "$TMP/shim" || { echo "No se pudo descargar $SHIM del repositorio (subilo a la carpeta binarios/ del repo)"; exit 1; }
 chmod 0755 "$TMP/shim"
 timeout 5 "$TMP/shim" -h 2>&1 | grep -q -- "-backend" || { echo "El adaptador descargado no es válido para esta VPS"; exit 1; }
 
