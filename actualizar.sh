@@ -137,6 +137,7 @@ refrescar activar-pdirect.sh   ZUMOPDIRECTACT
 refrescar desactivar-pdirect.sh DESPDEOF
 refrescar activar-zumo-go.sh   ZUMOGOACT
 refrescar desactivar-zumo-go.sh DESGOEOF
+refrescar activar-zumoid.sh    ZUMOIDACT
 refrescar activar-bhttp.sh     ZUMOBHTTPACT
 refrescar desactivar-bhttp.sh  DESBHTTPEOF
 refrescar activar-hcr.sh       ZUMOHCRACT
@@ -150,6 +151,10 @@ if systemctl is-active --quiet pdirect-80 2>/dev/null; then
 	if bash /etc/zumo/activar-pdirect.sh >/dev/null 2>&1 && systemctl is-active --quiet pdirect-80; then ok "PDirect recompilado y reiniciado"
 	else err "PDirect no quedó activo: reactivalo desde el panel (o bash /etc/zumo/activar-pdirect.sh)"; fi
 fi
+# Control de dispositivo (Android ID): se instala o se actualiza solo (si ya está al día no toca nada).
+echo -e "${V}Control de dispositivo (zumo-id)...${N}"
+if bash /etc/zumo/activar-zumoid.sh 2>&1 | sed 's/^/   /'; then :; fi
+systemctl is-active --quiet zumo-id 2>/dev/null && ok "zumo-id activo" || err "zumo-id no quedó activo: bash /etc/zumo/activar-zumoid.sh"
 echo -e " \e[2mLos demás protocolos (BHTTP, HCR, etc.) se reactivan desde el panel si querés actualizarlos.${N}"
 else
 err "no se pudo refrescar los activadores (sin install.sh)"
