@@ -166,37 +166,9 @@ instalado, volvé a correr `bot/instalar-bot.sh`.
 | `bhttp-server-*` / `bhttp-shim-*` | Binarios de BHTTP por arquitectura. |
 | `main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
 | `android/` | App Android (Zumo VPN). `android/servidores.txt` es la lista de servidores que trae la app. |
-| `zumoid/` / `zumoid-*` / `zumoid.sha256` | Servicio `zumo-id` (control de Android ID): fuente, binarios y hash. |
 | `centro/instalar-centro.sh` | Instalador de la VPS centro (dominio, compilador de la app, bot, respaldo). |
 | `bot/respaldo.py` / `bot/local.py` / `bot/centro.py` | Respaldo y clave de firma, compilación local y sus botones del bot. |
 | `diagnostico.sh` | Chequeos de estado. |
-
-## Vincular usuario a un celular (Android ID)
-
-El cliente conecta normal con su usuario y contraseña. Al conectar, la app
-manda el **Android ID** del celular por un canal interno del túnel SSH al
-servicio `zumo-id` de la VPS (puerto local 7390). El servicio lo anota y vos lo
-ves en el panel (Editar usuario) y en la ficha del usuario en el bot.
-
-- **Vincular** (panel op. 6 / botón del bot): desde ese momento el usuario solo
-  puede conectar desde ese Android ID. Desde otro celular se le corta la sesión
-  y la app le muestra el código del celular para que te lo pase.
-- **Desvincular** o **olvidar celular** (op. 7): el usuario vuelve a ser libre y
-  el próximo celular que conecte queda anotado.
-- El servidor identifica al usuario por el kernel (`/proc`), no por lo que diga
-  el cliente. Si el servicio no está, no contesta o el ID no es usable, la
-  conexión sigue normal (falla abierta).
-
-Límites a tener en cuenta:
-
-- El ID sobrevive a desinstalar y reinstalar **si el APK se firma con la misma
-  clave** (por eso la clave fija). Cambia con reseteo de fábrica, app clonada
-  ("Dual apps") o perfil secundario, y con root se puede falsear.
-- Un usuario vinculado que conecta con la app vieja u otra app (HTTP Custom,
-  etc.) no manda ID: se le corta unos 12 s después de conectar.
-- Solo funciona en las VPS donde actualizaste el panel (`actualizar.sh`) y
-  el bot solo ve el `/etc/zumo` de su propia VPS.
-- Reconstruir los binarios: `bash zumoid/build.sh`.
 
 ## VPS centro (compilar la app, bot y respaldo sin depender de GitHub)
 

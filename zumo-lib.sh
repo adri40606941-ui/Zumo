@@ -86,20 +86,3 @@ zumo_password_valido() {
 	esac
 	[ "${#1}" -le 128 ]
 }
-
-# --- Dispositivo (Android ID) --------------------------------------------------------------
-# Lo maneja el servicio zumo-id (binario /usr/local/bin/zumoid, fuente en zumoid/main.go): es la
-# única fuente de verdad de /etc/zumo/dispositivos.db, con su propio lock. Estas funciones solo lo llaman.
-# Si el binario no está (VPS sin actualizar) no imprimen nada y devuelven error.
-ZUMO_ZUMOID="${ZUMO_ZUMOID:-/usr/local/bin/zumoid}"
-
-# zumo_disp_get usuario   — imprime "id<TAB>lock(0|1)<TAB>primero<TAB>ultimo" (epoch), o nada si no hay.
-zumo_disp_get()    { [ -x "$ZUMO_ZUMOID" ] && "$ZUMO_ZUMOID" get "$1" 2>/dev/null; }
-# zumo_disp_lock usuario  — vincula al ID que mandó la app (error si todavía no mandó ninguno).
-zumo_disp_lock()   { [ -x "$ZUMO_ZUMOID" ] && "$ZUMO_ZUMOID" lock "$1"; }
-zumo_disp_unlock() { [ -x "$ZUMO_ZUMOID" ] && "$ZUMO_ZUMOID" unlock "$1"; }
-# zumo_disp_forget usuario — borra el registro (cambió de celular, o se borró el usuario).
-zumo_disp_forget() { [ -x "$ZUMO_ZUMOID" ] && "$ZUMO_ZUMOID" forget "$1"; return 0; }
-zumo_disp_rename() { [ -x "$ZUMO_ZUMOID" ] && "$ZUMO_ZUMOID" rename "$1" "$2"; return 0; }
-# zumo_disp_last usuario  — último intento bloqueado: "epoch<TAB>evento<TAB>id".
-zumo_disp_last()   { [ -x "$ZUMO_ZUMOID" ] && "$ZUMO_ZUMOID" last "$1" 2>/dev/null; }

@@ -344,7 +344,6 @@ u="$1"
 pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 if command -v zumo_db_del >/dev/null 2>&1; then zumo_db_del "$u"; else sed -i "/^$u:/d" /etc/zumo/usuarios.db 2>/dev/null; fi
-command -v zumo_disp_forget >/dev/null 2>&1 && zumo_disp_forget "$u"
 if [ -f /etc/zumo/temporales.db ]; then grep -v "^$u:" /etc/zumo/temporales.db > /etc/zumo/temporales.db.tmp 2>/dev/null && mv /etc/zumo/temporales.db.tmp /etc/zumo/temporales.db; fi
 exit 0
 BORRARTEMP
@@ -482,7 +481,6 @@ local u="$1"
 pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 zumo_db_del "$u"
-zumo_disp_forget "$u"
 clave_del "$u"
 ( flock -w 5 9; [ -f /etc/zumo/datos.db ] && awk -F: -v u="$u" '$1!=u' /etc/zumo/datos.db > /etc/zumo/datos.db.tmp && mv -f /etc/zumo/datos.db.tmp /etc/zumo/datos.db ) 9>/etc/zumo/datos.lock 2>/dev/null
 ( flock -w 5 9; [ -f /etc/zumo/datos-hist.db ] && awk -F: -v u="$u" '$2!=u' /etc/zumo/datos-hist.db > /etc/zumo/datos-hist.db.tmp && mv -f /etc/zumo/datos-hist.db.tmp /etc/zumo/datos-hist.db ) 9>/etc/zumo/datos.lock 2>/dev/null
@@ -543,7 +541,6 @@ u="${item%%|*}"
 pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 zumo_db_del "$u"
-zumo_disp_forget "$u"
 clave_del "$u"
 done
 msg_ok "${#VENC[@]} usuario(s) vencido(s) eliminado(s)"; pausa ;;
@@ -577,34 +574,6 @@ local h="${ZUMO_HIST:-/etc/zumo/datos-hist.db}"
 ( flock -w 5 9; [ -f "$h" ] && awk -F: -v a="$1" -v b="$2" -v OFS=: '$2==a{$2=b}1' "$h" > "$h.tmp" && mv -f "$h.tmp" "$h" ) 9>"${ZUMO_DATOS_LOCK:-/etc/zumo/datos.lock}" 2>/dev/null
 }
 
-# Android ID del usuario (lo manda la app al conectar) y si está vinculado a ese celular.
-# Devuelve 0 si hay registro (y deja ID_DISP / LOCK_DISP), 1 si todavía no hay.
-mostrar_dispositivo() {
-local u="$1" d last ult ue uev uid
-ID_DISP=""; LOCK_DISP=0
-d=$(zumo_disp_get "$u" 2>/dev/null)
-if [ -z "$d" ]; then
-echo -e "   Android ID:         \e[2msin datos (todavía no conectó con la app nueva)${N}"
-return 1
-fi
-IFS=$'\t' read -r ID_DISP LOCK_DISP _ last <<<"$d"
-if [ "$LOCK_DISP" = 1 ]; then
-echo -e "   Android ID:         \e[1;38;5;214m$ID_DISP${N}  \e[1;32m🔒 vinculado${N}"
-else
-echo -e "   Android ID:         \e[1;38;5;214m$ID_DISP${N}  \e[2m(sin vincular)${N}"
-fi
-echo -e "   Último ingreso:     \e[1;38;5;214m$(date -d "@$last" '+%d/%m %H:%M' 2>/dev/null)${N}"
-ult=$(zumo_disp_last "$u" 2>/dev/null)
-if [ -n "$ult" ]; then
-IFS=$'\t' read -r ue uev uid <<<"$ult"
-case "$uev" in
-otro-dispositivo) echo -e "   \e[1;31m⚠ Intento bloqueado:\e[0m  otro celular ($uid) el $(date -d "@$ue" '+%d/%m %H:%M' 2>/dev/null)" ;;
-sin-verificar) echo -e "   \e[1;31m⚠ Sesión cortada:\e[0m     entró sin mandar el ID (app vieja u otra app) el $(date -d "@$ue" '+%d/%m %H:%M' 2>/dev/null)" ;;
-esac
-fi
-return 0
-}
-
 editar_usuario() {
 banner; echo -e " \e[1;38;5;141mEDITAR USUARIO${N}\n"
 elegir_usuario || { pausa; return; }
@@ -617,18 +586,12 @@ banner; echo -e " \e[1;38;5;141mEDITAR USUARIO: $SEL${N}\n"
 echo -e "   Límite actual:      \e[1;38;5;214m$lim${N}"
 echo -e "   Vencimiento actual: \e[1;38;5;214m$exp ($(dias "$exp"))${N}\n"
 local estado_bloq="desbloqueado"; esta_bloqueado "$SEL" && estado_bloq="bloqueado"
-echo -e "   Estado:             \e[1;38;5;214m$estado_bloq${N}"
-local tiene_disp=0; mostrar_dispositivo "$SEL" && tiene_disp=1
-echo
+echo -e "   Estado:             \e[1;38;5;214m$estado_bloq${N}\n"
 op 1 "✎" "Cambiar contraseña"
 op 2 "⚙" "Cambiar límite de conexiones"
 op 3 "⏱" "Cambiar días (vencimiento)"
 if esta_bloqueado "$SEL"; then op 4 "🔓" "Desbloquear"; else op 4 "🔒" "Bloquear"; fi
 es_hwid "$SEL" && op 5 "🔑" "Cambiar HWID"
-if [ "$tiene_disp" = 1 ]; then
-if [ "$LOCK_DISP" = 1 ]; then op 6 "🔓" "Desvincular el celular"; else op 6 "🔒" "Vincular solo a este celular"; fi
-op 7 "🗑" "Olvidar el celular (cambió de teléfono)"
-fi
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " eo
 case $eo in
@@ -663,7 +626,6 @@ pkill -9 -u "$SEL" 2>/dev/null
 if usermod --badname -l "$nh" "$SEL" 2>/dev/null; then
 echo "$nh:$nh" | chpasswd
 zumo_db_rename "$SEL" "$nh"
-zumo_disp_rename "$SEL" "$nh"
 clave_rename "$SEL" "$nh"
 datos_rename "$SEL" "$nh"
 SEL="$nh"
@@ -671,15 +633,6 @@ msg_ok "HWID cambiado a $nh"
 else
 msg_err "No se pudo cambiar el HWID"
 fi; sleep 1 ;;
-6) [ "$tiene_disp" = 1 ] || { msg_err "Opción inválida"; sleep 1; continue; }
-if [ "$LOCK_DISP" = 1 ]; then
-zumo_disp_unlock "$SEL" && msg_ok "$SEL ya puede entrar desde cualquier celular"
-else
-if zumo_disp_lock "$SEL"; then msg_ok "$SEL queda vinculado a $ID_DISP: cualquier otro celular se corta"; else msg_err "No se pudo vincular"; fi
-fi; sleep 2 ;;
-7) [ "$tiene_disp" = 1 ] || { msg_err "Opción inválida"; sleep 1; continue; }
-read -rp " ¿Olvidar el celular de $SEL? Se desvincula y se anota el próximo que conecte [s/N]: " c
-if [[ "$c" =~ ^[sS]$ ]]; then zumo_disp_forget "$SEL"; msg_ok "Celular olvidado: el próximo que conecte con $SEL queda anotado"; else msg_err "Cancelado"; fi; sleep 2 ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac

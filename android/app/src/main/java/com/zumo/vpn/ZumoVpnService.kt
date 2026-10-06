@@ -267,13 +267,6 @@ class ZumoVpnService : VpnService() {
             try {
                 estado = "Conectando..."; conectado = false; actualizarNoti()
                 t.connect()
-                // Android ID: se le avisa al servidor qué celular es. Si el administrador vinculó la cuenta a
-                // otro celular, el servidor corta y acá se avisa con un mensaje claro (sin reintentar en bucle).
-                val idDisp = Dispositivo.id(this)
-                if (Dispositivo.verificar(t, idDisp) == Dispositivo.Resultado.RECHAZADO) {
-                    t.close()
-                    detenerPorError(Dispositivo.textoRechazo(idDisp)); break
-                }
                 tunel = t
                 estado = "Conectado"; conectado = true; ultimoError = ""; actualizarNoti()
                 Registro.add("✔ Conectado")
