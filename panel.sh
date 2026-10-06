@@ -856,6 +856,38 @@ esac
 done
 }
 
+badvpn_limite() {
+# $1 = max-clients | max-connections-for-client ; imprime el valor actual del servicio
+sed -n "s/.*--$1 \([0-9]\+\).*/\1/p" /etc/systemd/system/udpgw-7300.service 2>/dev/null | head -n1
+}
+
+editar_limites_badvpn() {
+local u=/etc/systemd/system/udpgw-7300.service mc mcc nmc nmcc
+banner; echo -e " \e[1;38;5;141mBADVPN · LÍMITES${N}\n"
+if [ ! -f "$u" ]; then msg_err "Primero activá BadVPN (opción 1)"; pausa; return; fi
+mc=$(badvpn_limite max-clients); mcc=$(badvpn_limite max-connections-for-client)
+echo -e " \e[1;38;5;214mMax clients${N} (ahora: ${mc:-?})"
+echo -e "   Cuántos celulares (clientes) puede atender BadVPN a la vez."
+echo -e "   \e[2mEjemplo: con 200, el cliente 201 no puede usar BadVPN hasta que otro se desconecte.${N}\n"
+echo -e " \e[1;38;5;214mMax conexiones por cliente${N} (ahora: ${mcc:-?})"
+echo -e "   Cuántas conexiones UDP simultáneas puede abrir cada celular (juegos, llamadas, DNS)."
+echo -e "   \e[2mEjemplo: con 64, un celular que abra la conexión 65 la ve cortada. Si un cliente"
+echo -e "   nota cortes en juegos o llamadas, subilo a 128; más alto = más CPU/RAM.${N}\n"
+read -rp " Nuevo Max clients [${mc:-200}] (Enter = dejar igual): " nmc; nmc=${nmc:-${mc:-200}}
+read -rp " Nuevo Max conexiones por cliente [${mcc:-64}] (Enter = dejar igual): " nmcc; nmcc=${nmcc:-${mcc:-64}}
+if ! [[ "$nmc" =~ ^[0-9]+$ ]] || [ "$nmc" -lt 1 ] || [ "$nmc" -gt 10000 ] || ! [[ "$nmcc" =~ ^[0-9]+$ ]] || [ "$nmcc" -lt 1 ] || [ "$nmcc" -gt 1000 ]; then
+msg_err "Valores inválidos (clientes 1-10000, conexiones por cliente 1-1000)"; pausa; return
+fi
+sed -i "s/--max-clients [0-9]*/--max-clients $nmc/; s/--max-connections-for-client [0-9]*/--max-connections-for-client $nmcc/" "$u"
+mkdir -p /etc/zumo
+printf 'MAXC=%s\nMAXCC=%s\n' "$nmc" "$nmcc" > /etc/zumo/badvpn.conf
+systemctl daemon-reload
+if systemctl is-active --quiet udpgw-7300; then systemctl restart udpgw-7300; fi
+msg_ok "Guardado: Max clients $nmc · Max conexiones por cliente $nmcc"
+systemctl is-active --quiet udpgw-7300 && echo -e "   \e[2mBadVPN reiniciado (los clientes se reconectan solos).${N}"
+pausa
+}
+
 menu_badvpn() {
 while true; do
 banner; echo -e " \e[1;38;5;141mBADVPN (UDPGW 7300)${N}\n"
@@ -866,6 +898,7 @@ echo -e " \e[1;31m● BadVPN: inactivo${N}\n"
 fi
 op 1 "⚡" "Activar"
 op 2 "✖" "Desactivar"
+op 3 "⚙" "Editar límites (Max clients / Max conexiones por cliente)"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -882,6 +915,7 @@ fi ;;
 2) echo -e " \e[1;38;5;141mLiberando puerto 7300...${N}"
 bash /etc/zumo/desactivar-badvpn.sh
 msg_ok "BadVPN desactivado; puerto 7300 liberado"; pausa ;;
+3) editar_limites_badvpn ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
