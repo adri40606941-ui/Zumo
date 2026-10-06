@@ -51,6 +51,19 @@ def actualizar_codigo():
     return ""
 
 
+def contar_tareas(env, timeout=240):
+    """Cuántas tareas va a correr Gradle (simulacro, tarda unos segundos). 0 si no se pudo saber."""
+    try:
+        r = subprocess.run([GRADLE, "-p", os.path.join(SRC, "android"), "assembleRelease", "--dry-run",
+                            "--no-daemon", "--console=plain"], capture_output=True, text=True,
+                           env=env, timeout=timeout, errors="replace")
+    except (subprocess.TimeoutExpired, OSError):
+        return 0
+    if r.returncode != 0:
+        return 0
+    return len(re.findall(r"^:\S+", r.stdout, re.M))
+
+
 def compilar(texto_servidores, progreso=None, actualizar=True):
     """Devuelve dict: ok, numero, apk (bytes), log (últimas líneas), aviso."""
     c = respaldo.clave_firma()
@@ -72,10 +85,13 @@ def compilar(texto_servidores, progreso=None, actualizar=True):
         os.remove(viejo)
     log = []
     t0 = time.time()
+    if progreso:
+        progreso(0, "Preparando…", 0, 0)
+    total = contar_tareas(env) if progreso else 0
     p = subprocess.Popen([GRADLE, "-p", os.path.join(SRC, "android"), "assembleRelease", "--no-daemon",
                           "--console=plain"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          text=True, env=env, errors="replace")
-    ultimo = {"tarea": ""}
+    ultimo = {"tarea": "", "hechas": 0}
 
     def leer():
         for linea in p.stdout:
@@ -83,6 +99,7 @@ def compilar(texto_servidores, progreso=None, actualizar=True):
             m = re.match(r"> Task (\S+)", linea)
             if m:
                 ultimo["tarea"] = m.group(1)
+                ultimo["hechas"] += 1
     h = threading.Thread(target=leer, daemon=True)
     h.start()
     try:
@@ -91,8 +108,8 @@ def compilar(texto_servidores, progreso=None, actualizar=True):
                 p.kill()
                 raise ErrorLocal("La compilación tardó más de 60 minutos y se cortó.")
             if progreso:
-                progreso(int((time.time() - t0) // 60), ultimo["tarea"])
-            time.sleep(15 if progreso else 1)
+                progreso(int((time.time() - t0) // 60), ultimo["tarea"], min(ultimo["hechas"], total), total)
+            time.sleep(6 if progreso else 1)
     finally:
         h.join(timeout=5)
         if texto_servidores:
