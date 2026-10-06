@@ -172,6 +172,35 @@ instalado, volvé a correr `bot/instalar-bot.sh`.
 | `centro/instalar-centro.sh` | Instalador de la VPS centro (dominio, compilador de la app, bot, respaldo). |
 | `bot/respaldo.py` / `bot/local.py` / `bot/centro.py` | Respaldo y clave de firma, compilación local y sus botones del bot. |
 | `scripts/diagnostico.sh` | Chequeos de estado. |
+| `scripts/endurecer.sh` | Endurece una VPS sin dejarte afuera (root solo con llave, actualizaciones automáticas, permisos; en el centro también firewall y fail2ban). Probalo primero con `--ver`. |
+
+### Endurecer la VPS
+
+```bash
+bash /opt/zumo-src/scripts/endurecer.sh --ver      # muestra qué haría, sin cambiar nada
+bash /opt/zumo-src/scripts/endurecer.sh            # lo hace, pidiendo confirmación en cada paso
+```
+
+- **Root solo con llave:** solo si ya hay una llave en `/root/.ssh/authorized_keys`; si no, no lo toca para no
+  dejarte afuera. Los clientes (usuarios del panel) siguen entrando con usuario y clave. Desde el celular, Termius
+  genera una llave y la pone en la VPS ("Keychain → Export to host").
+- **Actualizaciones de seguridad automáticas**, sin reiniciar la VPS.
+- **Permisos de `/etc/zumo`:** los archivos con secretos quedan solo para root.
+- **Solo en el centro:** firewall (deja abiertos los puertos que hoy están en uso) y fail2ban. En una VPS con panel
+  no se tocan: el panel abre puertos nuevos al activar protocolos y los clientes con datos móviles comparten IP.
+- Al terminar muestra cómo deshacer cada cambio.
+
+### Repo privado
+
+Si pasás el repo a privado, las VPS que instalan desde tu dominio no cambian. Solo la primera instalación del centro
+necesita un token de GitHub (permiso de lectura de Contents):
+
+```bash
+export GITHUB_TOKEN=github_pat_xxx
+bash <(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/centro/instalar-centro.sh)
+```
+
+El centro clona con ese token y después actualiza solo (`zumo-publicar`).
 
 ## VPS centro (compilar la app, bot y respaldo sin depender de GitHub)
 
