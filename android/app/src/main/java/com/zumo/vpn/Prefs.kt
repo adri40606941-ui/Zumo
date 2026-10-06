@@ -29,11 +29,7 @@ class Prefs(ctx: Context) {
         get() = sp.getString("exp", "") ?: ""
         set(v) { sp.edit().putString("exp", v).apply() }
 
-    var autoStart: Boolean
-        get() = sp.getBoolean("auto", true)
-        set(v) { sp.edit().putBoolean("auto", v).apply() }
-
-    /** El usuario quiere la VPN encendida (se mantiene aunque el sistema mate el servicio). */
+    /** El usuario tocó Conectar y no Desconectar (sirve para no mostrar el permiso de VPN de más). */
     var wanted: Boolean
         get() = sp.getBoolean("wanted", false)
         set(v) { sp.edit().putBoolean("wanted", v).apply() }
