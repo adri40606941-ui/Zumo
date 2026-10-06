@@ -830,7 +830,11 @@ cat > /etc/systemd/system/udpgw-7300.service <<'U2'
 Description=ZUMO - BadVPN UDPGW (TCP 7300)
 After=network.target
 [Service]
-ExecStart=/opt/badvpn/badvpn-udpgw --listen-addr 0.0.0.0:7300 --max-clients 200 --max-connections-for-client 256
+# --loglevel none: sin esto el badvpn escribe una línea por conexión y hace que
+#   systemd-journal coma mucho CPU con muchos clientes.
+# --max-connections-for-client 64: tope por cliente (alcanza para juegos) para que
+#   no se infle tanto en CPU/RAM. Subilo a 128 si algún cliente nota cortes.
+ExecStart=/opt/badvpn/badvpn-udpgw --listen-addr 0.0.0.0:7300 --loglevel none --max-clients 200 --max-connections-for-client 64
 SuccessExitStatus=1
 Restart=always
 RestartSec=2
