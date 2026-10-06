@@ -8,7 +8,10 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Outline
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
@@ -22,6 +25,7 @@ import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.inputmethod.InputMethodManager
 import android.widget.*
 
@@ -32,6 +36,7 @@ import android.widget.*
  *    contraseña; el host y el payload de cada servidor no se ven en pantalla;
  *  - abriendo el archivo .zs que genera el bot de Telegram (trae servidor, payload, usuario,
  *    clave y vencimiento, y nada de eso se ve ni se edita).
+ * Nombre, colores, fondo, letra y secciones salen del tema de la app (ver [Tema]).
  */
 class MainActivity : Activity() {
 
@@ -58,17 +63,36 @@ class MainActivity : Activity() {
     private lateinit var tvVence: TextView
     private lateinit var tvVenceDetalle: TextView
 
-    private val BG = Color.parseColor("#14102B")
-    private val CARD = Color.parseColor("#201A3D")
-    private val BORDE = Color.parseColor("#36305E")
-    private val ACENTO = Color.parseColor("#B388FF")
-    private val VERDE = Color.parseColor("#4CE0A8")
-    private val ROJO = Color.parseColor("#FF6E6E")
-    private val NARANJA = Color.parseColor("#FFB74D")
-    private val TEXTO_SUAVE = Color.parseColor("#9D96C4")
-    private val CAMPO = Color.parseColor("#2E2854")
+    private val tema: Tema by lazy { Tema.actual(this) }
+    private val BG get() = tema.fondo
+    private val CARD get() = tema.tarjeta
+    private val BORDE get() = tema.borde
+    private val ACENTO get() = tema.acento
+    private val VERDE get() = tema.conectar
+    private val ROJO get() = tema.desconectar
+    private val NARANJA get() = tema.aviso
+    private val TEXTO get() = tema.texto
+    private val TEXTO_SUAVE get() = tema.suave
+    private val CAMPO get() = tema.campo
+    private val SOBRE get() = tema.sobreBoton
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    /** Tamaño de letra según el tema (100 % = el de siempre). */
+    private fun sp(v: Float) = v * tema.escala / 100f
+
+    /** Radio de esquina proporcional al de las tarjetas del tema. */
+    private fun radio(factor: Float) = (tema.radio * factor + 0.5f).toInt()
+
+    private fun letra(negrita: Boolean): Typeface = Typeface.create(tema.fuente, if (negrita) Typeface.BOLD else Typeface.NORMAL)
+
+    /** Tarjetas y campos translúcidos cuando el tema lo pide (para que se vea el fondo). */
+    private fun conOpacidad(c: Int) =
+        if (tema.opacidad >= 100) c else (c and 0x00FFFFFF) or ((255 * tema.opacidad / 100) shl 24)
+
+    /** Los diálogos del sistema traen letra clara u oscura según el tema: se elige por el color de las tarjetas. */
+    private val estiloDialogo get() =
+        if (Tema.esClaro(CARD)) android.R.style.Theme_Material_Light_Dialog_Alert else android.R.style.Theme_Material_Dialog_Alert
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -98,10 +122,10 @@ class MainActivity : Activity() {
     }
 
     // ---------- interfaz ----------
-    private fun texto(t: String, size: Float = 15f, color: Int = Color.WHITE, bold: Boolean = false): TextView =
+    private fun texto(t: String, size: Float = 15f, color: Int = TEXTO, bold: Boolean = false): TextView =
         TextView(this).apply {
-            text = t; textSize = size; setTextColor(color)
-            if (bold) setTypeface(typeface, Typeface.BOLD)
+            text = t; textSize = sp(size); setTextColor(color)
+            typeface = letra(bold)
         }
 
     private fun redondo(c: Int, radio: Int = 16, trazo: Int = 0, colorTrazo: Int = BORDE) =
@@ -113,10 +137,10 @@ class MainActivity : Activity() {
     /** Botón principal: fondo sólido, texto oscuro, bien visible. */
     private fun botonPrimario(t: String, color: Int, onClick: () -> Unit): Button =
         Button(this).apply {
-            text = t; isAllCaps = false; setTextColor(Color.parseColor("#0F0B21")); textSize = 16f
-            setTypeface(typeface, Typeface.BOLD)
+            text = t; isAllCaps = false; setTextColor(SOBRE); textSize = sp(16f)
+            typeface = letra(true)
             stateListAnimator = null
-            background = redondo(color, 16)
+            background = redondo(color, radio(0.8f))
             setOnClickListener { onClick() }
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { topMargin = dp(10) }
         }
@@ -124,18 +148,19 @@ class MainActivity : Activity() {
     /** Botón secundario: solo borde, fondo transparente. Menos protagonismo que el principal. */
     private fun botonSecundario(t: String, color: Int = ACENTO, onClick: () -> Unit): Button =
         Button(this).apply {
-            text = t; isAllCaps = false; setTextColor(color); textSize = 14.5f
+            text = t; isAllCaps = false; setTextColor(color); textSize = sp(14.5f)
+            typeface = letra(false)
             stateListAnimator = null
-            background = redondo(Color.TRANSPARENT, 14, trazo = 1, colorTrazo = color)
+            background = redondo(Color.TRANSPARENT, radio(0.7f), trazo = 1, colorTrazo = color)
             setOnClickListener { onClick() }
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { topMargin = dp(8) }
         }
 
     private fun tarjeta(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        background = redondo(CARD, 20, trazo = 1)
+        background = redondo(conOpacidad(CARD), tema.radio, trazo = 1)
         setPadding(dp(18), dp(16), dp(18), dp(16))
-        elevation = dp(2).toFloat()
+        if (tema.opacidad >= 100) elevation = dp(2).toFloat()   // la sombra se vería a través de una tarjeta translúcida
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             .apply { topMargin = dp(14) }
     }
@@ -153,11 +178,12 @@ class MainActivity : Activity() {
 
     /** Campo de texto con la paleta de la app. Sin autocorrector (usuarios y claves no son palabras). */
     private fun campo(pista: String, clave: Boolean): EditText = EditText(this).apply {
-        hint = pista; setHintTextColor(TEXTO_SUAVE); setTextColor(Color.WHITE); textSize = 15.5f
+        hint = pista; setHintTextColor(TEXTO_SUAVE); setTextColor(TEXTO); textSize = sp(15.5f)
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
             (if (clave) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
+        typeface = letra(false)   // después del inputType: los campos de clave lo cambian a monoespaciada
         maxLines = 1
-        background = redondo(CAMPO, 12, trazo = 1)
+        background = redondo(conOpacidad(CAMPO), radio(0.6f), trazo = 1)
         setPadding(dp(14), dp(12), dp(14), dp(12))
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
     }
@@ -171,7 +197,8 @@ class MainActivity : Activity() {
     }
 
     private fun armarUi() {
-        val root = ScrollView(this).apply { setBackgroundColor(BG); isFillViewport = true }
+        ponerFondo()
+        val root = ScrollView(this).apply { isFillViewport = true }
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(40), dp(18), dp(28))
@@ -186,15 +213,29 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        cab.addView(texto("🛡", 34f).apply { gravity = Gravity.CENTER })
-        cab.addView(texto("ZUMO VPN", 25f, Color.WHITE, true).apply { gravity = Gravity.CENTER; letterSpacing = 0.03f })
-        cab.addView(texto("Conexión privada y estable", 13f, TEXTO_SUAVE).apply {
+        // logo: el ícono importado (si el tema lo pide) o el emoji
+        val fotoLogo = if (tema.logoImagen) Tema.logoImagen(this) else null
+        if (fotoLogo != null) {
+            cab.addView(ImageView(this).apply {
+                setImageBitmap(fotoLogo)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(14).toFloat()) }
+                }
+                clipToOutline = true
+                layoutParams = LinearLayout.LayoutParams(dp(64), dp(64)).apply { bottomMargin = dp(8) }
+            })
+        } else if (tema.logo.isNotBlank()) {
+            cab.addView(texto(tema.logo, 34f).apply { gravity = Gravity.CENTER })
+        }
+        cab.addView(texto(tema.titulo, 25f, TEXTO, true).apply { gravity = Gravity.CENTER; letterSpacing = 0.03f })
+        if (tema.lema.isNotBlank()) cab.addView(texto(tema.lema, 13f, TEXTO_SUAVE).apply {
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
         })
         val btnMenu = TextView(this).apply {
             text = "☰"; textSize = 20f; setTextColor(ACENTO); gravity = Gravity.CENTER
-            background = redondo(CARD, 14, trazo = 1)
+            background = redondo(conOpacidad(CARD), radio(0.7f), trazo = 1)
             layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
             setOnClickListener { abrirMenu() }
         }
@@ -212,8 +253,8 @@ class MainActivity : Activity() {
         cCuenta = tarjeta()
         seccion(cCuenta, "🔑", "Tu cuenta")
         cCuenta.addView(texto("Servidor", 12f, TEXTO_SUAVE))
-        tvServidor = texto("", 15.5f, Color.WHITE, true).apply {
-            background = redondo(CAMPO, 12, trazo = 1)
+        tvServidor = texto("", 15.5f, TEXTO, true).apply {
+            background = redondo(conOpacidad(CAMPO), radio(0.6f), trazo = 1)
             setPadding(dp(14), dp(13), dp(14), dp(13))
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) }
             setOnClickListener { elegirServidor() }
@@ -231,13 +272,14 @@ class MainActivity : Activity() {
         }
         val btnVer = TextView(this).apply {
             text = "👁"; textSize = 17f; gravity = Gravity.CENTER
-            background = redondo(CAMPO, 12, trazo = 1)
+            background = redondo(conOpacidad(CAMPO), radio(0.6f), trazo = 1)
             layoutParams = LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginStart = dp(8) }
             setOnClickListener {
                 // mostrar / ocultar la contraseña que el cliente está escribiendo
                 claveVisible = !claveVisible
                 etPass.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
                     (if (claveVisible) InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD else InputType.TYPE_TEXT_VARIATION_PASSWORD)
+                etPass.typeface = letra(false)
                 etPass.setSelection(etPass.text.length)
             }
         }
@@ -260,7 +302,7 @@ class MainActivity : Activity() {
         }
         val filaEstado = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         filaEstado.addView(puntoEstado)
-        tvEstado = texto("Desconectado", 20f, Color.WHITE, true).apply {
+        tvEstado = texto("Desconectado", 20f, TEXTO, true).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(10) }
         }
         filaEstado.addView(tvEstado)
@@ -277,12 +319,12 @@ class MainActivity : Activity() {
         // vencimiento de la cuenta
         cVence = tarjeta()
         seccion(cVence, "📅", "Vencimiento")
-        tvVence = texto("--", 17f, Color.WHITE, true)
+        tvVence = texto("--", 17f, TEXTO, true)
         tvVenceDetalle = texto("", 13f, TEXTO_SUAVE).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
         }
         cVence.addView(tvVence); cVence.addView(tvVenceDetalle)
-        col.addView(cVence)
+        if (tema.verVencimiento) col.addView(cVence)
 
         // velocidad, tiempo conectado y datos usados
         val cStats = tarjeta()
@@ -294,7 +336,7 @@ class MainActivity : Activity() {
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             }
             colStat.addView(texto(titulo, 11.5f, TEXTO_SUAVE).apply { gravity = Gravity.CENTER })
-            val valor = texto("--", 15.5f, Color.WHITE, true).apply {
+            val valor = texto("--", 15.5f, TEXTO, true).apply {
                 gravity = Gravity.CENTER
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
             }
@@ -306,7 +348,7 @@ class MainActivity : Activity() {
         tvTiempo = columnaStat("Conectado hace")
         tvDatos = columnaStat("Datos usados")
         cStats.addView(filaStats)
-        col.addView(cStats)
+        if (tema.verConexion) col.addView(cStats)
 
         // ajustes del teléfono que ayudan a conectar: DNS privado y batería
         val cTel = tarjeta()
@@ -319,25 +361,58 @@ class MainActivity : Activity() {
             PowerGuide.pedirExclusion(this)
             aviso(if (PowerGuide.sinOptimizar(this)) "La app ya está sin límite de batería" else "Permití \"Sin restricciones\" para esta app")
         })
-        col.addView(cTel)
+        if (tema.verTelefono) col.addView(cTel)
 
         setContentView(root)
     }
 
-    /** Menú ☰: importar una cuenta nueva (renovación) y la guía de batería. */
+    /**
+     * Fondo de toda la ventana (también detrás de la barra de estado): la imagen del tema, un
+     * degradado o un color liso. Va en la ventana y no en la lista para que no se mueva ni se
+     * deforme cuando aparece el teclado.
+     */
+    private fun ponerFondo() {
+        val foto = Tema.fondoImagen(this)
+        val fondo2 = tema.fondo2
+        window.setBackgroundDrawable(when {
+            foto != null -> FondoFoto(foto, tema.velo)
+            fondo2 != null -> GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(BG, fondo2))
+            else -> ColorDrawable(BG)
+        })
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        // sobre un fondo claro, los íconos de las barras del sistema van oscuros
+        var barras = 0
+        if (foto == null && Tema.esClaro(BG)) barras = barras or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        if (foto == null && Tema.esClaro(fondo2 ?: BG) && Build.VERSION.SDK_INT >= 26) barras = barras or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = barras
+    }
+
+    /** Menú ☰: botones de contacto del tema, importar una cuenta nueva (renovación) y la guía de batería. */
     private fun abrirMenu() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val cCuenta = tarjeta()
-        seccion(cCuenta, "📥", "Cuenta")
-        cCuenta.addView(texto("¿Te mandaron un archivo .zs nuevo (renovación u otra cuenta)? Importalo acá.", 13f, TEXTO_SUAVE))
-        cCuenta.addView(botonSecundario("📂  Importar archivo .zs") { elegirArchivo() })
-        col.addView(cCuenta)
+        if (tema.enlaces.isNotEmpty()) {
+            val cContacto = tarjeta()
+            seccion(cContacto, "💬", "Contacto")
+            for (e in tema.enlaces) cContacto.addView(botonSecundario(e.texto) { abrirEnlace(e.url) })
+            col.addView(cContacto)
+        }
+
+        if (tema.verImportar) {
+            val cCuenta = tarjeta()
+            seccion(cCuenta, "📥", "Cuenta")
+            cCuenta.addView(texto("¿Te mandaron un archivo .zs nuevo (renovación u otra cuenta)? Importalo acá.", 13f, TEXTO_SUAVE))
+            cCuenta.addView(botonSecundario("📂  Importar archivo .zs") { elegirArchivo() })
+            col.addView(cCuenta)
+        }
 
         val cEst = tarjeta()
         seccion(cEst, "⚙️", "Evitar desconexiones")
         val sw = Switch(this).apply {
-            text = "Reconectar al encender el teléfono"; setTextColor(Color.WHITE); isChecked = prefs.autoStart
+            text = "Reconectar al encender el teléfono"; setTextColor(TEXTO); typeface = letra(false); isChecked = prefs.autoStart
+            if (tema.escala != 100) textSize = sp(14f)
             setOnCheckedChangeListener { _, on -> prefs.autoStart = on }
         }
         cEst.addView(sw)
@@ -376,14 +451,14 @@ class MainActivity : Activity() {
             else -> ""
         }
         btn.text = if (corr) "◼  Desconectar" else "▶  Conectar"
-        btn.background = redondo(if (corr) ROJO else VERDE, 16)
+        btn.background = redondo(if (corr) ROJO else VERDE, radio(0.8f))
 
         // vencimiento: lo trae el .zs; entrando con usuario y contraseña la app no lo conoce
         cVence.visibility = if (prefs.servidor.isNotBlank()) View.GONE else View.VISIBLE
         val exp = prefs.exp
         val dias = Perfil.diasRestantes(exp)
         when {
-            !tieneCuenta -> { tvVence.text = "--"; tvVence.setTextColor(Color.WHITE); tvVenceDetalle.text = "" }
+            !tieneCuenta -> { tvVence.text = "--"; tvVence.setTextColor(TEXTO); tvVenceDetalle.text = "" }
             exp.isBlank() || dias == null -> { tvVence.text = "Sin vencimiento"; tvVence.setTextColor(VERDE); tvVenceDetalle.text = "" }
             Perfil.vencida(exp) -> {
                 tvVence.text = "Vencida el ${Perfil.fechaLinda(exp)}"; tvVence.setTextColor(ROJO)
@@ -437,7 +512,7 @@ class MainActivity : Activity() {
         // sistema puede cerrar la VPN sola al rato, sobre todo en Tecno, Xiaomi y similares).
         if (!prefs.pidioBateria && !PowerGuide.sinOptimizar(this)) {
             prefs.pidioBateria = true
-            AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            AlertDialog.Builder(this, estiloDialogo)
                 .setTitle("Antes de conectar")
                 .setMessage("Para que la VPN no se corte sola, permití que quede fuera del ahorro de batería.")
                 .setPositiveButton("Permitir") { _, _ -> PowerGuide.pedirExclusion(this); aviso("Listo, ahora tocá Conectar de nuevo") }
@@ -476,16 +551,25 @@ class MainActivity : Activity() {
         aviso("Abrí Ajustes → Conexiones/Red → DNS privado y ponelo en Desactivado")
     }
 
+    /** Abre un botón de contacto del tema (WhatsApp, Telegram, una web...). */
+    private fun abrirEnlace(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: Exception) {
+            aviso("No hay una app instalada para abrir ese enlace")
+        }
+    }
+
     private fun aviso(t: String) = Toast.makeText(this, t, Toast.LENGTH_LONG).show()
 
     /** Diálogo con la misma paleta oscura de la app (el tema del sistema es claro por defecto). */
     private fun dialogo(titulo: String, vista: View): AlertDialog.Builder =
-        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert).setTitle(titulo).setView(vista)
+        AlertDialog.Builder(this, estiloDialogo).setTitle(titulo).setView(vista)
 
     /** Muestra el diálogo con fondo redondeado del color de las tarjetas (en vez de .show() directo). */
     private fun AlertDialog.Builder.mostrar() {
         val d = create()
-        d.setOnShowListener { d.window?.setBackgroundDrawable(redondo(CARD, 18)) }
+        d.setOnShowListener { d.window?.setBackgroundDrawable(redondo(CARD, radio(0.9f))) }
         d.show()
     }
 
@@ -511,7 +595,7 @@ class MainActivity : Activity() {
             porArchivo -> "📄  ${cfg?.name ?: "Zumo"}   ▾"
             else -> "Elegí un servidor   ▾"
         }
-        tvServidor.setTextColor(if (elegido != null || porArchivo) Color.WHITE else NARANJA)
+        tvServidor.setTextColor(if (elegido != null || porArchivo) TEXTO else NARANJA)
         tvCuentaZs.visibility = if (porArchivo) View.VISIBLE else View.GONE
         cajaLogin.visibility = if (elegido != null) View.VISIBLE else View.GONE
         cargando = true
@@ -525,7 +609,7 @@ class MainActivity : Activity() {
         if (servidores.isEmpty()) return
         ocultarTeclado()
         val nombres = servidores.map { it.name }.toTypedArray()
-        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+        AlertDialog.Builder(this, estiloDialogo)
             .setTitle("Elegí el servidor")
             .setItems(nombres) { _, i -> usarServidor(servidores[i]) }
             .setNegativeButton("Cancelar", null)
@@ -561,7 +645,7 @@ class MainActivity : Activity() {
         try {
             val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
             val p = bytes?.let { Zs.descifrar(it) }
-            if (p == null) { aviso("El archivo no es una cuenta válida de Zumo VPN"); Registro.add("✘ Archivo .zs no válido"); return }
+            if (p == null) { aviso("El archivo no es una cuenta válida de ${tema.nombre}"); Registro.add("✘ Archivo .zs no válido"); return }
             guardarCuenta(p)
         } catch (e: Exception) {
             aviso("No se pudo leer el archivo")
@@ -585,8 +669,8 @@ class MainActivity : Activity() {
     private fun guiaBateria() {
         val ok = PowerGuide.sinOptimizar(this)
         val msg = (if (PowerGuide.esTecno) "Detecté un teléfono Tecno/Infinix/itel: son los que más cierran apps.\n\n" else "") +
-            (if (ok) "✔ Batería: sin límite para esta app.\n\n" else "✘ Batería: el sistema todavía puede cerrarla.\n\n") + PowerGuide.pasos
-        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            (if (ok) "✔ Batería: sin límite para esta app.\n\n" else "✘ Batería: el sistema todavía puede cerrarla.\n\n") + PowerGuide.pasos(tema.nombre)
+        AlertDialog.Builder(this, estiloDialogo)
             .setTitle("Evitar desconexiones").setMessage(msg)
             .setPositiveButton("Quitar límite de batería") { _, _ -> PowerGuide.pedirExclusion(this) }
             .setNeutralButton("Abrir autoinicio") { _, _ -> PowerGuide.abrirAutoinicio(this) }

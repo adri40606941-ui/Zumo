@@ -171,7 +171,7 @@ class CentroMixin:
         if d.get("file_size", 0) > 20 * 1024 * 1024:
             self.tg.mensaje(chat, "⚠️ El archivo es demasiado grande (máx. 20 MB).", [[("◂ Respaldo", "resp")]])
             return True
-        datos = self.tg.descargar(d["file_id"])
+        datos = self.tg.bajar(d["file_id"])
         sig = "r_clave" if e["paso"] == "r_archivo" else "ki_clave"
         self.estado[chat] = {"paso": sig, "datos": datos}
         self.tg.mensaje(chat, "🔑 Ahora escribí la contraseña de ese archivo (la borro del chat):", [[("✖ Cancelar", "resp")]])

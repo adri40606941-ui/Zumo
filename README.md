@@ -84,7 +84,8 @@ El cliente carga su cuenta de dos formas:
 
 - **Servidor + usuario y contraseña**: elige un servidor de la lista que trae la app y escribe
   sus datos. El host y el payload no se ven.
-- **Archivo `.zs`**: trae servidor, payload, usuario, clave y vencimiento.
+- **Archivo `.zs`**: trae servidor, payload, usuario, clave y vencimiento. La app todavía los abre,
+  pero el bot ya no los genera.
 
 La lista de servidores está en `android/servidores.txt` (un bloque por servidor, cada uno con su
 payload; el formato está explicado en el mismo archivo). Dentro del APK va cifrada. Si el
@@ -95,12 +96,53 @@ la compilación usa el secreto. Sin servidores cargados, la app funciona solo co
 Para cambiar un payload: editá la lista (o el secreto), compilá y pasales el APK nuevo a los
 clientes. Si no le cambiás el nombre al servidor, no tienen que volver a elegirlo.
 
+### Usuarios desde el bot de Telegram
+
+En el bot: **➕ Crear usuario** (también está arriba de la lista de **👥 Usuarios**). Crea lo mismo que el panel:
+
+- **👤 Normal**: usuario, contraseña, días y conexiones.
+- **🔑 HWID**: nombre del cliente, su HWID (8 a 32 letras y números), días y conexiones.
+- **⏳ Temporal** y **⏳ Temporal HWID**: duran los minutos que elijas (hasta 1440) y se borran solos.
+
+Al crear, renovar o cambiar la clave, el bot manda en un mensaje aparte los datos listos para reenviarle al
+cliente (el mismo texto que muestra el panel). En la ficha de cada usuario, **📋 Datos para el cliente** los
+vuelve a mandar. El bot no genera archivos `.zs`.
+
 ### Compilar la app desde el bot de Telegram
 
 En el bot: **📱 App Android**. Ahí cargás los servidores de la app (nombre, host, puerto, payload), cambiás
 el payload de cualquiera y tocás **🔨 Compilar y enviarme el APK**. El bot sube la lista cifrada al secreto
 `ZUMO_SERVIDORES` del repo, lanza la compilación en GitHub, espera y te manda el APK por Telegram. Si falla,
 te muestra el final del registro. El mensaje con el payload que escribís se borra del chat.
+
+### Apariencia de la app (nombre, colores, ícono, fondo)
+
+En el bot: **📱 App Android → 🎨 Apariencia de la app**. Desde ahí se cambia, sin tocar código:
+
+- **Plantillas**: diez diseños listos (oscuros y claros). El bot manda una imagen con todos y otra en
+  grande del que elijas, ya con tu nombre e ícono, antes de aplicarlo.
+- **Nombre y lema**: el nombre es el que aparece debajo del ícono, arriba en la pantalla y en la notificación.
+- **Colores**: fondo, tarjetas, títulos y botones, letra, botón Conectar y botón Desconectar. Se eligen
+  de una paleta o escribiendo el código (`#B388FF`); los bordes y tonos intermedios se acomodan solos.
+- **Fondo**: color liso, degradado de dos colores o una imagen (mandás una foto). Se puede oscurecer
+  la imagen y hacer las tarjetas translúcidas.
+- **Ícono y logo**: importás una imagen y pasa a ser el ícono de la app; también puede ir arriba del
+  título en lugar del emoji.
+- **Letras**: tipo de letra, tamaño y título en mayúsculas o como lo escribiste.
+- **Menús y secciones**: mostrar u ocultar Vencimiento, Velocidad y datos, Ajustes del teléfono e
+  Importar `.zs`; forma de las esquinas; y hasta 3 botones de contacto en el menú ☰ (WhatsApp, Telegram, web).
+- **Vista previa**: en cualquier momento el bot manda una imagen de cómo queda.
+
+Los cambios se guardan en la VPS (`/etc/zumo/app-marca/`) y llegan a los clientes cuando tocás
+**🔨 Compilar y enviarme el APK** y les pasás el APK nuevo: el bot sube la apariencia al repo como
+secretos (`ZUMO_MARCA` y `ZUMO_MARCA_1`…`14`) y la compilación la usa. La firma y el identificador de
+la app no cambian, así que se instala encima de la anterior aunque cambie de nombre e ícono.
+
+Sin bot, lo mismo se hace a mano en `android/marca/`: `tema.json` (nombre, colores, etc.) y,
+opcionalmente, `icono.png` y `fondo.jpg`.
+
+Para las vistas previas el bot usa `python3-pil` (lo instala `bot/instalar-bot.sh`). En un bot ya
+instalado, volvé a correr el instalador para actualizarlo: conserva tu configuración.
 
 Token de GitHub (una sola vez): github.com → Settings → Developer settings → Personal access tokens →
 **Fine-grained tokens** → *Generate new token*; en *Repository access* elegí solo `Zumo`; permisos:

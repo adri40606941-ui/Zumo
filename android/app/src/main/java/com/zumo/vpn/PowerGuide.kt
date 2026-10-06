@@ -57,13 +57,13 @@ object PowerGuide {
     val fabricante: String get() = Build.MANUFACTURER.lowercase()
     val esTecno: Boolean get() = fabricante.let { it.contains("tecno") || it.contains("infinix") || it.contains("itel") || it.contains("transsion") }
 
-    val pasos: String
-        get() = """
+    /** nombre: el de la app, tal como lo ve el cliente en su teléfono (sale del tema). */
+    fun pasos(nombre: String): String = """
             Para que la VPN no se corte:
 
             1. Toca "Quitar límite de batería" y elige Permitir.
-            2. Toca "Abrir autoinicio" y activa Zumo VPN (inicio automático y en segundo plano).
-            3. En las apps recientes, mantén pulsada la tarjeta de Zumo VPN y toca el candado.
+            2. Toca "Abrir autoinicio" y activa $nombre (inicio automático y en segundo plano).
+            3. En las apps recientes, mantén pulsada la tarjeta de $nombre y toca el candado.
             4. Desactiva el ahorro de energía y el ahorro de datos.
             5. Desactiva "Wi-Fi + datos inteligente" si tu teléfono lo tiene.
         """.trimIndent()

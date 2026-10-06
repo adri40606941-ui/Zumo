@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Bot de Telegram para administrar cuentas de Zumo VPN desde el teléfono.
 
-Se maneja solo con botones (inline). Corre en la VPS como root (crea usuarios SSH reales, igual que el panel) y le manda al
-administrador el archivo .zs que abre la app. Solo responde a los IDs de ADMINS.
+Se maneja solo con botones (inline). Corre en la VPS como root y crea usuarios SSH reales, igual que el panel:
+normales, HWID y temporales. Al crear o renovar manda el mensaje con los datos para pasarle al cliente.
+Solo responde a los IDs de ADMINS.
 
-Configuración: /etc/zumo/bot.env  (BOT_TOKEN, ADMINS, ZS_SECRET)
-Datos del servidor (host, puerto, payload...): /etc/zumo/bot.json (se cambian desde el bot)
+Configuración: /etc/zumo/bot.env  (BOT_TOKEN, ADMINS)
 Servidores de la app Android: /etc/zumo/app-servidores.json (y GITHUB_TOKEN / GITHUB_REPO en bot.env para compilar)
+Apariencia de la app Android: /etc/zumo/app-marca/ (tema.json, icono.png, fondo.jpg); se cambia desde el bot
 """
 import base64
+import hashlib
 import json
 import os
 import re
@@ -24,17 +26,23 @@ from datetime import date, datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import centro  # noqa: E402
 import compilar  # noqa: E402
+import marca  # noqa: E402
 import servidores as srv  # noqa: E402
-import zs  # noqa: E402
+import tema as T  # noqa: E402
+import vista  # noqa: E402
 
 ENV = os.environ.get("ZUMO_BOT_ENV", "/etc/zumo/bot.env")
-ESTADO = os.environ.get("ZUMO_BOT_JSON", "/etc/zumo/bot.json")
 APPSRV = os.environ.get("ZUMO_APP_SERVIDORES", "/etc/zumo/app-servidores.json")
+MARCA = os.environ.get("ZUMO_APP_MARCA", "/etc/zumo/app-marca")
 DB = os.environ.get("ZUMO_DB", "/etc/zumo/usuarios.db")
 CLAVES = os.environ.get("ZUMO_CLAVES", "/etc/zumo/claves.db")
 LIB = os.environ.get("ZUMO_LIB", "/etc/zumo/zumo-lib.sh")
 LIMCONF = os.environ.get("ZUMO_LIMCONF", "/etc/zumo/limit.conf")
 ZUMOID = os.environ.get("ZUMO_ZUMOID", "/usr/local/bin/zumoid")  # control de dispositivo (Android ID)
+PASSWD = os.environ.get("ZUMO_PASSWD", "/etc/passwd")
+TEMPDB = os.environ.get("ZUMO_TEMPDB", "/etc/zumo/temporales.db")
+BORRADOR = os.environ.get("ZUMO_BORRADOR", "/etc/zumo/borrar-temporal.sh")
+PDIRECT_ENV = os.environ.get("ZUMO_PDIRECT_ENV", "/etc/zumo/pdirect.env")
 
 # ---------------------------------------------------------------- configuración
 def leer_env(ruta=ENV):
@@ -48,22 +56,6 @@ def leer_env(ruta=ENV):
     except FileNotFoundError:
         pass
     return d
-
-
-def cargar_estado():
-    try:
-        with open(ESTADO, encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-
-def guardar_estado(d):
-    tmp = ESTADO + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, ESTADO)
 
 
 def cargar_app():
@@ -82,6 +74,62 @@ def guardar_app(lista):
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(lista, f, ensure_ascii=False, indent=1)
     os.replace(tmp, APPSRV)
+
+
+# ------------------------------------------------------------- apariencia de la app
+def tema_guardado():
+    """¿El dueño ya personalizó algo? (si no, al compilar no se toca la apariencia del repo)"""
+    return os.path.isfile(os.path.join(MARCA, "tema.json"))
+
+
+def cargar_tema():
+    try:
+        with open(os.path.join(MARCA, "tema.json"), encoding="utf-8") as f:
+            return T.normalizar(json.load(f))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return T.normalizar({})
+
+
+def _escribir_marca(nombre, datos):
+    os.makedirs(MARCA, mode=0o700, exist_ok=True)
+    ruta = os.path.join(MARCA, nombre)
+    fd = os.open(ruta + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(datos)
+    os.replace(ruta + ".tmp", ruta)
+
+
+def guardar_tema(t):
+    _escribir_marca("tema.json", T.a_json(t).encode("utf-8"))
+
+
+def imagen_marca(nombre):
+    """Bytes de icono.png o fondo.jpg guardados por el bot, o None."""
+    try:
+        with open(os.path.join(MARCA, nombre), "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+def guardar_imagen_marca(nombre, datos):
+    if not tema_guardado():
+        guardar_tema(cargar_tema())
+    _escribir_marca(nombre, datos)
+
+
+def borrar_imagen_marca(nombre):
+    try:
+        os.remove(os.path.join(MARCA, nombre))
+    except FileNotFoundError:
+        pass
+
+
+def secretos_marca():
+    """{secreto: valor} con la apariencia para subir al repo, o None si nunca se personalizó."""
+    if not tema_guardado():
+        return None
+    return marca.secretos(marca.empaquetar(T.a_json(cargar_tema()), imagen_marca("icono.png"), imagen_marca("fondo.jpg")))
 
 
 # --------------------------------------------------------------------- usuarios
@@ -143,22 +191,182 @@ def fecha_cuenta(exp):
     return (date.fromisoformat(exp) + timedelta(days=1)).isoformat()
 
 
-def crear_usuario(u, clave, dias, limite):
+# Modo HWID (igual que el panel): el usuario y la contraseña de Linux son el HWID del cliente, y el
+# nombre del cliente va en el GECOS como "hwid,<nombre>".
+HWID_RE = re.compile(r"^[A-Za-z0-9]{8,32}$")
+MIN_MAX = 1440          # un temporal dura como mucho un día
+DIAS_TEMPORAL = 2       # vencimiento "de papel" del temporal: lo borra el timer mucho antes
+
+
+def hwids():
+    """{hwid: nombre del cliente} de los usuarios creados en modo HWID."""
+    out = {}
+    try:
+        for linea in open(PASSWD, encoding="utf-8", errors="replace"):
+            p = linea.rstrip("\n").split(":")
+            if len(p) >= 5 and p[4].startswith("hwid,"):
+                out[p[0]] = p[4][5:]
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def limpiar_hwid(t):
+    """Deja solo letras y números (lo que pegan suele traer espacios o guiones)."""
+    return re.sub(r"[^A-Za-z0-9]", "", t)
+
+
+def limpiar_etiqueta(t):
+    """El nombre del cliente va en el GECOS: sin ':' ni caracteres de control, máx. 48."""
+    return re.sub(r"[\x00-\x1f\x7f:]", "", t).strip()[:48] or "cliente"
+
+
+def existe(u):
+    return u in usuarios() or run("id", u).returncode == 0
+
+
+def temporales():
+    """{usuario: epoch en que se borra} de los usuarios temporales."""
+    out = {}
+    try:
+        for linea in open(TEMPDB, encoding="utf-8"):
+            u, _, ep = linea.strip().partition(":")
+            if u and ep.isdigit():
+                out[u] = int(ep)
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def temp_quitar(u):
+    try:
+        l = [x for x in open(TEMPDB, encoding="utf-8") if x.split(":")[0] != u]
+    except FileNotFoundError:
+        return
+    with open(TEMPDB, "w", encoding="utf-8") as f:
+        f.writelines(l)
+
+
+def minutos_restantes(epoch):
+    return max(0, (epoch - int(time.time()) + 59) // 60)
+
+
+def texto_minutos(n):
+    return "1 minuto" if n == 1 else f"{n} minutos"
+
+
+# El mismo script que deja install.sh; el bot lo repone si falta (VPS sin actualizar).
+BORRADOR_SH = """#!/bin/bash
+# Borra un usuario temporal: lo saca del sistema, de la base y del registro temporal.
+u="$1"
+[ -z "$u" ] && exit 0
+[ -f /etc/zumo/zumo-lib.sh ] && source /etc/zumo/zumo-lib.sh
+pkill -9 -u "$u" 2>/dev/null
+userdel "$u" 2>/dev/null
+if command -v zumo_db_del >/dev/null 2>&1; then zumo_db_del "$u"; else sed -i "/^$u:/d" /etc/zumo/usuarios.db 2>/dev/null; fi
+command -v zumo_disp_forget >/dev/null 2>&1 && zumo_disp_forget "$u"
+if [ -f /etc/zumo/temporales.db ]; then grep -v "^$u:" /etc/zumo/temporales.db > /etc/zumo/temporales.db.tmp 2>/dev/null && mv /etc/zumo/temporales.db.tmp /etc/zumo/temporales.db; fi
+exit 0
+"""
+
+
+def programar_borrado(u, minutos):
+    """Anota el temporal y agenda su borrado con systemd-run, como el panel. False si no se pudo agendar
+    (igual queda anotado: el limitador borra los temporales vencidos aunque el timer se pierda)."""
+    if not os.access(BORRADOR, os.X_OK):
+        with open(BORRADOR, "w", encoding="utf-8") as f:
+            f.write(BORRADOR_SH)
+        os.chmod(BORRADOR, 0o755)
+    temp_quitar(u)
+    with open(TEMPDB, "a", encoding="utf-8") as f:
+        f.write(f"{u}:{int(time.time()) + minutos * 60}\n")
+    run("systemctl", "reset-failed", f"zumo-temp-{u}.timer")
+    r = run("systemd-run", "--quiet", "--collect", f"--unit=zumo-temp-{u}", f"--on-active={minutos}min",
+            "--timer-property=AccuracySec=5s", BORRADOR, u)
+    return r.returncode == 0
+
+
+class Aviso(str):
+    """El usuario quedó creado, pero hay algo para avisar (no es un error de alta)."""
+
+
+def _alta(u, clave, limite, dias, minutos, gecos=None):
+    """Crea la cuenta de Linux y la anota en el panel. Con minutos es temporal.
+    Devuelve None, un error (no se creó) o un Aviso (se creó, con una advertencia)."""
+    exp = (date.today() + timedelta(days=DIAS_TEMPORAL if minutos else dias)).isoformat()
+    args = ["useradd"]
+    if gecos or not re.match(r"^[a-z][a-z0-9]*$", u):
+        args.append("--badname")
+    args += ["-M", "-s", "/bin/false", "-e", fecha_cuenta(exp)]
+    if gecos:
+        args += ["-c", gecos]
+    r = run(*args, u)
+    if r.returncode != 0:
+        return "No se pudo crear el usuario: " + (r.stderr.strip() or "error")
+    run("chpasswd", entrada=f"{u}:{clave}\n")
+    if not gecos:
+        clave_guardar(u, clave)   # la de un HWID es el mismo HWID: no se guarda
+    bash_lib("zumo_db_add", u, str(limite), exp)
+    if minutos and not programar_borrado(u, minutos):
+        return Aviso("No se pudo agendar el borrado automático (systemd-run). Lo va a borrar el limitador "
+                     "cuando se cumpla el tiempo; si no, borralo vos desde su ficha.")
+    return None
+
+
+def crear_usuario(u, clave, dias, limite, minutos=None):
+    """Usuario común (usuario y contraseña). Con minutos es temporal: se borra solo al cumplirse."""
     if not NOMBRE_RE.match(u):
         return "Usuario inválido: empieza con letra, solo letras y números, máx. 10."
     if not CLAVE_RE.match(clave):
         return "Contraseña inválida: solo letras y números, de 1 a 10."
-    if run("id", u).returncode == 0:
+    if existe(u):
         return "Ese usuario ya existe."
-    exp = (date.today() + timedelta(days=dias)).isoformat()
-    badname = [] if re.match(r"^[a-z][a-z0-9]*$", u) else ["--badname"]
-    r = run("useradd", *badname, "-M", "-s", "/bin/false", "-e", fecha_cuenta(exp), u)
-    if r.returncode != 0:
-        return "No se pudo crear el usuario: " + (r.stderr.strip() or "error")
-    run("chpasswd", entrada=f"{u}:{clave}\n")
-    clave_guardar(u, clave)
-    bash_lib("zumo_db_add", u, str(limite), exp)
-    return None
+    return _alta(u, clave, limite, dias, minutos)
+
+
+def crear_hwid(hwid, etiqueta, dias, limite, minutos=None):
+    """Usuario en modo HWID: entra con su HWID. Con minutos es temporal."""
+    if not HWID_RE.match(hwid):
+        return "HWID inválido: de 8 a 32 letras y números."
+    if existe(hwid):
+        return "Ese HWID ya está registrado."
+    return _alta(hwid, hwid, limite, dias, minutos, gecos="hwid," + limpiar_etiqueta(etiqueta))
+
+
+def banner_pdirect():
+    """El banner del 101 (PDirect): es la "máquina" que ve el cliente."""
+    try:
+        for linea in open(PDIRECT_ENV, encoding="utf-8"):
+            if linea.startswith("PDIRECT_BANNER="):
+                return linea.split("=", 1)[1].strip() or "ZUMO"
+    except FileNotFoundError:
+        pass
+    return "ZUMO"
+
+
+def fecha_larga(exp, corta=False):
+    try:
+        return date.fromisoformat(exp).strftime("%d/%m" if corta else "%d/%m/%Y")
+    except ValueError:
+        return exp
+
+
+def mensaje_cliente(u):
+    """El mismo mensaje que arma el panel para copiar y mandarle al cliente. None si el usuario no existe."""
+    us = usuarios()
+    if u not in us:
+        return None
+    lim, exp = us[u]
+    temp = temporales().get(u)
+    cliente = hwids().get(u)
+    if cliente is not None:
+        vence = texto_minutos(minutos_restantes(temp)) if temp else fecha_larga(exp)
+        return ("🔐 DATOS DE ACCESO\n├ ☁️ Plan: Privado\n"
+                f"├ ⚙️ Máquina: {banner_pdirect()}\n├ 👤 Usuario: {cliente}\n├ ⏳ Vence: {vence}")
+    vence = texto_minutos(minutos_restantes(temp)) if temp else fecha_larga(exp, corta=True)
+    n = int(lim) if str(lim).isdigit() else 1
+    return (f"👤 {u}\n🔒 {clave_de(u) or '(su clave)'}\n📅 {vence}\n"
+            f"🔌 {'1 dispositivo' if n == 1 else f'{n} dispositivos'}\n📄 {banner_pdirect()}")
 
 
 # ------------------------------------------------------------ dispositivo (Android ID)
@@ -202,6 +410,8 @@ def borrar_usuario(u):
     bash_lib("zumo_db_del", u)
     zid("forget", u)
     clave_borrar(u)
+    run("systemctl", "stop", f"zumo-temp-{u}.timer")
+    temp_quitar(u)
     for tabla, campo in (("/etc/zumo/datos.db", 0), ("/etc/zumo/datos-hist.db", 1)):
         try:
             l = [x for x in open(tabla, encoding="utf-8") if x.split(":")[campo] != u]
@@ -220,24 +430,6 @@ def renovar_usuario(u, dias):
     except FileNotFoundError:
         pass
     return exp
-
-
-# ------------------------------------------------------------------------- .zs
-def armar_zs(u, secreto):
-    """Devuelve (nombre_archivo, bytes) del .zs de un usuario existente, o (None, motivo)."""
-    st = cargar_estado()
-    if not st.get("host"):
-        return None, "Falta el servidor: usá /servidor host [puerto] [nombre]."
-    us = usuarios()
-    if u not in us:
-        return None, "Ese usuario no está en el panel."
-    clave = clave_de(u)
-    if clave is None:
-        return None, "No tengo la contraseña de ese usuario guardada. Cambiala con /clave."
-    p = zs.perfil(st["host"], st.get("port", 80), st.get("payload", ""), st.get("name", "Zumo"),
-                  u, clave, us[u][1], st.get("tls", False), st.get("sni", ""))
-    nombre = re.sub(r"[^A-Za-z0-9_-]", "_", st.get("name", "zumo")) or "zumo"
-    return f"{nombre}.zs", zs.cifrar(p, secreto)
 
 
 # --------------------------------------------------------------------- Telegram
@@ -293,34 +485,54 @@ class Telegram:
         except urllib.error.HTTPError:
             pass
 
-    def descargar(self, file_id):
-        """Bytes de un archivo que el administrador mandó al bot."""
-        ruta = self._post("getFile", {"file_id": file_id})["result"]["file_path"]
-        url = self.base.replace("/bot", "/file/bot", 1) + ruta
-        with urllib.request.urlopen(url, timeout=60) as r:
-            return r.read()
-
-    def documento(self, chat, nombre, datos, leyenda=""):
+    def _subir(self, metodo, campo, nombre, datos, extras):
         borde = uuid.uuid4().hex
         cuerpo = b""
-        for k, v in (("chat_id", str(chat)), ("caption", leyenda)):
+        for k, v in extras:
             cuerpo += (f"--{borde}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").encode()
-        cuerpo += (f"--{borde}\r\nContent-Disposition: form-data; name=\"document\"; filename=\"{nombre}\"\r\n"
+        cuerpo += (f"--{borde}\r\nContent-Disposition: form-data; name=\"{campo}\"; filename=\"{nombre}\"\r\n"
                    "Content-Type: application/octet-stream\r\n\r\n").encode() + datos + f"\r\n--{borde}--\r\n".encode()
-        req = urllib.request.Request(self.base + "sendDocument", data=cuerpo,
+        req = urllib.request.Request(self.base + metodo, data=cuerpo,
                                      headers={"Content-Type": f"multipart/form-data; boundary={borde}"})
         urllib.request.urlopen(req, timeout=60).read()
+
+    def documento(self, chat, nombre, datos, leyenda=""):
+        self._subir("sendDocument", "document", nombre, datos, (("chat_id", str(chat)), ("caption", leyenda)))
+
+    def foto(self, chat, datos, leyenda="", botones=None):
+        extras = [("chat_id", str(chat)), ("caption", leyenda[:1000])]
+        if botones:
+            extras.append(("reply_markup", json.dumps(self._teclado(botones))))
+        nombre = "vista.jpg" if datos[:3] == b"\xff\xd8\xff" else "vista.png"
+        self._subir("sendPhoto", "photo", nombre, datos, extras)
+
+    def bajar(self, file_id):
+        """Bytes de una foto o archivo que mandaron al bot (Telegram deja bajar hasta 20 MB)."""
+        ruta = self._post("getFile", {"file_id": file_id})["result"]["file_path"]
+        url = self.base.replace("/bot", "/file/bot", 1) + ruta
+        with urllib.request.urlopen(url, timeout=120) as r:
+            return r.read()
 
 
 # ------------------------------------------------------------------------ menús
 POR_PAGINA = 20
 MENU = [[("➕ Crear usuario", "crear")],
         [("👥 Usuarios", "lista:0")],
-        [("⚙️ Servidor y payload", "srv")],
         [("📱 App Android", "app")],
         [("💾 Respaldo", "resp")],
         [("🪪 Mi ID", "id")]]
 CANCELAR = [[("✖ Cancelar", "menu")]]
+
+
+TIPOS = {"n": "👤 Normal", "h": "🔑 HWID", "t": "⏳ Temporal", "th": "⏳ Temporal HWID"}
+VOLVER = [[("◂ Menú", "menu")]]
+
+
+def teclado_minutos():
+    return [[(f"{n} min", f"cm:{n}") for n in (10, 30, 60)],
+            [(f"{n // 60} horas", f"cm:{n}") for n in (120, 180, 360)],
+            [("✏️ Otro número", "cm:otro")],
+            [("✖ Cancelar", "menu")]]
 
 
 def teclado_dias(prefijo):
@@ -331,8 +543,8 @@ def teclado_dias(prefijo):
 
 
 class Bot(centro.CentroMixin):
-    def __init__(self, tg, admins, secreto, gh=None):
-        self.tg, self.admins, self.secreto, self.gh = tg, admins, secreto, gh
+    def __init__(self, tg, admins, gh=None):
+        self.tg, self.admins, self.gh = tg, admins, gh
         self.estado = {}      # chat -> {"paso": ..., datos}
         self.compilando = threading.Lock()
 
@@ -348,15 +560,32 @@ class Bot(centro.CentroMixin):
         n = len(usuarios())
         self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + f"🛡 Zumo VPN · {n} usuario(s)\n¿Qué querés hacer?", MENU)
 
+    def pantalla_crear(self, chat, mid):
+        self.estado.pop(chat, None)
+        self.mostrar(chat, mid, "➕ Crear usuario\n¿De qué tipo?\n\n"
+                                "👤 Normal: usuario y contraseña, por días.\n"
+                                "🔑 HWID: entra con el HWID de su celular, por días.\n"
+                                "⏳ Temporal: se borra solo cuando pasan los minutos que elijas.",
+                     [[(TIPOS["n"], "ct:n"), (TIPOS["h"], "ct:h")],
+                      [(TIPOS["t"], "ct:t"), (TIPOS["th"], "ct:th")],
+                      [("◂ Menú", "menu")]])
+
     def pantalla_lista(self, chat, mid, pag):
-        us = sorted(usuarios().items())
+        hw, tm = hwids(), temporales()
+        us = sorted(usuarios().items(), key=lambda x: hw.get(x[0], x[0]).lower())
         if not us:
             return self.mostrar(chat, mid, "No hay usuarios todavía.", [[("➕ Crear usuario", "crear")], [("◂ Menú", "menu")]])
         hoy = date.today().isoformat()
         total = (len(us) - 1) // POR_PAGINA + 1
         pag = max(0, min(pag, total - 1))
         trozo = us[pag * POR_PAGINA:(pag + 1) * POR_PAGINA]
-        botones = [[(f"{'🔴' if e < hoy else '🟢'} {u} · {e[5:] if len(e) == 10 else e}", f"u:{u}")] for u, (_, e) in trozo]
+        botones = [[("➕ Crear usuario", "crear")]]
+        for u, (_, e) in trozo:
+            nombre = f"🔑 {hw[u]}" if u in hw else u
+            if u in tm:
+                botones.append([(f"⏳ {nombre} · {minutos_restantes(tm[u])} min", f"u:{u}")])
+            else:
+                botones.append([(f"{'🔴' if e < hoy else '🟢'} {nombre} · {e[5:] if len(e) == 10 else e}", f"u:{u}")])
         nav = []
         if pag > 0:
             nav.append(("‹ Anterior", f"lista:{pag - 1}"))
@@ -365,19 +594,28 @@ class Bot(centro.CentroMixin):
         if nav:
             botones.append(nav)
         botones.append([("◂ Menú", "menu")])
-        self.mostrar(chat, mid, f"👥 Usuarios (pág. {pag + 1}/{total})\n🟢 vigente · 🔴 vencido · se ve el mes-día de vencimiento", botones)
+        self.mostrar(chat, mid, f"👥 Usuarios (pág. {pag + 1}/{total})\n🟢 vigente · 🔴 vencido (mes-día en que vence) · 🔑 HWID · ⏳ temporal", botones)
 
     def pantalla_usuario(self, chat, mid, u):
         us = usuarios()
         if u not in us:
             return self.menu(chat, mid, "Ese usuario ya no existe.")
         lim, exp = us[u]
-        venc = "🔴 vencido" if exp < date.today().isoformat() else "🟢 vigente"
-        txt = f"👤 {u}\nVence: {exp} ({venc})\nLímite de conexiones: {lim}"
-        botones = [
-            [("📤 Enviar .zs", f"x:{u}")],
-            [("🔄 Renovar", f"r:{u}"), ("🔑 Cambiar clave", f"k:{u}")],
-            [("🔢 Límite", f"l:{u}"), ("🗑 Borrar", f"b:{u}")]]
+        cliente = hwids().get(u)
+        temp = temporales().get(u)
+        txt = f"👤 {cliente} (HWID)\nHWID: {u}" if cliente is not None else f"👤 {u}"
+        if temp:
+            txt += f"\n⏳ Temporal: se borra en {texto_minutos(minutos_restantes(temp))}"
+        else:
+            txt += f"\nVence: {exp} ({'🔴 vencido' if exp < date.today().isoformat() else '🟢 vigente'})"
+        txt += f"\nLímite de conexiones: {lim}"
+        botones = [[("📋 Datos para el cliente", f"d:{u}")]]
+        fila = [] if temp else [("🔄 Renovar", f"r:{u}")]          # un temporal no se renueva: se borra solo
+        if cliente is None:
+            fila.append(("🔑 Cambiar clave", f"k:{u}"))          # la clave de un HWID es el mismo HWID
+        if fila:
+            botones.append(fila)
+        botones.append([("🔢 Límite", f"l:{u}"), ("🗑 Borrar", f"b:{u}")])
         d = disp_get(u)
         if d:
             txt += f"\n\n📱 Android ID: {d['id']}\n" + ("🔒 Vinculado: solo ese celular puede entrar" if d["lock"] else "🔓 Sin vincular: entra desde cualquier celular")
@@ -394,17 +632,6 @@ class Bot(centro.CentroMixin):
         botones.append([("◂ Usuarios", "lista:0")])
         self.mostrar(chat, mid, txt, botones)
 
-    def pantalla_servidor(self, chat, mid):
-        st = cargar_estado()
-        txt = (f"⚙️ Servidor\nHost: {st.get('host') or '(sin definir)'}\nPuerto: {st.get('port', 80)}\n"
-               f"Nombre del archivo: {st.get('name', 'Zumo')}\nTLS: {'sí' if st.get('tls') else 'no'}"
-               f"{' · SNI ' + st['sni'] if st.get('sni') else ''}\n\nPayload:\n{st.get('payload') or '(vacío)'}")
-        self.mostrar(chat, mid, txt, [
-            [("🌐 Host y puerto", "s:host"), ("🏷 Nombre", "s:name")],
-            [("📝 Payload", "s:payload"), ("🧹 Borrar payload", "s:nopayload")],
-            [(f"🔒 TLS: {'sí' if st.get('tls') else 'no'} (cambiar)", "s:tls"), ("SNI", "s:sni")],
-            [("◂ Menú", "menu")]])
-
     def pantalla_app(self, chat, mid, aviso=""):
         l = cargar_app()
         filas = "\n".join(f"{i + 1}. {s['name']} · {s['host']}:{s['port']}{' · TLS' if s.get('tls') else ''}"
@@ -414,6 +641,7 @@ class Bot(centro.CentroMixin):
             "Todavía no cargaste servidores en el bot.\nAl compilar sin servidores, la app usa lo que ya haya en el secreto ZUMO_SERVIDORES del repo.")
         botones = [[(f"{i + 1}. {s['name']}", f"a:{i}")] for i, s in enumerate(l)]
         botones += [[("➕ Agregar servidor", "aadd"), ("📥 Pegar lista", "apegar")],
+                    [("🎨 Apariencia de la app", "t")],
                     [("🔨 Compilar y enviarme el APK", "acomp")],
                     [("💾 Respaldo y clave de firma", "resp") if self.local_activo else ("🔑 Asegurar clave de firma", "aclave")],
                     [("◂ Menú", "menu")]]
@@ -438,12 +666,11 @@ class Bot(centro.CentroMixin):
         self.estado[chat] = {"paso": paso, **datos}
         self.tg.mensaje(chat, texto, CANCELAR)
 
-    def enviar_zs(self, chat, u, leyenda):
-        nombre, datos = armar_zs(u, self.secreto)
-        if nombre is None:
-            self.tg.mensaje(chat, "⚠️ " + datos, [[("⚙️ Servidor", "srv")], [("◂ Menú", "menu")]])
-        else:
-            self.tg.documento(chat, nombre, datos, leyenda)
+    def enviar_datos(self, chat, u):
+        """Manda, en un mensaje aparte, los datos listos para reenviarle al cliente."""
+        m = mensaje_cliente(u)
+        if m:
+            self.tg.mensaje(chat, m)
 
     # -- entrada
     def manejar(self, msg):
@@ -461,6 +688,8 @@ class Bot(centro.CentroMixin):
                 return self.menu(chat)
             if chat in self.estado:
                 self.estado[chat]["_mid"] = msg.get("message_id")
+                if self.estado[chat]["paso"] in ("t_icono", "t_fondo"):
+                    return self.imagen_recibida(chat, msg)
                 r = self.texto_libre(chat, texto)
                 return r
             self.menu(chat)
@@ -477,6 +706,8 @@ class Bot(centro.CentroMixin):
         try:
             if cb.get("data") == "id":
                 return self.tg.mensaje(chat, f"Tu ID de Telegram: {uid}")
+            if cb["message"].get("photo"):
+                mid = None      # el botón está debajo de una foto: no se puede editar, va un mensaje nuevo
             self.boton(chat, mid, cb.get("data", ""))
         except Exception as e:
             self.tg.mensaje(chat, f"⚠️ Error: {e}")
@@ -493,22 +724,32 @@ class Bot(centro.CentroMixin):
             return self.pantalla_lista(chat, mid, int(arg or 0))
         if acc == "u":
             return self.pantalla_usuario(chat, mid, arg)
-        if acc == "srv":
-            self.estado.pop(chat, None)
-            return self.pantalla_servidor(chat, mid)
         if acc == "crear":
-            if not cargar_estado().get("host"):
-                return self.mostrar(chat, mid, "⚠️ Primero definí el servidor (host y puerto).", [[("⚙️ Servidor", "srv")], [("◂ Menú", "menu")]])
-            return self.pedir(chat, "➕ Nuevo usuario\n\nEscribí el nombre de usuario (empieza con letra, solo letras y números, máx. 10):", "c_user")
-        if acc == "cd":      # días elegidos al crear
-            if arg == "otro":
-                self.estado[chat]["paso"] = "c_dias"
-                return self.tg.mensaje(chat, "Escribí la cantidad de días:", CANCELAR)
-            return self.crear_limite(chat, int(arg))
-        if acc == "cl":      # límite elegido al crear
+            return self.pantalla_crear(chat, mid)
+        if acc == "ct":      # tipo de usuario elegido
+            if arg not in TIPOS:
+                return self.pantalla_crear(chat, mid)
+            if arg in ("h", "th"):
+                return self.pedir(chat, f"➕ Nuevo usuario · {TIPOS[arg]}\n\nEscribí el nombre del cliente (solo para identificarlo, no es lo que usa para entrar):", "c_etq", tipo=arg)
+            return self.pedir(chat, f"➕ Nuevo usuario · {TIPOS[arg]}\n\nEscribí el nombre de usuario (empieza con letra, solo letras y números, máx. 10):", "c_user", tipo=arg)
+        if acc in ("cd", "cm", "cl"):      # días, minutos o límite elegidos al crear
+            if chat not in self.estado or "tipo" not in self.estado[chat]:
+                return self.menu(chat, mid, "Eso quedó a medias. Empezá de nuevo desde Crear usuario.")
+            if arg == "otro" and acc != "cl":
+                self.estado[chat]["paso"] = "c_dias" if acc == "cd" else "c_min"
+                return self.tg.mensaje(chat, "Escribí la cantidad de días:" if acc == "cd" else f"Escribí los minutos (1 a {MIN_MAX}):", CANCELAR)
+            temporal = self.estado[chat]["tipo"] in ("t", "th")
+            if not arg.isdigit() or (acc == "cd" and temporal) or (acc == "cm" and not temporal):
+                return self.menu(chat, mid)      # botón de otro alta anterior
+            if acc == "cd":
+                return self.crear_limite(chat, dias=int(arg))
+            if acc == "cm":
+                return self.crear_minutos(chat, int(arg))
             return self.crear_final(chat, int(arg))
-        if acc == "x":
-            return self.enviar_zs(chat, arg, f"Cuenta {arg}")
+        if acc == "d":
+            if arg not in usuarios():
+                return self.menu(chat, mid, "Ese usuario ya no existe.")
+            return self.enviar_datos(chat, arg)
         if acc == "dv":      # vincular / desvincular al celular
             d = disp_get(arg)
             if not d:
@@ -531,6 +772,8 @@ class Bot(centro.CentroMixin):
                 return self.pedir(chat, f"Escribí los días para renovar a {u}:", "r_dias", u=u)
             return self.renovar(chat, u, int(n))
         if acc == "k":
+            if arg in hwids():
+                return self.pantalla_usuario(chat, mid, arg)
             return self.pedir(chat, f"🔑 Nueva contraseña para {arg} (letras y números, 1 a 10):", "k_clave", u=arg)
         if acc == "l":
             return self.mostrar(chat, mid, f"🔢 Límite de conexiones de {arg}", [
@@ -545,10 +788,11 @@ class Bot(centro.CentroMixin):
         if acc == "bs":
             borrar_usuario(arg)
             return self.pantalla_lista(chat, mid, 0)
-        if acc == "s":
-            return self.boton_servidor(chat, mid, arg)
+        if acc == "t":
+            return self.boton_tema(chat, mid, arg)
         if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs"):
             return self.boton_app(chat, mid, acc, arg)
+        return self.menu(chat, mid)      # botón de una versión anterior del bot
 
     def boton_app(self, chat, mid, acc, arg):
         self.estado.pop(chat, None)
@@ -572,7 +816,8 @@ class Bot(centro.CentroMixin):
             donde = f"{self.gh.repo} (rama {self.gh.rama})"
             return self.mostrar(chat, mid, f"🔨 Compilar la app en GitHub\nRepo: {donde}\n"
                                 f"{n} servidor(es) de la lista del bot se suben al secreto antes de compilar."
-                                f"{'' if n else ' (Lista vacía: no se toca el secreto.)'}\nTarda unos minutos. ¿Compilo?",
+                                f"{'' if n else ' (Lista vacía: no se toca el secreto.)'}\n"
+                                f"{'La apariencia que armaste también se sube.' + chr(10) if tema_guardado() else ''}Tarda unos minutos. ¿Compilo?",
                                 [[("✅ Compilar ahora", "acomp_si"), ("✖ No", "app")]])
         if acc == "acomp_si":
             return self.compilar_app(chat)
@@ -616,46 +861,41 @@ class Bot(centro.CentroMixin):
             guardar_app(l)
             return self.pantalla_app(chat, mid, f"🗑 {nombre} borrado. Compilá para que se vaya de la app.")
 
-    def boton_servidor(self, chat, mid, arg):
-        st = cargar_estado()
-        if arg == "host":
-            return self.pedir(chat, "🌐 Escribí el dominio o IP del servidor, con el puerto si no es el 80.\nEj: vps.ejemplo.com  o  vps.ejemplo.com:443", "s_host")
-        if arg == "name":
-            return self.pedir(chat, "🏷 Escribí el nombre del archivo (por ejemplo: nombre → nombre.zs):", "s_name")
-        if arg == "payload":
-            return self.pedir(chat, "📝 Pegá el payload en un solo mensaje (podés usar [crlf], [host], [split]...).", "s_payload")
-        if arg == "nopayload":
-            st["payload"] = ""
-            guardar_estado(st)
-        elif arg == "tls":
-            st["tls"] = not st.get("tls", False)
-            guardar_estado(st)
-        elif arg == "sni":
-            return self.pedir(chat, "Escribí el SNI (o - para dejarlo vacío):", "s_sni")
-        self.pantalla_servidor(chat, mid)
-
     # -- texto escrito
     def texto_libre(self, chat, t):
         e = self.estado[chat]
         paso = e["paso"]
+        if paso == "c_etq":
+            e.update(paso="c_hwid", etq=limpiar_etiqueta(t))
+            return self.tg.mensaje(chat, f"Cliente: {e['etq']}\nAhora pegá el HWID del cliente (8 a 32 letras y números):", CANCELAR)
+        if paso == "c_hwid":
+            h = limpiar_hwid(t)
+            if not HWID_RE.match(h):
+                return self.tg.mensaje(chat, f"⚠️ HWID inválido: tienen que quedar de 8 a 32 letras y números (quedaron {len(h)}). Pegalo de nuevo:", CANCELAR)
+            if existe(h):
+                return self.tg.mensaje(chat, "⚠️ Ese HWID ya está registrado. Pegá otro:", CANCELAR)
+            e.update(hwid=h)
+            return self.pedir_duracion(chat, e, f"HWID: {h}\n")
         if paso == "c_user":
             if not NOMBRE_RE.match(t):
                 return self.tg.mensaje(chat, "⚠️ Nombre inválido. Probá de nuevo (empieza con letra, solo letras y números, máx. 10):", CANCELAR)
-            if t in usuarios() or run("id", t).returncode == 0:
+            if existe(t):
                 return self.tg.mensaje(chat, "⚠️ Ese usuario ya existe. Escribí otro nombre:", CANCELAR)
             e.update(paso="c_clave", u=t)
             return self.tg.mensaje(chat, f"Usuario: {t}\nAhora la contraseña (letras y números, 1 a 10):", CANCELAR)
         if paso == "c_clave":
             if not CLAVE_RE.match(t):
                 return self.tg.mensaje(chat, "⚠️ Contraseña inválida. Solo letras y números, de 1 a 10:", CANCELAR)
-            e.update(paso="c_dias_btn", clave=t)
-            return self.tg.mensaje(chat, "¿Cuántos días de duración?", [[(f"{n} días", f"cd:{n}") for n in (7, 15, 30)],
-                                                                    [(f"{n} días", f"cd:{n}") for n in (60, 90, 180)],
-                                                                    [("✏️ Otro número", "cd:otro")], [("✖ Cancelar", "menu")]])
+            e.update(clave=t)
+            return self.pedir_duracion(chat, e)
         if paso == "c_dias":
             if not (t.isdigit() and 1 <= int(t) <= 3650):
                 return self.tg.mensaje(chat, "⚠️ Escribí un número de días (1 a 3650):", CANCELAR)
-            return self.crear_limite(chat, int(t))
+            return self.crear_limite(chat, dias=int(t))
+        if paso == "c_min":
+            if not (t.isdigit() and 1 <= int(t) <= MIN_MAX):
+                return self.tg.mensaje(chat, f"⚠️ Escribí un número de minutos (1 a {MIN_MAX}):", CANCELAR)
+            return self.crear_minutos(chat, int(t))
         if paso == "r_dias":
             if not (t.isdigit() and 1 <= int(t) <= 3650):
                 return self.tg.mensaje(chat, "⚠️ Escribí un número de días (1 a 3650):", CANCELAR)
@@ -667,32 +907,16 @@ class Bot(centro.CentroMixin):
             self.estado.pop(chat, None)
             run("chpasswd", entrada=f"{u}:{t}\n")
             clave_guardar(u, t)
-            self.tg.mensaje(chat, f"✅ Contraseña de {u} cambiada. Va el archivo nuevo:")
-            self.enviar_zs(chat, u, f"Cuenta {u} con la clave nueva")
+            self.tg.mensaje(chat, f"✅ Contraseña de {u} cambiada. Los datos para el cliente:")
+            self.enviar_datos(chat, u)
             return self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + u, f"u:{u}")], [("◂ Menú", "menu")]])
         if self.texto_resp(chat, e, paso, t):
             return
         if paso.startswith("a_"):
             return self.texto_app(chat, e, paso, t)
-        st = cargar_estado()
-        if paso == "s_host":
-            host, _, puerto = t.partition(":")
-            host = host.strip().removeprefix("https://").removeprefix("http://").strip("/")
-            if not host or " " in host or (puerto and not (puerto.isdigit() and 1 <= int(puerto) <= 65535)):
-                return self.tg.mensaje(chat, "⚠️ Host o puerto inválido. Ej: vps.ejemplo.com:80", CANCELAR)
-            st["host"] = host
-            st["port"] = int(puerto) if puerto else st.get("port", 80)
-        elif paso == "s_name":
-            st["name"] = t[:40]
-        elif paso == "s_payload":
-            st["payload"] = t
-        elif paso == "s_sni":
-            st["sni"] = "" if t == "-" else t
-        else:
-            return self.menu(chat)
-        guardar_estado(st)
-        self.estado.pop(chat, None)
-        self.pantalla_servidor(chat, None)
+        if paso.startswith("t_"):
+            return self.texto_tema(chat, e, paso, t)
+        return self.menu(chat)
 
     def borrar_entrada(self, chat, e):
         """Borra del chat el mensaje con el payload que escribiste (para que no quede a la vista)."""
@@ -843,6 +1067,11 @@ class Bot(centro.CentroMixin):
             if lista:
                 gh.subir_secreto("ZUMO_SERVIDORES", srv.a_texto(lista))
                 self.tg.mensaje(chat, f"🔐 Lista de {len(lista)} servidor(es) subida al repo (cifrada).")
+            apariencia = secretos_marca()
+            if apariencia:
+                for nombre, valor in apariencia.items():
+                    gh.subir_secreto(nombre, valor)
+                self.tg.mensaje(chat, "🎨 Apariencia subida al repo (cifrada).")
             r = self._correr(chat)
             if r.get("conclusion") == "success":
                 apk = gh.archivo_de_rama("zumo-vpn.apk")
@@ -866,32 +1095,400 @@ class Bot(centro.CentroMixin):
         finally:
             self.compilando.release()
 
+    # -- apariencia de la app
+    NOTA_VISTA = "Vista aproximada: en el teléfono los emojis y algunas letras se ven un poco distinto."
+
+    def pantalla_tema(self, chat, mid, aviso=""):
+        t = cargar_tema()
+        hay_fondo, hay_icono = imagen_marca("fondo.jpg") is not None, imagen_marca("icono.png") is not None
+        fondo = "imagen" if hay_fondo else ("degradado" if t["fondo2"] else "color liso")
+        txt = (aviso + "\n\n" if aviso else "") + (
+            "🎨 Apariencia de la app\n\n"
+            f"Nombre: {t['nombre']}\nLema: {t['lema'] or '(sin lema)'}\n"
+            f"Plantilla: {T.nombre_plantilla(t)}\nFondo: {fondo}\n"
+            f"Ícono: {'el tuyo' if hay_icono else 'el original'}\n"
+            f"Letra: {dict(T.FUENTES)[t['fuente']]} · tamaño {dict(T.ESCALAS).get(t['escala'], str(t['escala']) + ' %').lower()}\n\n"
+            "Tus clientes ven los cambios cuando compilás y les pasás el APK nuevo.")
+        self.mostrar(chat, mid, txt, [
+            [("🧩 Plantillas", "t:pl"), ("👁 Vista previa", "t:v")],
+            [("🏷 Nombre", "t:n"), ("💬 Lema", "t:le")],
+            [("🎨 Colores", "t:co"), ("🌄 Fondo", "t:fo")],
+            [("🖼 Ícono y logo", "t:ic"), ("🔤 Letras", "t:lt")],
+            [("📋 Menús y secciones", "t:me")],
+            [("🔨 Compilar y enviarme el APK", "acomp")],
+            [("♻️ Volver al diseño original", "t:rs")],
+            [("◂ App Android", "app")]])
+
+    def enviar_vista(self, chat, t=None, leyenda="", botones=None):
+        """Manda la imagen de cómo queda la app. Sin Pillow en la VPS, avisa cómo instalarlo."""
+        botones = botones or [[("🎨 Seguir cambiando", "t")], [("🔨 Compilar y enviarme el APK", "acomp")]]
+        if not vista.HAY_PIL:
+            return self.tg.mensaje(chat, "👁 Para ver las vistas previas falta una herramienta en la VPS. Corré de nuevo el instalador del bot "
+                                         "(o: apt install -y python3-pil fonts-dejavu-core && systemctl restart zumo-bot).", botones)
+        img = vista.captura(t or cargar_tema(), imagen_marca("icono.png"), imagen_marca("fondo.jpg"))
+        self.tg.foto(chat, img, (leyenda + "\n\n" if leyenda else "") + self.NOTA_VISTA, botones)
+
+    def pantalla_plantillas(self, chat, mid):
+        botones, fila = [], []
+        for i, (pid, nombre, _, _) in enumerate(T.PLANTILLAS):
+            fila.append((f"{i + 1}. {nombre}", f"t:pv:{pid}"))
+            if len(fila) == 2:
+                botones.append(fila)
+                fila = []
+        if fila:
+            botones.append(fila)
+        botones.append([("◂ Apariencia", "t")])
+        if not vista.HAY_PIL:
+            lista = "\n".join(f"{i + 1}. {n}: {d}" for i, (_, n, d, _) in enumerate(T.PLANTILLAS))
+            return self.mostrar(chat, mid, "🧩 Plantillas\n\n" + lista + "\n\nTocá una para usarla.", botones)
+        base = cargar_tema()
+        icono, fondo = imagen_marca("icono.png"), imagen_marca("fondo.jpg")
+        clave = hashlib.sha256((T.a_json(T.aplicar_plantilla(base, "zumo"))).encode() + (icono or b"") + (fondo or b"")).hexdigest()
+        if getattr(self, "_muestrario", (None, None))[0] != clave:
+            temas = [(n, T.aplicar_plantilla(base, pid)) for pid, n, _, _ in T.PLANTILLAS]
+            self._muestrario = (clave, vista.muestrario(temas, icono, fondo))
+        self.tg.foto(chat, self._muestrario[1], "🧩 Plantillas: así quedaría tu app con cada una.\n"
+                                                "Tocá una para verla en grande; después podés cambiarle lo que quieras.", botones)
+
+    def pantalla_colores(self, chat, mid, aviso=""):
+        t = cargar_tema()
+        lineas = "\n".join(f"{nombre}: {t[k]}" for k, nombre in T.COLORES_EDITABLES)
+        botones, fila = [], []
+        for k, nombre in T.COLORES_EDITABLES:
+            fila.append((nombre, f"t:c:{k}"))
+            if len(fila) == 2:
+                botones.append(fila)
+                fila = []
+        botones += [[("👁 Vista previa", "t:v")], [("◂ Apariencia", "t")]]
+        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + "🎨 Colores\n\n" + lineas +
+                     "\n\nTocá el que quieras cambiar. Los bordes y los tonos intermedios se acomodan solos.", botones)
+
+    def pantalla_color(self, chat, mid, k):
+        t = cargar_tema()
+        nombre = "Segundo color del degradado" if k == "fondo2" else dict(T.COLORES_EDITABLES)[k]
+        botones, fila = [], []
+        for n, h in T.paleta(k):
+            fila.append((n, f"t:cs:{k}:{h[1:]}"))
+            if len(fila) == 3:
+                botones.append(fila)
+                fila = []
+        if fila:
+            botones.append(fila)
+        botones += [[("✏️ Escribir un código de color", f"t:ce:{k}")],
+                    [("◂ Fondo", "t:fo")] if k == "fondo2" else [("◂ Colores", "t:co")]]
+        self.mostrar(chat, mid, f"🎨 {nombre}\nAhora: {t.get(k) or '(sin definir)'}\n\nElegí uno, o escribí el código exacto (ej: #B388FF).", botones)
+
+    def pantalla_fondo(self, chat, mid, aviso=""):
+        t = cargar_tema()
+        hay = imagen_marca("fondo.jpg") is not None
+        ahora = "una imagen" if hay else (f"degradado {t['fondo']} → {t['fondo2']}" if t["fondo2"] else f"color liso {t['fondo']}")
+        txt = (aviso + "\n\n" if aviso else "") + f"🌄 Fondo\nAhora: {ahora}\n"
+        botones = [[("🎨 Color", "t:c:fondo"), ("🌗 Degradado", "t:c:fondo2")]]
+        if t["fondo2"]:
+            botones.append([("▫️ Quitar el degradado", "t:fl")])
+        botones.append([("📷 Poner una imagen", "t:fi")] + ([("🗑 Quitar la imagen", "t:fq")] if hay else []))
+        if hay:
+            txt += f"La imagen se oscurece un {t['velo']} % para que se lean las letras.\n"
+            botones.append([(("✓ " if t["velo"] == n else "") + nombre, f"t:fv:{n}") for n, nombre in T.VELOS[:4]])
+        txt += f"Tarjetas: {dict(T.OPACIDADES).get(t['opacidad'], str(t['opacidad']) + ' %').lower()} (cuánto se ve el fondo a través de ellas)."
+        botones.append([(("✓ " if t["opacidad"] == n else "") + nombre, f"t:op:{n}") for n, nombre in T.OPACIDADES[:3]])
+        botones += [[("👁 Vista previa", "t:v")], [("◂ Apariencia", "t")]]
+        self.mostrar(chat, mid, txt, botones)
+
+    def pantalla_icono(self, chat, mid, aviso=""):
+        t = cargar_tema()
+        hay = imagen_marca("icono.png") is not None
+        logo = "tu ícono" if (hay and t["logo_imagen"]) else (f"el emoji {t['logo']}" if t["logo"] else "nada")
+        botones = [[("📷 Importar un ícono", "t:ii")]]
+        if hay:
+            botones.append([("🗑 Quitar mi ícono", "t:iq")])
+            botones.append([(f"Arriba del título: {'mi ícono' if t['logo_imagen'] else 'el emoji'} (cambiar)", "t:il")])
+        botones += [[("😀 Cambiar el emoji del logo", "t:ie")], [("👁 Vista previa", "t:v")], [("◂ Apariencia", "t")]]
+        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") +
+                     f"🖼 Ícono y logo\nÍcono de la app en el teléfono: {'el tuyo' if hay else 'el original'}\n"
+                     f"Logo arriba del título: {logo}", botones)
+
+    def pantalla_letras(self, chat, mid):
+        t = cargar_tema()
+        botones, fila = [], []
+        for i, (f, nombre) in enumerate(T.FUENTES):
+            fila.append((("✓ " if t["fuente"] == f else "") + nombre, f"t:lf:{i}"))
+            if len(fila) == 2:
+                botones.append(fila)
+                fila = []
+        botones.append([(("✓ " if t["escala"] == n else "") + nombre, f"t:ls:{n}") for n, nombre in T.ESCALAS])
+        botones += [[(f"Título en MAYÚSCULAS: {'sí' if t['titulo_mayus'] else 'no'} (cambiar)", "t:lm")],
+                    [("👁 Vista previa", "t:v")], [("◂ Apariencia", "t")]]
+        self.mostrar(chat, mid, f"🔤 Letras\nTipo: {dict(T.FUENTES)[t['fuente']]}\n"
+                                f"Tamaño: {dict(T.ESCALAS).get(t['escala'], str(t['escala']) + ' %')}\n"
+                                f"Título: {T.titulo(t)}\n\nArriba el tipo de letra, abajo el tamaño.", botones)
+
+    def pantalla_menus(self, chat, mid, aviso=""):
+        t = cargar_tema()
+        secciones = "\n".join(f"{'✅' if t[k] else '⬜'} {nombre}" for k, nombre in T.SECCIONES)
+        contactos = "\n".join(f"{i + 1}. {e['texto']} → {e['url']}" for i, e in enumerate(t["enlaces"])) or "(ninguno)"
+        botones = [[(f"{'✅' if t[k] else '⬜'} {nombre}", f"t:ms:{i}")] for i, (k, nombre) in enumerate(T.SECCIONES)]
+        botones.append([(("✓ " if t["radio"] == n else "") + nombre, f"t:mr:{n}") for n, nombre in T.RADIOS])
+        botones += [[(f"🗑 Quitar: {e['texto']}", f"t:mq:{i}")] for i, e in enumerate(t["enlaces"])]
+        if len(t["enlaces"]) < T.MAX_ENLACES:
+            botones.append([("➕ Botón de contacto", "t:ma")])
+        botones += [[("👁 Vista previa", "t:v")], [("◂ Apariencia", "t")]]
+        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") +
+                     f"📋 Menús y secciones\n\nQué se ve en la app (tocá para mostrar u ocultar):\n{secciones}\n\n"
+                     f"Esquinas de las tarjetas y botones: {dict(T.RADIOS).get(t['radio'], str(t['radio']))}\n\n"
+                     f"Botones de contacto del menú ☰ (WhatsApp, Telegram, tu web):\n{contactos}", botones)
+
+    def boton_tema(self, chat, mid, arg):
+        self.estado.pop(chat, None)
+        acc, _, resto = arg.partition(":")
+        t = cargar_tema()
+        if acc == "":
+            return self.pantalla_tema(chat, mid)
+        if acc == "pl":
+            return self.pantalla_plantillas(chat, mid)
+        if acc in ("pv", "pu"):
+            p = T.plantilla(resto)
+            if p is None:
+                return self.pantalla_tema(chat, mid, "Esa plantilla ya no existe.")
+            nueva = T.aplicar_plantilla(t, resto)
+            if acc == "pu":
+                guardar_tema(nueva)
+                return self.pantalla_tema(chat, mid, f"✅ Plantilla {p[1]} puesta. Cambiale lo que quieras y compilá.")
+            botones = [[("✅ Usar esta plantilla", f"t:pu:{resto}")], [("◂ Plantillas", "t:pl"), ("◂ Apariencia", "t")]]
+            if not vista.HAY_PIL:
+                return self.mostrar(chat, mid, f"🧩 {p[1]}\n{p[2]}", botones)
+            return self.enviar_vista(chat, nueva, f"🧩 {p[1]}: {p[2]}", botones)
+        if acc == "v":
+            return self.enviar_vista(chat, t, "👁 Así queda tu app ahora.")
+        if acc == "n":
+            return self.pedir(chat, "🏷 Escribí el nombre de la app (el que aparece debajo del ícono y arriba en la pantalla). Máx. 30 letras.", "t_nombre")
+        if acc == "le":
+            return self.pedir(chat, "💬 Escribí la frase que va debajo del nombre (o - para no poner nada):", "t_lema")
+        if acc == "co":
+            return self.pantalla_colores(chat, mid)
+        if acc == "c":
+            return self.pantalla_color(chat, mid, resto)
+        if acc == "ce":
+            return self.pedir(chat, "✏️ Escribí el código del color, por ejemplo #B388FF", "t_color", k=resto)
+        if acc == "cs":
+            k, _, h = resto.partition(":")
+            return self.poner_color(chat, mid, k, "#" + h)
+        if acc == "fo":
+            return self.pantalla_fondo(chat, mid)
+        if acc == "fl":
+            t["fondo2"] = ""
+            guardar_tema(T.marcar_cambio(t))
+            return self.pantalla_fondo(chat, mid)
+        if acc == "fi":
+            return self.pedir(chat, "📷 Mandame la imagen de fondo como foto. Conviene que sea vertical; la app la recorta para llenar la pantalla "
+                                    "y la oscurece un poco para que se lean las letras.", "t_fondo")
+        if acc == "fq":
+            borrar_imagen_marca("fondo.jpg")
+            return self.pantalla_fondo(chat, mid, "🗑 Imagen de fondo quitada.")
+        if acc in ("fv", "op", "ls", "mr") and resto.isdigit():
+            t[{"fv": "velo", "op": "opacidad", "ls": "escala", "mr": "radio"}[acc]] = int(resto)
+            guardar_tema(T.marcar_cambio(t) if acc == "mr" else t)
+            return {"fv": self.pantalla_fondo, "op": self.pantalla_fondo, "ls": self.pantalla_letras, "mr": self.pantalla_menus}[acc](chat, mid)
+        if acc == "ic":
+            return self.pantalla_icono(chat, mid)
+        if acc == "ii":
+            return self.pedir(chat, "📷 Mandame la imagen del ícono. Conviene que sea cuadrada.\n"
+                                    "Si tiene fondo transparente, mandala como archivo (PNG) y no como foto, para que no lo pierda.", "t_icono")
+        if acc == "iq":
+            borrar_imagen_marca("icono.png")
+            t["logo_imagen"] = False
+            guardar_tema(t)
+            return self.pantalla_icono(chat, mid, "🗑 Ícono quitado: vuelve el original.")
+        if acc == "il":
+            t["logo_imagen"] = not t["logo_imagen"]
+            guardar_tema(t)
+            return self.pantalla_icono(chat, mid)
+        if acc == "ie":
+            return self.pedir(chat, "😀 Mandame el emoji que va arriba del título (o - para no poner ninguno):", "t_logo")
+        if acc == "lt":
+            return self.pantalla_letras(chat, mid)
+        if acc == "lf" and resto.isdigit() and int(resto) < len(T.FUENTES):
+            t["fuente"] = T.FUENTES[int(resto)][0]
+            guardar_tema(T.marcar_cambio(t))
+            return self.pantalla_letras(chat, mid)
+        if acc == "lm":
+            t["titulo_mayus"] = not t["titulo_mayus"]
+            guardar_tema(t)
+            return self.pantalla_letras(chat, mid)
+        if acc == "me":
+            return self.pantalla_menus(chat, mid)
+        if acc == "ms" and resto.isdigit() and int(resto) < len(T.SECCIONES):
+            k = T.SECCIONES[int(resto)][0]
+            t[k] = not t[k]
+            guardar_tema(t)
+            return self.pantalla_menus(chat, mid)
+        if acc == "ma":
+            if len(t["enlaces"]) >= T.MAX_ENLACES:
+                return self.pantalla_menus(chat, mid, f"Ya tenés {T.MAX_ENLACES} botones de contacto. Quitá uno para agregar otro.")
+            return self.pedir(chat, "➕ Escribí el texto del botón (ej: Soporte por WhatsApp):", "t_enl_texto")
+        if acc == "mq" and resto.isdigit() and int(resto) < len(t["enlaces"]):
+            t["enlaces"].pop(int(resto))
+            guardar_tema(t)
+            return self.pantalla_menus(chat, mid)
+        if acc == "rs":
+            return self.mostrar(chat, mid, "♻️ ¿Volver al diseño original?\nSe pierden el nombre, los colores, el ícono, el fondo y los botones de contacto que pusiste.",
+                                [[("✅ Sí, volver al original", "t:rs_si"), ("✖ No", "t")]])
+        if acc == "rs_si":
+            borrar_imagen_marca("icono.png")
+            borrar_imagen_marca("fondo.jpg")
+            guardar_tema(T.normalizar({}))
+            return self.pantalla_tema(chat, mid, "♻️ Listo: diseño original. Compilá para que la app vuelva a verse como antes.")
+        return self.pantalla_tema(chat, mid)
+
+    def poner_color(self, chat, mid, k, valor):
+        h = T.color(valor)
+        if h is None or k not in ("fondo2",) + tuple(c for c, _ in T.COLORES_EDITABLES):
+            return self.pantalla_colores(chat, mid, "⚠️ Ese color no es válido.")
+        t = cargar_tema()
+        t[k] = h
+        if k != "fondo2":
+            T.derivar(t, k)
+        guardar_tema(T.marcar_cambio(t))
+        if k == "fondo2":
+            return self.pantalla_fondo(chat, mid, f"✅ Degradado: {t['fondo']} → {h}")
+        return self.pantalla_colores(chat, mid, f"✅ {dict(T.COLORES_EDITABLES)[k]}: {h}")
+
+    def texto_tema(self, chat, e, paso, txt):
+        t = cargar_tema()
+        if paso == "t_nombre":
+            n = T.limpiar_nombre(txt)
+            if not n:
+                return self.tg.mensaje(chat, "⚠️ Nombre vacío. Escribí el nombre de la app:", CANCELAR)
+            t["nombre"] = n
+        elif paso == "t_lema":
+            t["lema"] = "" if txt == "-" else T.limpiar_texto(txt, 60)
+        elif paso == "t_logo":
+            t["logo"] = "" if txt == "-" else T.limpiar_texto(txt, 8)
+            t["logo_imagen"] = False
+        elif paso == "t_color":
+            if T.color(txt) is None:
+                return self.tg.mensaje(chat, "⚠️ No es un código de color. Son 6 letras o números después del #, por ejemplo #B388FF:", CANCELAR)
+            self.estado.pop(chat, None)
+            return self.poner_color(chat, None, e.get("k", ""), txt)
+        elif paso == "t_enl_texto":
+            texto = T.limpiar_texto(txt, 30)
+            if not texto:
+                return self.tg.mensaje(chat, "⚠️ Texto vacío. Escribí el texto del botón:", CANCELAR)
+            e.update(paso="t_enl_url", texto=texto)
+            return self.tg.mensaje(chat, f"Botón: {texto}\nAhora mandame a dónde lleva: un link (https://...), tu número de WhatsApp con código de país "
+                                         "(ej: 5491122334455) o tu @usuario de Telegram.", CANCELAR)
+        elif paso == "t_enl_url":
+            url = T.limpiar_enlace(txt)
+            if url is None:
+                return self.tg.mensaje(chat, "⚠️ No lo entendí. Mandame un link que empiece con https://, un número de WhatsApp o un @usuario:", CANCELAR)
+            t["enlaces"] = (t["enlaces"] + [{"texto": e["texto"], "url": url}])[:T.MAX_ENLACES]
+        else:
+            return self.menu(chat)
+        guardar_tema(t)
+        self.estado.pop(chat, None)
+        if paso in ("t_enl_url",):
+            return self.pantalla_menus(chat, None, "✅ Botón de contacto agregado.")
+        if paso == "t_logo":
+            return self.pantalla_icono(chat, None)
+        return self.pantalla_tema(chat, None)
+
+    def imagen_recibida(self, chat, msg):
+        """Llegó algo mientras se esperaba el ícono o el fondo."""
+        es_icono = self.estado[chat]["paso"] == "t_icono"
+        limite = None if vista.HAY_PIL else (vista.MAX_ICONO if es_icono else vista.MAX_FONDO)
+        if msg.get("photo"):
+            fotos = sorted(msg["photo"], key=lambda p: p.get("width", 0) * p.get("height", 0))
+            if limite:      # sin Pillow no se puede achicar: la más grande que entre
+                entran = [p for p in fotos if 0 < p.get("file_size", 0) <= limite]
+                elegida = entran[-1] if entran else fotos[0]
+            elif es_icono:  # para el ícono alcanza con ~432 px
+                elegida = next((p for p in fotos if min(p.get("width", 0), p.get("height", 0)) >= 432), fotos[-1])
+            else:
+                elegida = fotos[-1]
+            fid = elegida["file_id"]
+        elif msg.get("document"):
+            d = msg["document"]
+            if not d.get("mime_type", "").startswith("image/"):
+                return self.tg.mensaje(chat, "⚠️ Ese archivo no es una imagen. Mandá un PNG o un JPG:", CANCELAR)
+            if d.get("file_size", 0) > vista.MAX_ENTRADA:
+                return self.tg.mensaje(chat, "⚠️ Esa imagen pesa demasiado. Mandala como foto o achicala:", CANCELAR)
+            fid = d["file_id"]
+        else:
+            return self.tg.mensaje(chat, "Estoy esperando una imagen. Mandala como foto o como archivo (PNG o JPG).", CANCELAR)
+        try:
+            datos = self.tg.bajar(fid)
+            lista = vista.preparar_icono(datos) if es_icono else vista.preparar_fondo(datos)
+        except vista.ErrorImagen as ex:
+            return self.tg.mensaje(chat, f"⚠️ {ex}", CANCELAR)
+        self.estado.pop(chat, None)
+        if es_icono:
+            guardar_imagen_marca("icono.png", lista)
+            t = cargar_tema()
+            t["logo_imagen"] = True
+            guardar_tema(t)
+            self.pantalla_icono(chat, None, "✅ Ícono guardado. También lo puse arriba del título; si preferís el emoji, cambialo acá abajo.")
+        else:
+            guardar_imagen_marca("fondo.jpg", lista)
+            self.pantalla_fondo(chat, None, "✅ Imagen de fondo guardada.")
+        if vista.HAY_PIL:
+            self.enviar_vista(chat, None, "👁 Así queda.")
+
     # -- acciones
-    def crear_limite(self, chat, dias):
-        self.estado[chat].update(paso="c_lim_btn", dias=dias)
-        self.tg.mensaje(chat, f"{dias} días. ¿Cuántas conexiones a la vez (dispositivos)?",
+    def pedir_duracion(self, chat, e, antes=""):
+        """Los temporales duran minutos; el resto, días."""
+        if e["tipo"] in ("t", "th"):
+            e["paso"] = "c_min_btn"
+            return self.tg.mensaje(chat, antes + "¿Cuántos minutos dura?", teclado_minutos())
+        e["paso"] = "c_dias_btn"
+        self.tg.mensaje(chat, antes + "¿Cuántos días de duración?", teclado_dias("cd"))
+
+    def crear_minutos(self, chat, minutos):
+        if not 1 <= minutos <= MIN_MAX:
+            return self.tg.mensaje(chat, f"⚠️ Los minutos van de 1 a {MIN_MAX}.", CANCELAR)
+        if self.estado[chat]["tipo"] == "th":      # temporal HWID: una sola conexión, como en el panel
+            self.estado[chat]["minutos"] = minutos
+            return self.crear_final(chat, 1)
+        self.crear_limite(chat, minutos=minutos)
+
+    def crear_limite(self, chat, dias=None, minutos=None):
+        e = self.estado[chat]
+        e.update(paso="c_lim_btn", dias=dias, minutos=minutos)
+        cuanto = texto_minutos(minutos) if minutos else f"{dias} días"
+        nota = "\n(En HWID lo habitual es 2.)" if e["tipo"] == "h" else ""
+        self.tg.mensaje(chat, f"{cuanto}. ¿Cuántas conexiones a la vez (dispositivos)?{nota}",
                         [[(str(n), f"cl:{n}") for n in (1, 2, 3, 5)], [("✖ Cancelar", "menu")]])
 
     def crear_final(self, chat, limite):
         e = self.estado.pop(chat, None)
-        if not e or "dias" not in e:
+        if not e or not (e.get("dias") or e.get("minutos")):
             return self.menu(chat)
-        err = crear_usuario(e["u"], e["clave"], e["dias"], limite)
-        if err:
-            return self.tg.mensaje(chat, "⚠️ " + err, [[("◂ Menú", "menu")]])
-        u = e["u"]
-        self.tg.mensaje(chat, f"✅ Usuario {u} creado ({e['dias']} días, {limite} conexión/es). Va su archivo:")
-        self.enviar_zs(chat, u, f"Cuenta {u} · vence {usuarios()[u][1]}")
-        self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + u, f"u:{u}")], [("➕ Crear otro", "crear")], [("◂ Menú", "menu")]])
+        dias, minutos = e.get("dias"), e.get("minutos")
+        if e["tipo"] in ("h", "th"):
+            u = e["hwid"]
+            err = crear_hwid(u, e["etq"], dias, limite, minutos)
+            quien = f"{limpiar_etiqueta(e['etq'])} (HWID {u})"
+        else:
+            u = e["u"]
+            err = crear_usuario(u, e["clave"], dias, limite, minutos)
+            quien = u
+        if err and not isinstance(err, Aviso):
+            return self.tg.mensaje(chat, "⚠️ " + err, VOLVER)
+        cuanto = f"temporal, {texto_minutos(minutos)}" if minutos else f"{dias} días"
+        self.tg.mensaje(chat, f"✅ Usuario {quien} creado ({cuanto}, {limite} conexión/es). Los datos para el cliente:")
+        self.enviar_datos(chat, u)
+        if err:      # quedó creado, pero no se pudo agendar el borrado
+            self.tg.mensaje(chat, "⚠️ " + err)
+        self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + (e.get("etq") or u), f"u:{u}")], [("➕ Crear otro", "crear")], [("◂ Menú", "menu")]])
 
     def renovar(self, chat, u, dias):
         self.estado.pop(chat, None)
         if u not in usuarios():
             return self.menu(chat, None, "Ese usuario no está en el panel.")
         exp = renovar_usuario(u, dias)
-        self.tg.mensaje(chat, f"✅ {u} vence el {exp}. Va el archivo nuevo:")
-        self.enviar_zs(chat, u, f"Cuenta {u} renovada · vence {exp}")
-        self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + u, f"u:{u}")], [("◂ Menú", "menu")]])
+        nombre = hwids().get(u, u)
+        self.tg.mensaje(chat, f"✅ {nombre} vence el {exp}. Los datos para el cliente:")
+        self.enviar_datos(chat, u)
+        self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + nombre, f"u:{u}")], [("◂ Menú", "menu")]])
 
 
 def main():
@@ -900,12 +1497,11 @@ def main():
     if not token:
         sys.exit("Falta BOT_TOKEN en " + ENV)
     admins = {int(x) for x in re.split(r"[,\s]+", env.get("ADMINS", "")) if x.strip().lstrip("-").isdigit()}
-    secreto = env.get("ZS_SECRET") or zs.SECRETO_POR_DEFECTO
     gh = None
     if env.get("GITHUB_TOKEN"):
         gh = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
                              rama=env.get("GITHUB_REF") or "main")
-    bot = Bot(Telegram(token), admins, secreto, gh)
+    bot = Bot(Telegram(token), admins, gh)
     bot.local_activo = env.get("COMPILAR") == "local"
     bot.leer_env_fn = leer_env
     centro.ENV = ENV
