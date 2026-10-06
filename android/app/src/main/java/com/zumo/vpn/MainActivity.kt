@@ -602,12 +602,22 @@ class MainActivity : Activity() {
         if (ZumoVpnService.corriendo) { aviso("Desconectá primero para cambiar de servidor"); return }
         if (servidores.isEmpty()) return
         ocultarTeclado()
-        val nombres = servidores.map { it.name }.toTypedArray()
-        AlertDialog.Builder(this, estiloDialogo)
-            .setTitle("Elegí el servidor")
-            .setItems(nombres) { _, i -> usarServidor(servidores[i]) }
-            .setNegativeButton("Cancelar", null)
-            .mostrar()
+        val lista = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(4), dp(16), dp(4)) }
+        lateinit var d: AlertDialog
+        for (sv in servidores) {
+            val actual = sv.name == prefs.servidor
+            val fila = texto((if (actual) "✓  " else "🌐  ") + sv.name, 16f, if (actual) ACENTO else TEXTO, actual).apply {
+                background = redondo(conOpacidad(CAMPO), radio(0.6f), trazo = if (actual) 2 else 1, colorTrazo = if (actual) ACENTO else BORDE)
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+                setOnClickListener { d.dismiss(); usarServidor(sv) }
+            }
+            lista.addView(fila)
+        }
+        val scroll = ScrollView(this).apply { addView(lista) }
+        d = dialogo("Elegí el servidor", scroll).setNegativeButton("Cancelar", null).create()
+        d.setOnShowListener { d.window?.setBackgroundDrawable(redondo(CARD, radio(0.9f))) }
+        d.show()
     }
 
     private fun usarServidor(s: Config) {

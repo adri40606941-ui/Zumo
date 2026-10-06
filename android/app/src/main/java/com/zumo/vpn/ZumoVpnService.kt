@@ -152,9 +152,9 @@ class ZumoVpnService : VpnService() {
                     val t1 = System.currentTimeMillis()
                     val dt = ((t1 - t0).coerceAtLeast(1)) / 1000.0
                     val tx = st[1]; val rx = st[3]
-                    val subMbps = (tx - txAnt).coerceAtLeast(0) * 8 / dt / 1_000_000
-                    val bajMbps = (rx - rxAnt).coerceAtLeast(0) * 8 / dt / 1_000_000
-                    velocidad = "↓ %.1f  ↑ %.1f Mbps".format(bajMbps, subMbps)
+                    val subMBs = (tx - txAnt).coerceAtLeast(0) / dt / 1_000_000
+                    val bajMBs = (rx - rxAnt).coerceAtLeast(0) / dt / 1_000_000
+                    velocidad = "↓ %.2f  ↑ %.2f MB/s".format(bajMBs, subMBs)
                     datosUsados = formatoDatos(tx + rx)
                     txAnt = tx; rxAnt = rx; t0 = t1
                     actualizarNoti()
