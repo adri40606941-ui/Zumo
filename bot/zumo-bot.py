@@ -600,7 +600,7 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
         botones = [[(f"{i + 1}. {s['name']}", f"a:{i}")] for i, s in enumerate(l)]
         botones += [[("➕ Agregar servidor", "aadd"), ("📥 Pegar lista", "apegar")],
                     [("🎨 Apariencia de la app", "t")],
-                    [("🔨 Compilar y enviarme el APK", "acomp")],
+                    [(self.etiqueta_compilar(), "acomp")],
                     [("💾 Respaldo y clave de firma", "resp") if self.local_activo else ("🔑 Asegurar clave de firma", "aclave")],
                     [("◂ Menú", "menu")]]
         self.mostrar(chat, mid, txt, botones)
@@ -753,7 +753,7 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
                 n = len(cargar_app())
                 return self.mostrar(chat, mid, f"🔨 Compilar la app en esta VPS\n{n} servidor(es) de la lista del bot van dentro de la app."
                                     f"{'' if n else ' (Lista vacía: se usa la que trae el código.)'}\nTarda unos minutos. ¿Compilo?",
-                                    [[("✅ Compilar ahora", "acomp_si"), ("✖ No", "app")]])
+                                    [[("✅ Compilar en esta VPS", "acomp_si"), ("✖ No", "app")]])
             if not self.gh:
                 return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env. Corré de nuevo el instalador del bot para cargarlo.", [[("◂ App Android", "app")]])
             n = len(cargar_app())
@@ -762,7 +762,7 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
                                 f"{n} servidor(es) de la lista del bot se suben al secreto antes de compilar."
                                 f"{'' if n else ' (Lista vacía: no se toca el secreto.)'}\n"
                                 f"{'La apariencia que armaste también se sube.' + chr(10) if tema_guardado() else ''}Tarda unos minutos. ¿Compilo?",
-                                [[("✅ Compilar ahora", "acomp_si"), ("✖ No", "app")]])
+                                [[("✅ Compilar en GitHub", "acomp_si"), ("✖ No", "app")]])
         if acc == "acomp_si":
             return self.compilar_app(chat)
         if acc == "aclave":
@@ -924,6 +924,12 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
         return self.menu(chat)
 
     # -- compilar
+    def donde_compila(self):
+        return "esta VPS" if self.local_activo else "GitHub"
+
+    def etiqueta_compilar(self):
+        return f"🔨 Compilar en {self.donde_compila()} y enviarme el APK"
+
     def compilar_app(self, chat, asegurar=False):
         if not self.compilando.acquire(blocking=False):
             return self.tg.mensaje(chat, "⏳ Ya hay una compilación en curso. Esperá a que termine.")
@@ -966,7 +972,7 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
         pct = int(done * 100 / total)
         llenos = pct // 10
         barra = "▓" * llenos + "░" * (10 - llenos)
-        linea = f"🔨 Compilando… {barra} {pct}%  (paso {done}/{total})"
+        linea = f"🔨 Compilando en GitHub… {barra} {pct}%  (paso {done}/{total})"
         if actual:
             linea += f"\n⚙️ {actual}"
         return linea + f"\n⏱ {minutos} min"
@@ -1020,7 +1026,7 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
             if r.get("conclusion") == "success":
                 apk = gh.archivo_de_rama("zumo-vpn.apk")
                 n = r.get("run_number", "?")
-                self.tg.documento(chat, "zumo-vpn.apk", apk, f"✅ Compilación {n} · {len(lista)} servidor(es)")
+                self.tg.documento(chat, "zumo-vpn.apk", apk, f"✅ Compilación {n} en GitHub · {len(lista)} servidor(es)")
                 self.tg.mensaje(chat, "✅ Listo. Instalá el APK encima de la versión anterior: se actualiza sin perder nada.",
                                 [[("📱 App Android", "app")], [("◂ Menú", "menu")]])
             else:
@@ -1030,7 +1036,7 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
                     cola = "\n".join(log[-25:])
                 except compilar.ErrorGitHub:
                     pass
-                self.tg.mensaje(chat, f"❌ La compilación falló ({r.get('conclusion')}).\n{cola}\n\n{r.get('html_url', '')}",
+                self.tg.mensaje(chat, f"❌ La compilación en GitHub falló ({r.get('conclusion')}).\n{cola}\n\n{r.get('html_url', '')}",
                                 [[("📱 App Android", "app")]])
         except compilar.ErrorGitHub as ex:
             self.tg.mensaje(chat, f"⚠️ {ex}", [[("📱 App Android", "app")]])
@@ -1059,13 +1065,13 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
             [("🎨 Colores", "t:co"), ("🌄 Fondo", "t:fo")],
             [("🖼 Ícono y logo", "t:ic"), ("🔤 Letras", "t:lt")],
             [("📋 Menús y secciones", "t:me")],
-            [("🔨 Compilar y enviarme el APK", "acomp")],
+            [(self.etiqueta_compilar(), "acomp")],
             [("♻️ Volver al diseño original", "t:rs")],
             [("◂ App Android", "app")]])
 
     def enviar_vista(self, chat, t=None, leyenda="", botones=None):
         """Manda la imagen de cómo queda la app. Sin Pillow en la VPS, avisa cómo instalarlo."""
-        botones = botones or [[("🎨 Seguir cambiando", "t")], [("🔨 Compilar y enviarme el APK", "acomp")]]
+        botones = botones or [[("🎨 Seguir cambiando", "t")], [(self.etiqueta_compilar(), "acomp")]]
         if not vista.HAY_PIL:
             return self.tg.mensaje(chat, "👁 Para ver las vistas previas falta una herramienta en la VPS. Corré de nuevo el instalador del bot "
                                          "(o: apt install -y python3-pil fonts-dejavu-core && systemctl restart zumo-bot).", botones)

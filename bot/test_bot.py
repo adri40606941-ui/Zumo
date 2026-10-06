@@ -474,6 +474,20 @@ class Pruebas(unittest.TestCase):
             self.assertEqual(b.gh.sec["ZUMO_KS_PASS"], "pw-firma")
             self.assertIn("misma", tg.mensajes[-1] + " misma")
 
+    def test_los_botones_dicen_donde_se_compila(self):
+        class GH:
+            repo, rama = "o/r", "main"
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp, gh=GH())
+            btn("app")
+            self.assertIn("🔨 Compilar en GitHub y enviarme el APK", str(tg.botones[-1]))
+            btn("acomp"); self.assertIn("Compilar en GitHub", str(tg.botones[-1]))
+            b.local_activo = True
+            btn("app")
+            self.assertIn("🔨 Compilar en esta VPS y enviarme el APK", str(tg.botones[-1]))
+            btn("acomp"); self.assertIn("Compilar en esta VPS", str(tg.botones[-1]))
+            self.assertNotIn("GitHub", str(tg.botones[-1]))
+
     def test_menu_del_centro_sin_usuarios(self):
         import instalacion
         with tempfile.TemporaryDirectory() as tmp:

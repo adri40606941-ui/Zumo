@@ -276,9 +276,9 @@ class CentroMixin:
             if total:
                 pct = min(99, int(hechas * 100 / total))
                 barra = "▓" * (pct // 10) + "░" * (10 - pct // 10)
-                txt = f"🔨 Compilando… {barra} {pct}%  (paso {hechas}/{total})"
+                txt = f"🔨 Compilando en esta VPS… {barra} {pct}%  (paso {hechas}/{total})"
             else:
-                txt = "🔨 Compilando…"
+                txt = "🔨 Compilando en esta VPS…"
             if tarea:
                 txt += f"\n⚙️ {tarea}"
             txt += f"\n⏱ {minutos} min"
@@ -292,8 +292,8 @@ class CentroMixin:
         if r["aviso"]:
             self.tg.mensaje(chat, "ℹ️ " + r["aviso"])
         if r["ok"]:
-            self.tg.documento(chat, "zumo-vpn.apk", r["apk"], f"✅ Compilación {r['numero']} · {len(lista)} servidor(es)")
+            self.tg.documento(chat, "zumo-vpn.apk", r["apk"], f"✅ Compilación {r['numero']} en esta VPS · {len(lista)} servidor(es)")
             self.tg.mensaje(chat, "✅ Listo. Instalá el APK encima de la versión anterior: se actualiza sin perder nada.",
                             [[("📱 App Android", "app")], [("◂ Menú", "menu")]])
         else:
-            self.tg.mensaje(chat, f"❌ La compilación falló.\n{r['log']}", [[("📱 App Android", "app")]])
+            self.tg.mensaje(chat, f"❌ La compilación en esta VPS falló.\n{r['log']}", [[("📱 App Android", "app")]])
