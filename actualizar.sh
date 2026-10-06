@@ -152,6 +152,8 @@ refrescar activar-pdirect.sh   ZUMOPDIRECTACT
 refrescar desactivar-pdirect.sh DESPDEOF
 refrescar activar-bhttp.sh     ZUMOBHTTPACT
 refrescar desactivar-bhttp.sh  DESBHTTPEOF
+refrescar activar-bhttp2.sh    ZUMOBHTTP2ACT
+refrescar desactivar-bhttp2.sh DESBHTTP2EOF
 refrescar activar-hcr.sh       ZUMOHCRACT
 refrescar desactivar-hcr.sh    DESHCREOF
 refrescar activar-badvpn.sh    ZUMOBADVPNACT
