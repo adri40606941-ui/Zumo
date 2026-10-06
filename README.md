@@ -160,18 +160,18 @@ instalado, volvé a correr `bot/instalar-bot.sh`.
 | `install.sh` | Instalador principal. |
 | `panel.sh` | Panel de terminal. |
 | `zumo-lib.sh` | Operaciones compartidas sobre `usuarios.db`. |
-| `zumo-limit.c` | Fuente del limitador (el instalador lo baja y lo compila). |
-| `limit.conf` | Configuración de ejemplo del limitador. |
-| `quitar-panelweb.sh` | Quita de una VPS el panel web de versiones anteriores. |
-| `zumo-datos.sh` | Contador de datos por usuario (mide lo que mueve cada sesión SSH); alimenta Herramientas → Uso de datos. |
+| `actualizar.sh` / `actualizar-panel.sh` | Actualizan una VPS que ya tenés (todo / solo el panel). |
+| `fuentes/zumo-limit.c` | Fuente del limitador (el instalador lo baja y lo compila). |
+| `config/limit.conf` | Configuración de ejemplo del limitador. |
+| `scripts/quitar-panelweb.sh` | Quita de una VPS el panel web de versiones anteriores. |
+| `scripts/zumo-datos.sh` | Contador de datos por usuario (mide lo que mueve cada sesión SSH); alimenta Herramientas → Uso de datos. |
 | `tests/` | Pruebas del limitador, de "Eliminar usuario" y de las herramientas (`sudo bash tests/prueba-limitador.sh`, `prueba-borrar.sh`, `prueba-herramientas.sh`, `prueba-datos.sh`, `prueba-respaldo.sh`). |
-| `hcr-install.sh` / `hcr-server` | Instalador y binario de HCR. |
-| `bhttp-server-*` / `bhttp-shim-*` | Binarios de BHTTP por arquitectura. |
-| `main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
+| `binarios/` | `hcr-install.sh` y `hcr-server` (HCR); `bhttp-server-*`, `bhttp-shim-*` y `bhttp-server.sha256` (BHTTP, por arquitectura). Los baja el instalador. |
+| `fuentes/bhttp-shim/main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
 | `android/` | App Android (Zumo VPN). `android/servidores.txt` es la lista de servidores que trae la app. |
 | `centro/instalar-centro.sh` | Instalador de la VPS centro (dominio, compilador de la app, bot, respaldo). |
 | `bot/respaldo.py` / `bot/local.py` / `bot/centro.py` | Respaldo y clave de firma, compilación local y sus botones del bot. |
-| `diagnostico.sh` | Chequeos de estado. |
+| `scripts/diagnostico.sh` | Chequeos de estado. |
 
 ## VPS centro (compilar la app, bot y respaldo sin depender de GitHub)
 
@@ -214,5 +214,5 @@ Pregunta el dominio, el token del bot, tu ID de Telegram y una contraseña de re
 Las versiones anteriores traían un panel web opcional. Si lo tenías instalado:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/quitar-panelweb.sh | bash
+curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/scripts/quitar-panelweb.sh | bash
 ```

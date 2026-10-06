@@ -22,7 +22,7 @@ mkdir -p "$T/run"
 gcc -O2 -Wall -Wextra \
 	-DDB_PATH="\"$T/usuarios.db\"" -DCONF_PATH="\"$T/limit.conf\"" \
 	-DTEMP_DB_PATH="\"$T/temporales.db\"" -DTEMP_SCRIPT="\"$T/borrar.sh\"" \
-	-DRUN_DIR="\"$T/run\"" -DVENC_LOCK_PATH="\"$T/vencidos.lock\"" -DEXCESOS_PATH="\"$T/excesos.log\"" -o "$T/zumo-limit" "$AQUI/zumo-limit.c" || { echo "no compila"; exit 1; }
+	-DRUN_DIR="\"$T/run\"" -DVENC_LOCK_PATH="\"$T/vencidos.lock\"" -DEXCESOS_PATH="\"$T/excesos.log\"" -o "$T/zumo-limit" "$AQUI/fuentes/zumo-limit.c" || { echo "no compila"; exit 1; }
 
 for u in ztest1 ztest2 ztest3 ztest4 ztest5 ztest6; do id "$u" >/dev/null 2>&1 || useradd -M -s /bin/false "$u"; done
 for u in ztest1 ztest2 ztest3 ztest4 ztest5 ztest6; do echo "$u:Prueba1" | chpasswd; done   # con contraseña, como los reales

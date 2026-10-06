@@ -22,7 +22,7 @@ mkfifo "$T/f0"; exec 6<>"$T/f0"
 setpriv --reuid=zdt2 --regid=zdt2 --clear-groups "$T/sshd" < "$T/f0" > /dev/null & PIDS="$!"
 head -c 2000000 /dev/zero >&6; sleep 0.5
 
-bash "$AQUI/zumo-datos.sh" >/dev/null 2>&1 & PIDS="$PIDS $!"
+bash "$AQUI/scripts/zumo-datos.sh" >/dev/null 2>&1 & PIDS="$PIDS $!"
 sleep 2
 
 echo "1) Una sesión nueva mueve 3 MB (leídos y escritos por sshd)"

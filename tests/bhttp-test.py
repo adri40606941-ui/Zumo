@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Prueba de compatibilidad BHTTP v3 (imita a DTunnel).
-Uso:  python3 bhttp-test.py [host] [puerto]      (por defecto 127.0.0.1 8001)
+Uso:  python3 tests/bhttp-test.py [host] [puerto]      (por defecto 127.0.0.1 8001)
 Prueba varias combinaciones de numeros de secuencia con sesiones nuevas
 y dice cual hace que sshd devuelva su banner "SSH-2.0-..." por el tunel.
 """

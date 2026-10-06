@@ -1,6 +1,6 @@
 #!/bin/bash
 # Diagnóstico de desconexiones - Zumo
-# Uso: bash diagnostico.sh   (como root)
+# Uso: bash scripts/diagnostico.sh   (como root)
 echo "========================================="
 echo "   DIAGNÓSTICO ZUMO - $(date)"
 echo "========================================="
