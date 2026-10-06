@@ -135,6 +135,8 @@ rm -f "$tmp"
 }
 refrescar activar-pdirect.sh   ZUMOPDIRECTACT
 refrescar desactivar-pdirect.sh DESPDEOF
+refrescar activar-zumogo.sh    ZUMOGOACT
+refrescar desactivar-zumogo.sh DESZGEOF
 refrescar activar-bhttp.sh     ZUMOBHTTPACT
 refrescar desactivar-bhttp.sh  DESBHTTPEOF
 refrescar activar-hcr.sh       ZUMOHCRACT
@@ -147,6 +149,17 @@ if systemctl is-active --quiet pdirect-80 2>/dev/null; then
 	echo -e "${V}Recompilando PDirect...${N}"
 	if bash /etc/zumo/activar-pdirect.sh >/dev/null 2>&1 && systemctl is-active --quiet pdirect-80; then ok "PDirect recompilado y reiniciado"
 	else err "PDirect no quedó activo: reactivalo desde el panel (o bash /etc/zumo/activar-pdirect.sh)"; fi
+fi
+# Zumo Go: si está activo y el binario del repo cambió, se reinstala y reinicia solo (conserva puerto y banner).
+if systemctl is-active --quiet zumogo 2>/dev/null; then
+	case "$(uname -m)" in aarch64|arm64) ZA=arm64 ;; *) ZA=amd64 ;; esac
+	ZH=$(curl -fsSL "$BASE/zumogo.sha256$NC" 2>/dev/null | awk -v n="zumogo-$ZA" '{f=$2; sub(/^\*/,"",f)} f==n{print $1; exit}')
+	ZR=$(sha256sum /usr/local/bin/zumogo 2>/dev/null | awk '{print $1}')
+	if [ -n "$ZH" ] && [ "$ZH" != "$ZR" ]; then
+		echo -e "${V}Actualizando Zumo Go...${N}"
+		if bash /etc/zumo/activar-zumogo.sh "$(cat /etc/zumo/zumogo.port 2>/dev/null || echo 80)" >/dev/null 2>&1 && systemctl is-active --quiet zumogo; then ok "Zumo Go actualizado y reiniciado"
+		else err "Zumo Go no quedó activo: reactivalo desde el panel (Protocolos → 5)"; fi
+	fi
 fi
 echo -e " \e[2mLos demás protocolos (BHTTP, HCR, etc.) se reactivan desde el panel si querés actualizarlos.${N}"
 else

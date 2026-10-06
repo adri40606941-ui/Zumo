@@ -113,6 +113,10 @@ cat > /etc/zumo/activar-pdirect.sh <<'ZUMOPDIRECTACT'
 #!/bin/bash
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
+if systemctl is-active --quiet zumogo 2>/dev/null; then
+echo "Zumo Go está activo (hace lo mismo que PDirect). Desactivalo primero (Protocolos -> 5 -> Desactivar)."
+exit 1
+fi
 WORK=$(mktemp -d)
 
 # Banner/color/modo opcionales (los pasa el panel). Se guardan en
@@ -1188,6 +1192,150 @@ DESBHTTPEOF
 
 chmod +x /etc/zumo/desactivar-bhttp.sh
 ok "BHTTP instalado"
+
+paso "Instalando Zumo Go"
+
+cat > /etc/zumo/activar-zumogo.sh <<'ZUMOGOACT'
+#!/bin/bash
+# Zumo Go: lo mismo que PDirect (WebSocket -> SSH) pero escrito en Go. Binario ya compilado
+# en el repo (zumogo-amd64 / zumogo-arm64), verificado con SHA256. Uso:
+#   activar-zumogo.sh [PUERTO=80] [BANNER] [COLOR] [MODO=101|200]
+[ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+export DEBIAN_FRONTEND=noninteractive
+PUERTO="${1:-80}"
+case "$PUERTO" in ''|*[!0-9]*) echo "Puerto inválido: $PUERTO"; exit 1 ;; esac
+PUERTO=$((10#$PUERTO))
+if [ "$PUERTO" -lt 1 ] || [ "$PUERTO" -gt 65535 ]; then echo "El puerto debe estar entre 1 y 65535"; exit 1; fi
+ZUMO="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+
+# PDirect y Zumo Go hacen lo mismo y comparten el mapa de IPs del limitador: solo uno a la vez.
+if systemctl is-active --quiet pdirect-80 2>/dev/null; then
+echo "PDirect está activo. Zumo Go lo reemplaza: desactivá PDirect primero (Protocolos -> 1 -> Desactivar)."
+exit 1
+fi
+
+case "$(uname -m)" in
+x86_64|amd64) ARCH=amd64 ;;
+aarch64|arm64) ARCH=arm64 ;;
+*) echo "Arquitectura no soportada: $(uname -m)"; exit 1 ;;
+esac
+NAME="zumogo-${ARCH}"
+
+if ! command -v curl >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1 || ! command -v ss >/dev/null 2>&1; then
+echo "[1/4] Dependencias..."
+apt-get update >/dev/null 2>&1; apt-get install -y --no-install-recommends ca-certificates curl coreutils iproute2 >/dev/null 2>&1 || { echo "No se pudieron instalar las dependencias"; exit 1; }
+else
+echo -e " \e[1;38;5;141m[1/4] Dependencias...\e[0m \e[1;32m✔\e[0m"
+fi
+
+echo "[2/4] Descargando y verificando Zumo Go (${ARCH})..."
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+curl -fsSL "$ZUMO/$NAME" -o "$TMP/zumogo" || { echo "No se pudo descargar $NAME"; exit 1; }
+curl -fsSL "$ZUMO/zumogo.sha256" -o "$TMP/SHA256SUMS.txt" || { echo "No se pudo descargar zumogo.sha256"; exit 1; }
+ESPERADO=$(awk -v n="$NAME" '{f=$2; sub(/^\*/,"",f)} f==n{print $1; exit}' "$TMP/SHA256SUMS.txt")
+[ -n "$ESPERADO" ] || { echo "zumogo.sha256 no lista $NAME"; exit 1; }
+REAL=$(sha256sum "$TMP/zumogo" | awk '{print $1}')
+[ "$ESPERADO" = "$REAL" ] || { echo "El SHA256 no coincide (esperado $ESPERADO, real $REAL). No se instala."; exit 1; }
+chmod 0755 "$TMP/zumogo"
+timeout 5 "$TMP/zumogo" -version 2>&1 | grep -q "^zumogo " || { echo "El binario descargado no es válido para esta VPS"; exit 1; }
+
+echo "[3/4] Instalando..."
+systemctl stop zumogo 2>/dev/null || true
+if ss -ltnpH "sport = :$PUERTO" 2>/dev/null | grep -q .; then
+echo "El puerto $PUERTO está ocupado por otro servicio:"
+ss -ltnpH "sport = :$PUERTO"
+echo "Liberalo o elegí otro puerto."
+exit 1
+fi
+install -m 0755 "$TMP/zumogo" /usr/local/bin/zumogo
+
+# Banner/color/modo opcionales: se guardan en /etc/zumo/pdirect.env (el mismo archivo que
+# usa PDirect y que lee el panel). Cada campo que no se pasa conserva el valor previo.
+A_BANNER="${2:-}"; A_COLOR="${3:-}"; A_MODO="${4:-}"
+_pf() { [ -f /etc/zumo/pdirect.env ] && grep -m1 "^$1=" /etc/zumo/pdirect.env | cut -d= -f2-; }
+F_BANNER="${A_BANNER:-$(_pf PDIRECT_BANNER)}"
+F_COLOR="${A_COLOR:-$(_pf PDIRECT_COLOR)}"
+F_MODO="${A_MODO:-$(_pf PDIRECT_MODE)}"
+if [ -n "$A_BANNER" ] || [ -n "$A_COLOR" ] || [ -n "$A_MODO" ]; then
+mkdir -p /etc/zumo
+{
+[ -n "$F_BANNER" ] && echo "PDIRECT_BANNER=$F_BANNER"
+[ -n "$F_COLOR" ] && echo "PDIRECT_COLOR=$F_COLOR"
+[ -n "$F_MODO" ] && echo "PDIRECT_MODE=$F_MODO"
+} > /etc/zumo/pdirect.env
+chmod 644 /etc/zumo/pdirect.env
+fi
+
+cat > /etc/systemd/system/zumogo.service <<ZGUNIT
+[Unit]
+Description=ZUMO Go (TCP $PUERTO -> SSH local)
+After=network.target
+
+[Service]
+EnvironmentFile=-/etc/zumo/pdirect.env
+ExecStart=/usr/local/bin/zumogo 22 $PUERTO
+Restart=on-failure
+RestartSec=2
+DynamicUser=yes
+RuntimeDirectory=zumo
+RuntimeDirectoryPreserve=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+LimitCORE=0
+LimitNOFILE=65536
+TasksMax=2048
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target
+ZGUNIT
+
+echo "[4/4] Activando..."
+systemctl daemon-reload
+systemctl enable --now zumogo >/dev/null 2>&1
+sleep 2
+if ! systemctl is-active --quiet zumogo; then
+echo "zumogo no quedó activo:"
+journalctl -u zumogo -n 15 --no-pager 2>/dev/null
+exit 1
+fi
+mkdir -p /etc/zumo
+echo "$PUERTO" > /etc/zumo/zumogo.port
+echo "Zumo Go activo en el puerto $PUERTO (→ SSH 22)"
+ZUMOGOACT
+
+chmod +x /etc/zumo/activar-zumogo.sh
+
+cat > /etc/zumo/desactivar-zumogo.sh <<'DESZGEOF'
+#!/bin/bash
+PUERTO=$(cat /etc/zumo/zumogo.port 2>/dev/null)
+case "$PUERTO" in ''|*[!0-9]*) PUERTO=80 ;; esac
+systemctl disable --now zumogo 2>/dev/null
+while read -r pid; do
+[ -z "$pid" ] && continue
+[ "$(ps -o comm= -p "$pid" 2>/dev/null)" = "zumogo" ] && kill -9 "$pid" 2>/dev/null
+done < <(ss -ltnpH "sport = :$PUERTO" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+rm -f /etc/systemd/system/zumogo.service /etc/zumo/zumogo.port
+systemctl daemon-reload
+systemctl reset-failed zumogo 2>/dev/null
+exit 0
+DESZGEOF
+
+chmod +x /etc/zumo/desactivar-zumogo.sh
+ok "Zumo Go instalado"
 
 paso "Descargando panel y librería"
 

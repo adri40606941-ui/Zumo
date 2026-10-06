@@ -25,12 +25,14 @@ zumo
 | **Panel** (`zumo`) | Crear/editar/borrar usuarios, ver quién está conectado, prender y apagar protocolos. En Herramientas: BBR, test de velocidad, uso de CPU y RAM (con limpieza de RAM con la tecla L), Usuario compartido (quiénes intentaron conectar más sesiones de las permitidas; lo anota el limitador en `/etc/zumo/excesos.log`) y Control de red (velocidad de bajada y subida en vivo, uso del enlace, tráfico total y conexiones SSH). |
 | **Limitador** (`zumo-limit`) | Cada 3 s corta las sesiones SSH que pasan el límite de cada usuario, corta a los vencidos y borra los temporales vencidos. |
 | **PDirect** | WebSocket en el puerto 80 → SSH local. |
+| **Zumo Go** | Lo mismo que PDirect, escrito en Go (Protocolos → 5). Puerto a elegir (por defecto 80), mismo banner y mismo conteo por IP real del limitador. Se activa y desactiva desde el panel; no puede estar activo junto con PDirect. |
 | **BadVPN** | UDPGW en el 7300 (para el tráfico UDP de las apps). |
 | **BHTTP** | Transporte BHTTP → SSH local (servidor + adaptador para DTunnel). |
 | **HCR Server** | Transporte HCR → SSH local, con TLS, plano o `auto`. |
 
-Los cuatro transportes (PDirect, BHTTP, HCR, BadVPN) son **paralelos**: cada uno
-entra al mismo `sshd` del puerto 22. No están apilados uno dentro de otro.
+Los transportes (PDirect o Zumo Go, BHTTP, HCR, BadVPN) son **paralelos**: cada uno
+entra al mismo `sshd` del puerto 22. No están apilados uno dentro de otro. PDirect y Zumo Go
+hacen lo mismo, así que se usa uno o el otro.
 
 ## Usuarios
 
@@ -123,6 +125,7 @@ instalado, volvé a correr `bot/instalar-bot.sh`.
 | `hcr-install.sh` / `hcr-server` | Instalador y binario de HCR. |
 | `bhttp-server-*` / `bhttp-shim-*` | Binarios de BHTTP por arquitectura. |
 | `main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
+| `zumogo/` | Fuente de Zumo Go (Go, solo biblioteca estándar) con sus pruebas. `bash zumogo/build.sh` prueba y recompila los binarios `zumogo-amd64` / `zumogo-arm64` y actualiza `zumogo.sha256` (el instalador verifica ese SHA256 antes de instalar). |
 | `android/` | App Android (Zumo VPN). `android/servidores.txt` es la lista de servidores que trae la app. |
 | `diagnostico.sh` | Chequeos de estado. |
 

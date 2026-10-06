@@ -204,6 +204,7 @@ local ssh out
 ssh=$(awk 'tolower($1)=="port"{print $2; exit}' /etc/ssh/sshd_config 2>/dev/null)
 out="SSH ${ssh:-22}"
 systemctl is-active --quiet pdirect-80 2>/dev/null && out+=" · WebSocket 80"
+systemctl is-active --quiet zumogo 2>/dev/null && out+=" · Zumo Go $(zumogo_port)"
 systemctl is-active --quiet udpgw-7300 2>/dev/null && out+=" · BadVPN 7300"
 if systemctl is-active --quiet bhttp-server 2>/dev/null && systemctl is-active --quiet bhttp-shim 2>/dev/null; then out+=" · BHTTP $(bhttp_port)"; fi
 systemctl is-active --quiet hcr-server 2>/dev/null && out+=" · HCR $(hcr_port)"
@@ -823,6 +824,8 @@ echo -e "\n $L"; read -rp " Opción: " o
 case $o in
 1) if systemctl is-active --quiet pdirect-80; then
 msg_err "Ya está activo"; pausa
+elif systemctl is-active --quiet zumogo; then
+msg_err "Zumo Go está activo y hace lo mismo que PDirect. Desactivalo primero (Protocolos → 5)."; pausa
 else
 BAN=""; COL=""
 read -rp " ¿Personalizar el banner? [s/N]: " pb
@@ -962,6 +965,58 @@ esac
 done
 }
 
+zumogo_port() {
+local p
+p=$(cat /etc/zumo/zumogo.port 2>/dev/null)
+[[ "$p" =~ ^[0-9]+$ ]] || p=80
+echo "$p"
+}
+
+menu_zumogo() {
+while true; do
+banner; echo -e " \e[1;38;5;141mZUMO GO (WebSocket → SSH, hecho en Go)${N}\n"
+if systemctl is-active --quiet zumogo; then
+echo -e " \e[1;32m● Zumo Go: activo ($(zumogo_port) → SSH)${N}\n"
+else
+echo -e " \e[1;31m● Zumo Go: inactivo${N}\n"
+fi
+echo -e " \e[2mHace lo mismo que PDirect. Usá uno u otro: no pueden estar activos a la vez.${N}\n"
+op 1 "⚡" "Activar"
+op 2 "✖" "Desactivar"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) if systemctl is-active --quiet zumogo; then
+msg_err "Ya está activo"; pausa
+elif systemctl is-active --quiet pdirect-80; then
+msg_err "PDirect está activo y hace lo mismo. Desactivalo primero (Protocolos → 1)."; pausa
+else
+read -rp " Puerto para Zumo Go [80]: " zp; zp=${zp:-80}
+BAN=""; COL=""
+read -rp " ¿Personalizar el banner? [s/N]: " pb
+if [[ "$pb" =~ ^[sS]$ ]]; then
+read -rp " Texto del banner [ZUMO]: " BAN; BAN=${BAN:-ZUMO}
+COL="yellow"
+fi
+echo -e " \e[1;38;5;141mDescargando e instalando, aguardá...${N}"
+RESULTADO=0; bash /etc/zumo/activar-zumogo.sh "$zp" "$BAN" "$COL" "101" || RESULTADO=1
+if [ "$RESULTADO" -eq 0 ]; then
+msg_ok "Zumo Go activo en el puerto $zp (→ SSH 22)"
+[ -n "$BAN" ] && echo -e "   Banner: \e[1;38;5;214m$BAN${N}  Color: \e[1;38;5;214m${COL:-yellow}${N}"
+echo -e "   En la app: servidor = IP pública de la VPS, puerto = \e[1;38;5;214m${zp}${N}"
+else
+msg_err "Falló; revisá 'journalctl -u zumogo'"
+fi; pausa
+fi ;;
+2) echo -e " \e[1;38;5;141mLiberando el puerto de Zumo Go...${N}"
+bash /etc/zumo/desactivar-zumogo.sh
+msg_ok "Zumo Go desactivado; puerto liberado"; pausa ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
 menu_protocolos() {
 while true; do
 banner; echo -e " \e[1;38;5;141mPROTOCOLOS${N}\n"
@@ -969,6 +1024,7 @@ op 1 "⚡" "PDirect (WebSocket)"
 op 2 "⚡" "BadVPN"
 op 3 "⚡" "BHTTP"
 op 4 "⚡" "HCR Server"
+op 5 "⚡" "Zumo Go"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -976,6 +1032,7 @@ case $o in
 2) menu_badvpn ;;
 3) menu_bhttp ;;
 4) menu_hcr ;;
+5) menu_zumogo ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
@@ -1127,6 +1184,7 @@ case "$1" in
 sshd|sshd-session) echo "SSH (conexiones)" ;;
 badvpn-udpgw) echo "BadVPN (UDP)" ;;
 pdirect-c) echo "PDirect (WebSocket)" ;;
+zumogo) echo "Zumo Go (WebSocket)" ;;
 bhttp-server|bhttp-shim) echo "BHTTP" ;;
 hcr-server) echo "HCR Server" ;;
 zumo-limit) echo "Limitador" ;;
