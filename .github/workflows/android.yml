@@ -37,17 +37,51 @@ jobs:
           path: ks
           key: zumo-keystore-v1
 
+      # Firma fija: si existen los secretos ZUMO_KEYSTORE_B64 y ZUMO_KS_PASS se usan siempre (la
+      # clave nunca se pierde). Si no, se usa la del caché (como antes). Mientras falte el secreto
+      # fijo y exista ZUMO_EXPORT_PASS (lo pone el bot), la clave del caché se exporta cifrada con esa
+      # contraseña para que el bot la guarde como secreto fijo.
       - name: Preparar firma
+        id: firma
+        env:
+          KS_B64: ${{ secrets.ZUMO_KEYSTORE_B64 }}
+          KS_PASS_FIJA: ${{ secrets.ZUMO_KS_PASS }}
+          EXPORT_PASS: ${{ secrets.ZUMO_EXPORT_PASS }}
         run: |
-          if [ ! -f ks/zumo.jks ]; then
-            mkdir -p ks
+          mkdir -p ks
+          FIJA=no
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS_FIJA" ]; then
+            printf '%s' "$KS_B64" | base64 -d > ks/zumo.jks
+            printf '%s' "$KS_PASS_FIJA" > ks/pass
+            FIJA=si
+            echo "Firma: secreto fijo"
+          elif [ ! -f ks/zumo.jks ]; then
             P=$(openssl rand -hex 16)
             keytool -genkeypair -keystore ks/zumo.jks -storepass "$P" -keypass "$P" -alias zumo \
               -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=Zumo VPN"
             echo "$P" > ks/pass
+            echo "Firma: clave nueva en el caché"
+          else
+            echo "Firma: clave del caché"
           fi
           echo "ZUMO_KEYSTORE=$PWD/ks/zumo.jks" >> "$GITHUB_ENV"
           echo "ZUMO_KS_PASS=$(cat ks/pass)" >> "$GITHUB_ENV"
+          echo "fija=$FIJA" >> "$GITHUB_OUTPUT"
+          EXPORTAR=no
+          if [ "$FIJA" = no ] && [ -n "$EXPORT_PASS" ]; then
+            mkdir -p clave-export
+            tar -C ks -cf - zumo.jks pass | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -pass env:EXPORT_PASS -out clave-export/clave-firma.enc
+            EXPORTAR=si
+          fi
+          echo "exportar=$EXPORTAR" >> "$GITHUB_OUTPUT"
+
+      - name: Exportar clave de firma cifrada (la recoge el bot)
+        if: steps.firma.outputs.exportar == 'si'
+        uses: actions/upload-artifact@v4
+        with:
+          name: clave-firma
+          path: clave-export/clave-firma.enc
+          retention-days: 1
 
       # Lista de servidores de la app. Por defecto sale de android/servidores.txt; si existe el
       # secreto ZUMO_SERVIDORES se usa ese texto (mismo formato) y nada queda a la vista en el repo.

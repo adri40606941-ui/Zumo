@@ -211,6 +211,58 @@ class Pruebas(unittest.TestCase):
             bot, tg, b, txt, btn = self.armar(tmp)
             btn("acomp"); self.assertIn("GITHUB_TOKEN", tg.mensajes[-1])
 
+    def test_clave_exportada_con_openssl(self):
+        """Mismo comando que el workflow (tar | openssl enc -pbkdf2) y lo abre compilar.abrir_clave_exportada."""
+        import compilar, subprocess
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(f"{d}/ks")
+            open(f"{d}/ks/zumo.jks", "wb").write(os.urandom(2600)); open(f"{d}/ks/pass", "w").write("pw123\n")
+            r = subprocess.run(f"tar -C {d}/ks -cf - zumo.jks pass | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -pass env:EXPORT_PASS",
+                               shell=True, capture_output=True, env={**os.environ, "EXPORT_PASS": "abc"})
+            self.assertEqual(r.returncode, 0)
+            jks, pw = compilar.abrir_clave_exportada(r.stdout, "abc")
+            self.assertEqual((jks, pw), (open(f"{d}/ks/zumo.jks", "rb").read(), "pw123"))
+            with self.assertRaises(compilar.ErrorGitHub):
+                compilar.abrir_clave_exportada(r.stdout, "otra")
+
+    def test_asegurar_clave_de_firma(self):
+        import compilar, subprocess, base64
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(f"{d}/ks")
+            jks = os.urandom(2600)
+            open(f"{d}/ks/zumo.jks", "wb").write(jks); open(f"{d}/ks/pass", "w").write("pw123\n")
+            class GH:
+                repo, rama = "o/r", "main"
+                def __init__(self, con_artefacto=True): self.sec, self.borrados, self.con = {}, [], con_artefacto
+                def subir_secreto(self, n, v): self.sec[n] = v
+                def borrar_secreto(self, n): self.borrados.append(n)
+                def ultimo_run(self): return 1
+                def lanzar(self): pass
+                def run_nuevo(self, a): return 2
+                def run(self, i): return {"status": "completed", "conclusion": "success"}
+                def artefacto(self, nombre, rid):
+                    if not self.con: return None
+                    r = subprocess.run(f"tar -C {d}/ks -cf - zumo.jks pass | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -pass env:P",
+                                       shell=True, capture_output=True, env={**os.environ, "P": self.sec["ZUMO_EXPORT_PASS"]})
+                    return r.stdout
+            for con in (True, False):
+                with tempfile.TemporaryDirectory() as tmp:
+                    gh = GH(con)
+                    bot, tg, b, txt, btn = self.armar(tmp, gh)
+                    btn("aclave"); self.assertIn("aclave_si", tg.datos_botones())
+                    btn("aclave_si")
+                    for _ in range(200):
+                        if not b.compilando.locked(): break
+                        import time; time.sleep(0.05)
+                    self.assertEqual(gh.borrados, ["ZUMO_EXPORT_PASS"])  # el rastro se borra siempre
+                    if con:
+                        self.assertEqual(base64.b64decode(gh.sec["ZUMO_KEYSTORE_B64"]), jks)
+                        self.assertEqual(gh.sec["ZUMO_KS_PASS"], "pw123")
+                        self.assertIn("guardada como secreto fijo", tg.mensajes[-1])
+                    else:
+                        self.assertNotIn("ZUMO_KEYSTORE_B64", gh.sec)
+                        self.assertIn("ya estaba guardada", tg.mensajes[-1])
+
 
 if __name__ == "__main__":
     unittest.main()
