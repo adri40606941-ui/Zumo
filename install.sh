@@ -827,6 +827,12 @@ systemctl stop udpgw-7300 2>/dev/null || true
 install -d -m 0755 /opt/badvpn
 install -m 0755 "$WORK/badvpn/build/udpgw/badvpn-udpgw" /opt/badvpn/badvpn-udpgw
 
+# límites elegidos desde el panel (Protocolos > BadVPN > Editar límites); por defecto 200 y 64
+MAXC=200; MAXCC=64
+[ -f /etc/zumo/badvpn.conf ] && . /etc/zumo/badvpn.conf
+[[ "$MAXC" =~ ^[0-9]+$ ]] || MAXC=200
+[[ "$MAXCC" =~ ^[0-9]+$ ]] || MAXCC=64
+
 cat > /etc/systemd/system/udpgw-7300.service <<'U2'
 [Unit]
 Description=ZUMO - BadVPN UDPGW (TCP 7300)
@@ -847,6 +853,7 @@ LimitNOFILE=8192
 WantedBy=multi-user.target
 U2
 
+sed -i "s/--max-clients [0-9]*/--max-clients $MAXC/; s/--max-connections-for-client [0-9]*/--max-connections-for-client $MAXCC/" /etc/systemd/system/udpgw-7300.service
 systemctl daemon-reload
 systemctl enable --now udpgw-7300
 rm -rf "$WORK"
