@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  SERVIDORES QUE TRAE LA APP
+#
+#  Cada servidor es un bloque. El cliente ve solo el nombre, lo elige y pone su
+#  usuario y contraseña. El host y el payload no se muestran en la app.
+#
+#  Las líneas que empiezan con # no cuentan. Para agregar un servidor, copiá el
+#  ejemplo de abajo SIN los # y cambiá los datos. Podés poner todos los que quieras.
+#
+#  [Nombre que ve el cliente]
+#  host = dominio o IP a la que se conecta la app
+#  puerto = 80                (si no lo ponés: 80, o 443 si tls = si)
+#  payload = todo en UNA sola línea. Comodines: [host] [port] [host_port] [crlf] [lf] [split]
+#  tls = no                   (si = envolver la conexión en TLS)
+#  sni =                      (solo con tls; vacío = el host)
+#
+#  Ejemplo:
+#
+#  [APP 02]
+#  host = ejemplo.cloudfront.net
+#  puerto = 80
+#  payload = GET / HTTP/1.1[crlf]Host: [host][crlf]Upgrade: websocket[crlf]Connection: Upgrade[crlf][crlf]
+#
+#  [APP 05]
+#  host = otro.ejemplo.com
+#  puerto = 443
+#  tls = si
+#  payload = GET / HTTP/1.1[crlf]Host: [host][crlf]Upgrade: websocket[crlf][crlf]
+#
+#  IMPORTANTE
+#  - Si solo cambiás el payload de un servidor, NO le cambies el nombre: así a los
+#    clientes les sigue andando al actualizar la app, sin tocar nada.
+#  - Si este repositorio es público, lo que escribas acá lo puede leer cualquiera.
+#    Para que no se vea, dejá este archivo sin servidores y pegá la lista en el
+#    secreto ZUMO_SERVIDORES del repositorio (Settings → Secrets and variables →
+#    Actions). Si ese secreto existe, la compilación usa el secreto y no este archivo.
+#  - Sin ningún servidor cargado, la app funciona como antes: solo con archivos .zs.
+# ─────────────────────────────────────────────────────────────────────────────

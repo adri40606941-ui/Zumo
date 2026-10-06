@@ -19,7 +19,8 @@ VECTOR_PERFIL = zs.perfil("vps.ejemplo.com", 80, "GET / HTTP/1.1[crlf]Host: x.ne
 
 def cargar_bot(tmp):
     os.environ.update({"ZUMO_BOT_ENV": f"{tmp}/bot.env", "ZUMO_BOT_JSON": f"{tmp}/bot.json",
-                       "ZUMO_DB": f"{tmp}/usuarios.db", "ZUMO_CLAVES": f"{tmp}/claves.db"})
+                       "ZUMO_DB": f"{tmp}/usuarios.db", "ZUMO_CLAVES": f"{tmp}/claves.db",
+                       "ZUMO_APP_SERVIDORES": f"{tmp}/app-servidores.json"})
     spec = importlib.util.spec_from_file_location("zumo_bot", os.path.join(AQUI, "zumo-bot.py"))
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
@@ -27,12 +28,13 @@ def cargar_bot(tmp):
 
 
 class FalsaTelegram:
-    def __init__(self): self.mensajes, self.docs, self.botones, self.ediciones = [], [], [], []
+    def __init__(self): self.mensajes, self.docs, self.botones, self.ediciones, self.borrados = [], [], [], [], []
     def mensaje(self, chat, texto, botones=None, md=False):
         self.mensajes.append(texto); self.botones.append(botones); return len(self.mensajes)
     def editar(self, chat, mid, texto, botones=None):
         self.ediciones.append(texto); self.mensajes.append(texto); self.botones.append(botones)
     def responder_cb(self, *a, **k): pass
+    def borrar(self, chat, mid): self.borrados.append(mid)
     def documento(self, chat, nombre, datos, leyenda=""): self.docs.append((nombre, datos, leyenda))
 
     def datos_botones(self):
@@ -58,11 +60,14 @@ class Pruebas(unittest.TestCase):
         with open(ruta) as f:
             self.assertEqual(f.read().strip(), blob.hex())
 
-    def armar(self, tmp):
+    def armar(self, tmp, gh=None):
         bot = cargar_bot(tmp)
         tg = FalsaTelegram()
-        b = bot.Bot(tg, {7}, "sec")
-        txt = lambda t: b.manejar({"chat": {"id": 1}, "from": {"id": 7}, "text": t})
+        b = bot.Bot(tg, {7}, "sec", gh)
+        self.n_msg = 100
+        def txt(t):
+            self.n_msg += 1
+            b.manejar({"chat": {"id": 1}, "from": {"id": 7}, "text": t, "message_id": self.n_msg})
         btn = lambda d: b.manejar_cb({"id": "c", "from": {"id": 7}, "data": d, "message": {"chat": {"id": 1}, "message_id": 5}})
         return bot, tg, b, txt, btn
 
@@ -76,7 +81,7 @@ class Pruebas(unittest.TestCase):
             self.assertIn("No autorizado", tg.mensajes[-1])
             # cualquier texto abre el menú con botones
             txt("hola")
-            self.assertEqual(tg.datos_botones(), ["crear", "lista:0", "srv", "id"])
+            self.assertEqual(tg.datos_botones(), ["crear", "lista:0", "srv", "app", "id"])
             # sin servidor no se puede crear ni exportar
             btn("crear")
             self.assertIn("Primero definí el servidor", tg.mensajes[-1])
@@ -137,6 +142,74 @@ class Pruebas(unittest.TestCase):
             self.assertIn("inválido", bot.crear_usuario("1abc", "x", 5, 1))
             self.assertIn("inválida", bot.crear_usuario("abc", "con espacio", 5, 1))
             self.assertEqual(bot.fecha_cuenta("2026-12-31"), "2027-01-01")
+
+    def test_servidores_formato_ida_y_vuelta(self):
+        import servidores as sv
+        t = "[APP 02]\nhost = a.com\npuerto = 8080\npayload = GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]\n\n[APP 05]\nhost = b.com\ntls = si\nsni = x.net\n\n[roto]\nhost =\n"
+        l = sv.desde_texto(t)
+        self.assertEqual([x["name"] for x in l], ["APP 02", "APP 05"])
+        self.assertEqual((l[0]["port"], l[1]["port"], l[1]["tls"], l[1]["sni"]), (8080, 443, True, "x.net"))
+        self.assertEqual(sv.desde_texto(sv.a_texto(l)), l)
+        # un payload con saltos de línea o un nombre con [] no rompen el formato
+        s = sv.nuevo("Mi [X]=", "h.com", 80, "GET /\r\nHost: h")
+        self.assertEqual(s["name"], "Mi X")
+        self.assertNotIn("\n", s["payload"])
+        self.assertEqual(len(sv.desde_texto(sv.a_texto([s]))), 1)
+
+    def test_app_agregar_y_cambiar_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            btn("app"); self.assertIn("aadd", tg.datos_botones())
+            btn("aadd"); txt("APP 02"); txt("mal host con espacio"); self.assertIn("inválido", tg.mensajes[-1])
+            txt("vps.ejemplo.com:8080"); txt("GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]")
+            self.assertEqual(bot.cargar_app(), [{"name": "APP 02", "host": "vps.ejemplo.com", "port": 8080,
+                                                  "payload": "GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]", "tls": False, "sni": ""}])
+            self.assertTrue(tg.borrados)  # el mensaje con el payload se borra del chat
+            btn("ap:0"); txt("GET /nuevo HTTP/1.1[crlf][crlf]")
+            self.assertEqual(bot.cargar_app()[0]["payload"], "GET /nuevo HTTP/1.1[crlf][crlf]")
+            self.assertIn("GET /nuevo", tg.mensajes[-1])
+            btn("at:0"); self.assertTrue(bot.cargar_app()[0]["tls"])
+            btn("an:0"); txt("APP 03"); self.assertEqual(bot.cargar_app()[0]["name"], "APP 03")
+            btn("abs:0"); self.assertEqual(bot.cargar_app(), [])
+            # pegar lista completa
+            btn("apegar"); txt("sin formato"); self.assertIn("No encontré", tg.mensajes[-1])
+            txt("[X]\nhost = x.com\n[Y]\nhost = y.com\n"); self.assertEqual([s["name"] for s in bot.cargar_app()], ["X", "Y"])
+
+    def test_compilar_y_enviar_apk(self):
+        import compilar
+        class GH:
+            repo, rama = "o/r", "main"
+            def __init__(self, ok=True): self.llamadas, self.ok = [], ok
+            def subir_secreto(self, n, v): self.llamadas.append(("secreto", n, v))
+            def ultimo_run(self): return 10
+            def lanzar(self): self.llamadas.append("lanzar")
+            def run_nuevo(self, antes): return 11
+            def run(self, i): return {"status": "completed", "conclusion": "success" if self.ok else "failure", "run_number": 42, "html_url": "http://x"}
+            def archivo_de_rama(self, ruta, rama=None):
+                if ruta == "zumo-vpn.apk": return b"APK!"
+                if self.ok: raise compilar.ErrorGitHub("no")
+                return b"linea1\nerror: no compila\n"
+        for ok in (True, False):
+            with tempfile.TemporaryDirectory() as tmp:
+                gh = GH(ok)
+                bot, tg, b, txt, btn = self.armar(tmp, gh)
+                bot.guardar_app([{"name": "APP 02", "host": "h.com", "port": 80, "payload": "GET /", "tls": False, "sni": ""}])
+                btn("acomp"); self.assertIn("acomp_si", tg.datos_botones())
+                btn("acomp_si")
+                for _ in range(100):
+                    if not b.compilando.locked(): break
+                    import time; time.sleep(0.05)
+                self.assertEqual(gh.llamadas[0][:2], ("secreto", "ZUMO_SERVIDORES"))
+                self.assertIn("[APP 02]", gh.llamadas[0][2]); self.assertEqual(gh.llamadas[1], "lanzar")
+                if ok:
+                    self.assertEqual(tg.docs[-1][:2], ("zumo-vpn.apk", b"APK!"))
+                else:
+                    self.assertFalse(tg.docs); self.assertTrue(any("error: no compila" in m for m in tg.mensajes))
+
+    def test_compilar_sin_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            btn("acomp"); self.assertIn("GITHUB_TOKEN", tg.mensajes[-1])
 
 
 if __name__ == "__main__":

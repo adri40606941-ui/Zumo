@@ -49,6 +49,20 @@ jobs:
           echo "ZUMO_KEYSTORE=$PWD/ks/zumo.jks" >> "$GITHUB_ENV"
           echo "ZUMO_KS_PASS=$(cat ks/pass)" >> "$GITHUB_ENV"
 
+      # Lista de servidores de la app. Por defecto sale de android/servidores.txt; si existe el
+      # secreto ZUMO_SERVIDORES se usa ese texto (mismo formato) y nada queda a la vista en el repo.
+      - name: Servidores de la app (secreto opcional)
+        env:
+          ZUMO_SERVIDORES: ${{ secrets.ZUMO_SERVIDORES }}
+        run: |
+          if [ -n "$ZUMO_SERVIDORES" ]; then
+            printf '%s\n' "$ZUMO_SERVIDORES" > android/servidores.txt
+            echo "Lista de servidores: secreto ZUMO_SERVIDORES"
+          else
+            echo "Lista de servidores: android/servidores.txt"
+          fi
+          echo "Servidores cargados: $(grep -c '^[[:space:]]*\[[^]=[]\+\][[:space:]]*$' android/servidores.txt || true)"
+
       - name: Pruebas del túnel (SSH + WebSocket + SOCKS)
         continue-on-error: true
         run: |
@@ -73,18 +87,21 @@ jobs:
           name: zumo-vpn-apk
           path: android/app/build/outputs/apk/release/*.apk
 
+      # main publica en la rama "apk" (la que descargan los clientes); cualquier otra rama
+      # publica en "apk-prueba", así una prueba nunca pisa el APK publicado.
       - name: Publicar APK (o registros, si falló) en la rama apk
         if: always()
         run: |
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then DESTINO=apk; else DESTINO=apk-prueba; fi
           mkdir -p out
           cp android/app/build/outputs/apk/release/*.apk out/zumo-vpn.apk 2>/dev/null || true
           cd out
           rm -f resultados/binary 2>/dev/null || true
           git init -q
-          git checkout -q -b apk
+          git checkout -q -b "$DESTINO"
           git add -A
           git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Compilación ${{ github.run_number }} (${GITHUB_SHA::7})"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" apk
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$DESTINO"
 
       - name: Fallar si no compiló
         if: steps.compilar.outcome != 'success'

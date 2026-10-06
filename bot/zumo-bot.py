@@ -6,12 +6,14 @@ administrador el archivo .zs que abre la app. Solo responde a los IDs de ADMINS.
 
 Configuración: /etc/zumo/bot.env  (BOT_TOKEN, ADMINS, ZS_SECRET)
 Datos del servidor (host, puerto, payload...): /etc/zumo/bot.json (se cambian desde el bot)
+Servidores de la app Android: /etc/zumo/app-servidores.json (y GITHUB_TOKEN / GITHUB_REPO en bot.env para compilar)
 """
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -19,10 +21,13 @@ import uuid
 from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import compilar  # noqa: E402
+import servidores as srv  # noqa: E402
 import zs  # noqa: E402
 
 ENV = os.environ.get("ZUMO_BOT_ENV", "/etc/zumo/bot.env")
 ESTADO = os.environ.get("ZUMO_BOT_JSON", "/etc/zumo/bot.json")
+APPSRV = os.environ.get("ZUMO_APP_SERVIDORES", "/etc/zumo/app-servidores.json")
 DB = os.environ.get("ZUMO_DB", "/etc/zumo/usuarios.db")
 CLAVES = os.environ.get("ZUMO_CLAVES", "/etc/zumo/claves.db")
 LIB = os.environ.get("ZUMO_LIB", "/etc/zumo/zumo-lib.sh")
@@ -56,6 +61,24 @@ def guardar_estado(d):
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=1)
     os.replace(tmp, ESTADO)
+
+
+def cargar_app():
+    """Lista de servidores de la app: [{name, host, port, payload, tls, sni}, ...]."""
+    try:
+        with open(APPSRV, encoding="utf-8") as f:
+            l = json.load(f)
+        return l if isinstance(l, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def guardar_app(lista):
+    tmp = APPSRV + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(lista, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, APPSRV)
 
 
 # --------------------------------------------------------------------- usuarios
@@ -225,6 +248,12 @@ class Telegram:
         except urllib.error.HTTPError:
             pass
 
+    def borrar(self, chat, mid):
+        try:
+            self._post("deleteMessage", {"chat_id": chat, "message_id": mid})
+        except urllib.error.HTTPError:
+            pass
+
     def documento(self, chat, nombre, datos, leyenda=""):
         borde = uuid.uuid4().hex
         cuerpo = b""
@@ -242,6 +271,7 @@ POR_PAGINA = 20
 MENU = [[("➕ Crear usuario", "crear")],
         [("👥 Usuarios", "lista:0")],
         [("⚙️ Servidor y payload", "srv")],
+        [("📱 App Android", "app")],
         [("🪪 Mi ID", "id")]]
 CANCELAR = [[("✖ Cancelar", "menu")]]
 
@@ -254,9 +284,10 @@ def teclado_dias(prefijo):
 
 
 class Bot:
-    def __init__(self, tg, admins, secreto):
-        self.tg, self.admins, self.secreto = tg, admins, secreto
+    def __init__(self, tg, admins, secreto, gh=None):
+        self.tg, self.admins, self.secreto, self.gh = tg, admins, secreto, gh
         self.estado = {}      # chat -> {"paso": ..., datos}
+        self.compilando = threading.Lock()
 
     # -- pantallas
     def mostrar(self, chat, mid, texto, botones):
@@ -312,6 +343,34 @@ class Bot:
             [(f"🔒 TLS: {'sí' if st.get('tls') else 'no'} (cambiar)", "s:tls"), ("SNI", "s:sni")],
             [("◂ Menú", "menu")]])
 
+    def pantalla_app(self, chat, mid, aviso=""):
+        l = cargar_app()
+        filas = "\n".join(f"{i + 1}. {s['name']} · {s['host']}:{s['port']}{' · TLS' if s.get('tls') else ''}"
+                          f"{'' if s.get('payload') else ' · ⚠️ sin payload'}" for i, s in enumerate(l))
+        txt = (aviso + "\n\n" if aviso else "") + "📱 App Android\n" + (
+            f"Servidores en la app ({len(l)}):\n{filas}" if l else
+            "Todavía no cargaste servidores en el bot.\nAl compilar sin servidores, la app usa lo que ya haya en el secreto ZUMO_SERVIDORES del repo.")
+        botones = [[(f"{i + 1}. {s['name']}", f"a:{i}")] for i, s in enumerate(l)]
+        botones += [[("➕ Agregar servidor", "aadd"), ("📥 Pegar lista", "apegar")],
+                    [("🔨 Compilar y enviarme el APK", "acomp")],
+                    [("◂ Menú", "menu")]]
+        self.mostrar(chat, mid, txt, botones)
+
+    def pantalla_app_servidor(self, chat, mid, i):
+        l = cargar_app()
+        if not 0 <= i < len(l):
+            return self.pantalla_app(chat, mid, "Ese servidor ya no está.")
+        s = l[i]
+        txt = (f"📡 {s['name']}\nHost: {s['host']}\nPuerto: {s['port']}\n"
+               f"TLS: {'sí' if s.get('tls') else 'no'}{' · SNI ' + s['sni'] if s.get('sni') else ''}\n\n"
+               f"Payload:\n{s.get('payload') or '(vacío)'}")
+        self.mostrar(chat, mid, txt, [
+            [("📝 Cambiar payload", f"ap:{i}")],
+            [("🌐 Host y puerto", f"ah:{i}"), ("🏷 Nombre", f"an:{i}")],
+            [(f"🔒 TLS: {'sí' if s.get('tls') else 'no'} (cambiar)", f"at:{i}"), ("SNI", f"as:{i}")],
+            [("🗑 Borrar", f"ab:{i}")],
+            [("◂ App Android", "app")]])
+
     def pedir(self, chat, texto, paso, **datos):
         self.estado[chat] = {"paso": paso, **datos}
         self.tg.mensaje(chat, texto, CANCELAR)
@@ -336,7 +395,9 @@ class Bot:
             if texto.startswith("/"):
                 return self.menu(chat)
             if chat in self.estado:
-                return self.texto_libre(chat, texto)
+                self.estado[chat]["_mid"] = msg.get("message_id")
+                r = self.texto_libre(chat, texto)
+                return r
             self.menu(chat)
         except Exception as e:
             self.tg.mensaje(chat, f"⚠️ Error: {e}")
@@ -405,6 +466,57 @@ class Bot:
             return self.pantalla_lista(chat, mid, 0)
         if acc == "s":
             return self.boton_servidor(chat, mid, arg)
+        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "ap", "ah", "an", "at", "as", "ab", "abs"):
+            return self.boton_app(chat, mid, acc, arg)
+
+    def boton_app(self, chat, mid, acc, arg):
+        self.estado.pop(chat, None)
+        if acc == "app":
+            return self.pantalla_app(chat, mid)
+        if acc == "aadd":
+            return self.pedir(chat, "➕ Nuevo servidor de la app\n\nEscribí el nombre que va a ver el cliente (ej: APP 02):", "a_nombre")
+        if acc == "apegar":
+            return self.pedir(chat, "📥 Pegá la lista completa en un solo mensaje, con el formato de servidores.txt:\n\n"
+                                    "[APP 02]\nhost = dominio.com\npuerto = 80\npayload = GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]\n\n"
+                                    "⚠️ Reemplaza TODA la lista que tiene el bot ahora.", "a_pegar")
+        if acc == "acomp":
+            if not self.gh:
+                return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env. Corré de nuevo el instalador del bot para cargarlo.", [[("◂ App Android", "app")]])
+            n = len(cargar_app())
+            donde = f"{self.gh.repo} (rama {self.gh.rama})"
+            return self.mostrar(chat, mid, f"🔨 Compilar la app en GitHub\nRepo: {donde}\n"
+                                f"{n} servidor(es) de la lista del bot se suben al secreto antes de compilar."
+                                f"{'' if n else ' (Lista vacía: no se toca el secreto.)'}\nTarda unos minutos. ¿Compilo?",
+                                [[("✅ Compilar ahora", "acomp_si"), ("✖ No", "app")]])
+        if acc == "acomp_si":
+            return self.compilar_app(chat)
+        i = int(arg) if arg.isdigit() else -1
+        l = cargar_app()
+        if not 0 <= i < len(l):
+            return self.pantalla_app(chat, mid, "Ese servidor ya no está.")
+        s = l[i]
+        if acc == "a":
+            return self.pantalla_app_servidor(chat, mid, i)
+        if acc == "ap":
+            return self.pedir(chat, f"📝 Pegá el payload nuevo de {s['name']} en un solo mensaje (podés usar [crlf], [host], [split]...).\n"
+                                    "Si cambiás solo el payload, no le cambies el nombre: así a los clientes les sigue andando al actualizar.", "a_payload", i=i)
+        if acc == "ah":
+            return self.pedir(chat, "🌐 Escribí el dominio o IP, con el puerto si no es el 80.\nEj: vps.ejemplo.com  o  vps.ejemplo.com:443", "a_host", i=i)
+        if acc == "an":
+            return self.pedir(chat, "🏷 Escribí el nombre nuevo (los clientes que ya lo usan tendrán que volver a elegir el servidor):", "a_nombre_edit", i=i)
+        if acc == "at":
+            s["tls"] = not s.get("tls", False)
+            guardar_app(l)
+            return self.pantalla_app_servidor(chat, mid, i)
+        if acc == "as":
+            return self.pedir(chat, "Escribí el SNI (o - para dejarlo vacío):", "a_sni", i=i)
+        if acc == "ab":
+            return self.mostrar(chat, mid, f"🗑 ¿Borrar el servidor {s['name']} de la app?",
+                                [[("✅ Sí, borrar", f"abs:{i}"), ("✖ No", f"a:{i}")]])
+        if acc == "abs":
+            nombre = l.pop(i)["name"]
+            guardar_app(l)
+            return self.pantalla_app(chat, mid, f"🗑 {nombre} borrado. Compilá para que se vaya de la app.")
 
     def boton_servidor(self, chat, mid, arg):
         st = cargar_estado()
@@ -460,6 +572,8 @@ class Bot:
             self.tg.mensaje(chat, f"✅ Contraseña de {u} cambiada. Va el archivo nuevo:")
             self.enviar_zs(chat, u, f"Cuenta {u} con la clave nueva")
             return self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + u, f"u:{u}")], [("◂ Menú", "menu")]])
+        if paso.startswith("a_"):
+            return self.texto_app(chat, e, paso, t)
         st = cargar_estado()
         if paso == "s_host":
             host, _, puerto = t.partition(":")
@@ -479,6 +593,120 @@ class Bot:
         guardar_estado(st)
         self.estado.pop(chat, None)
         self.pantalla_servidor(chat, None)
+
+    def borrar_entrada(self, chat, e):
+        """Borra del chat el mensaje con el payload que escribiste (para que no quede a la vista)."""
+        if e.get("_mid"):
+            self.tg.borrar(chat, e["_mid"])
+
+    def texto_app(self, chat, e, paso, t):
+        l = cargar_app()
+        i = e.get("i")
+        if paso in ("a_nombre", "a_nombre_edit"):
+            n = srv.limpiar_nombre(t)
+            otros = [s["name"] for k, s in enumerate(l) if k != i]
+            if not n or n in otros:
+                return self.tg.mensaje(chat, "⚠️ Nombre vacío o repetido. Escribí otro:", CANCELAR)
+            if paso == "a_nombre_edit":
+                l[i]["name"] = n
+                guardar_app(l)
+                self.estado.pop(chat, None)
+                return self.pantalla_app_servidor(chat, None, i)
+            e.update(paso="a_host", nombre=n)
+            return self.tg.mensaje(chat, f"Nombre: {n}\nAhora el dominio o IP, con el puerto si no es el 80.\nEj: vps.ejemplo.com:443", CANCELAR)
+        if paso == "a_host":
+            host, _, puerto = t.partition(":")
+            host = host.strip().removeprefix("https://").removeprefix("http://").strip("/")
+            if srv.error_host(host) or (puerto and not (puerto.isdigit() and 1 <= int(puerto) <= 65535)):
+                return self.tg.mensaje(chat, "⚠️ Host o puerto inválido. Ej: vps.ejemplo.com:80", CANCELAR)
+            if i is not None:
+                l[i]["host"] = host
+                if puerto:
+                    l[i]["port"] = int(puerto)
+                guardar_app(l)
+                self.estado.pop(chat, None)
+                return self.pantalla_app_servidor(chat, None, i)
+            e.update(paso="a_payload_nuevo", host=host, port=int(puerto) if puerto else 80)
+            return self.tg.mensaje(chat, "Ahora pegá el payload en un solo mensaje (podés usar [crlf], [host], [split]...).\nSi no usa payload, escribí -", CANCELAR)
+        if paso == "a_payload_nuevo":
+            l.append(srv.nuevo(e["nombre"], e["host"], e["port"], "" if t == "-" else t))
+            guardar_app(l)
+            self.estado.pop(chat, None)
+            self.borrar_entrada(chat, e)
+            return self.pantalla_app_servidor(chat, None, len(l) - 1)
+        if paso == "a_payload":
+            l[i]["payload"] = srv.limpiar_linea(t)
+            guardar_app(l)
+            self.estado.pop(chat, None)
+            self.borrar_entrada(chat, e)
+            return self.pantalla_app_servidor(chat, None, i)
+        if paso == "a_sni":
+            l[i]["sni"] = "" if t == "-" else t.strip()
+            guardar_app(l)
+            self.estado.pop(chat, None)
+            return self.pantalla_app_servidor(chat, None, i)
+        if paso == "a_pegar":
+            nueva = srv.desde_texto(t)
+            if not nueva:
+                return self.tg.mensaje(chat, "⚠️ No encontré ningún servidor válido (cada uno necesita [Nombre] y host). Probá de nuevo:", CANCELAR)
+            guardar_app(nueva)
+            self.estado.pop(chat, None)
+            self.borrar_entrada(chat, e)
+            return self.pantalla_app(chat, None, f"✅ Lista cargada: {len(nueva)} servidor(es).")
+        return self.menu(chat)
+
+    # -- compilar
+    def compilar_app(self, chat):
+        if not self.compilando.acquire(blocking=False):
+            return self.tg.mensaje(chat, "⏳ Ya hay una compilación en curso. Esperá a que termine.")
+        threading.Thread(target=self._compilar, args=(chat,), daemon=True).start()
+
+    def _compilar(self, chat):
+        try:
+            gh = self.gh
+            lista = cargar_app()
+            self.tg.mensaje(chat, "🔨 Arrancando…")
+            if lista:
+                gh.subir_secreto("ZUMO_SERVIDORES", srv.a_texto(lista))
+                self.tg.mensaje(chat, f"🔐 Lista de {len(lista)} servidor(es) subida al repo (cifrada).")
+            antes = gh.ultimo_run()
+            gh.lanzar()
+            rid = gh.run_nuevo(antes)
+            t0 = time.time()
+            mid = self.tg.mensaje(chat, "⏳ Compilando en GitHub… 0 min")
+            ult = 0
+            while True:
+                r = gh.run(rid)
+                if r.get("status") == "completed":
+                    break
+                if time.time() - t0 > 45 * 60:
+                    raise compilar.ErrorGitHub("La compilación tardó más de 45 minutos. Revisala en GitHub → Actions.")
+                m = int((time.time() - t0) // 60)
+                if m != ult:
+                    ult = m
+                    self.tg.editar(chat, mid, f"⏳ Compilando en GitHub… {m} min")
+                time.sleep(15)
+            if r.get("conclusion") == "success":
+                apk = gh.archivo_de_rama("zumo-vpn.apk")
+                n = r.get("run_number", "?")
+                self.tg.documento(chat, "zumo-vpn.apk", apk, f"✅ Compilación {n} · {len(lista)} servidor(es)")
+                self.tg.mensaje(chat, "✅ Listo. Instalá el APK encima de la versión anterior: se actualiza sin perder nada.",
+                                [[("📱 App Android", "app")], [("◂ Menú", "menu")]])
+            else:
+                cola = ""
+                try:
+                    log = gh.archivo_de_rama("compilacion.log").decode("utf-8", "replace").strip().splitlines()
+                    cola = "\n".join(log[-25:])
+                except compilar.ErrorGitHub:
+                    pass
+                self.tg.mensaje(chat, f"❌ La compilación falló ({r.get('conclusion')}).\n{cola}\n\n{r.get('html_url', '')}",
+                                [[("📱 App Android", "app")]])
+        except compilar.ErrorGitHub as ex:
+            self.tg.mensaje(chat, f"⚠️ {ex}", [[("📱 App Android", "app")]])
+        except Exception as ex:  # que el bot nunca se caiga por esto
+            self.tg.mensaje(chat, f"⚠️ Error inesperado al compilar: {ex}", [[("📱 App Android", "app")]])
+        finally:
+            self.compilando.release()
 
     # -- acciones
     def crear_limite(self, chat, dias):
@@ -515,7 +743,11 @@ def main():
         sys.exit("Falta BOT_TOKEN en " + ENV)
     admins = {int(x) for x in re.split(r"[,\s]+", env.get("ADMINS", "")) if x.strip().lstrip("-").isdigit()}
     secreto = env.get("ZS_SECRET") or zs.SECRETO_POR_DEFECTO
-    bot = Bot(Telegram(token), admins, secreto)
+    gh = None
+    if env.get("GITHUB_TOKEN"):
+        gh = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
+                             rama=env.get("GITHUB_REF") or "main")
+    bot = Bot(Telegram(token), admins, secreto, gh)
     print("zumo-bot: listo, admins:", sorted(admins) or "ninguno (mandá /id al bot)", flush=True)
     offset = 0
     while True:
