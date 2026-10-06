@@ -16,6 +16,11 @@ apt-get install -y --no-install-recommends python3 python3-nacl curl ca-certific
 # Para las vistas previas de la apariencia de la app y para achicar el ícono y el fondo. Si no se
 # pueden instalar, el bot anda igual (sin vistas previas).
 apt-get install -y --no-install-recommends python3-pil fonts-dejavu-core >/dev/null 2>&1 || echo "Aviso: sin python3-pil el bot no manda vistas previas de la app (lo demás funciona)."
+# Opcionales, cada uno por separado: los emojis a color (para ver tu emoji del logo en la vista previa) y
+# las letras angosta y fina de verdad. Sin ellos la vista previa los simula o muestra un escudo de muestra.
+for p in fonts-noto-color-emoji fonts-dejavu-extra; do
+	apt-get install -y --no-install-recommends "$p" >/dev/null 2>&1 || echo "Aviso: no se pudo instalar $p (la vista previa lo aproxima)."
+done
 
 ARCHIVOS="servidores.py compilar.py tema.py vista.py marca.py respaldo.py local.py centro.py instalacion.py zumo-bot.py"
 for f in $ARCHIVOS; do
