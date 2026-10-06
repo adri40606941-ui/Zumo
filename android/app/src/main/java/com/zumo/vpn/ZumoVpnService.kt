@@ -28,7 +28,8 @@ class ZumoVpnService : VpnService() {
         const val ACTION_START = "com.zumo.vpn.START"
         const val ACTION_STOP = "com.zumo.vpn.STOP"
         const val SOCKS_PORT = 10808
-        private const val CHANNEL = "zumo_vpn"
+        private const val CHANNEL = "zumo_vpn_mudo"
+        private const val CANAL_VIEJO = "zumo_vpn"   // sonaba y vibraba; Android no deja cambiar un canal ya creado
         private const val NOTI_ID = 1
 
         @Volatile var estado: String = "Desconectado"
@@ -378,7 +379,14 @@ class ZumoVpnService : VpnService() {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             // IMPORTANCE_DEFAULT (no LOW): en HiOS (Tecno/Infinix/itel) una notificación "silenciosa"
             // hace que el gestor de batería trate a la app como inactiva y la mate antes.
-            nm.createNotificationChannel(NotificationChannel(CHANNEL, Tema.actual(this).nombre, NotificationManager.IMPORTANCE_DEFAULT))
+            // La notificación se actualiza cada 2 s (velocidad): sin sonido ni vibración, si no el teléfono vibra todo el tiempo.
+            try { nm.deleteNotificationChannel(CANAL_VIEJO) } catch (_: Exception) {}
+            val canal = NotificationChannel(CHANNEL, Tema.actual(this).nombre, NotificationManager.IMPORTANCE_DEFAULT)
+            canal.setSound(null, null)
+            canal.enableVibration(false)
+            canal.enableLights(false)
+            canal.setShowBadge(false)
+            nm.createNotificationChannel(canal)
         }
     }
 
@@ -391,7 +399,7 @@ class ZumoVpnService : VpnService() {
         val cuerpo = if (conectado && velocidad.isNotBlank()) "$txt  ·  $velocidad" else txt
         b.setContentTitle(Tema.actual(this).nombre).setContentText(cuerpo)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentIntent(abrir).setOngoing(true)
+            .setContentIntent(abrir).setOngoing(true).setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_SERVICE)
             .addAction(Notification.Action.Builder(null, "Desconectar", parar).build())
         if (Build.VERSION.SDK_INT < 26) @Suppress("DEPRECATION") b.setPriority(Notification.PRIORITY_HIGH)
