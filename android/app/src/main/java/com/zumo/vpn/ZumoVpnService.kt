@@ -27,6 +27,7 @@ class ZumoVpnService : VpnService() {
     companion object {
         const val ACTION_START = "com.zumo.vpn.START"
         const val ACTION_STOP = "com.zumo.vpn.STOP"
+        const val ACTION_RECONNECT = "com.zumo.vpn.RECONNECT"
         const val SOCKS_PORT = 10808
         private const val CHANNEL = "zumo_vpn_mudo"
         private const val CANAL_VIEJO = "zumo_vpn"   // sonaba y vibraba; Android no deja cambiar un canal ya creado
@@ -56,6 +57,11 @@ class ZumoVpnService : VpnService() {
             if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
         }
 
+        /** Botón "Reconectar": corta la sesión SSH y vuelve a conectar (solo si la VPN está encendida). */
+        fun reconectar(ctx: Context) {
+            ctx.startService(Intent(ctx, ZumoVpnService::class.java).setAction(ACTION_RECONNECT))
+        }
+
         fun detener(ctx: Context) {
             ctx.startService(Intent(ctx, ZumoVpnService::class.java).setAction(ACTION_STOP))
         }
@@ -80,6 +86,10 @@ class ZumoVpnService : VpnService() {
             apagar()
             stopSelf()
             return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_RECONNECT) {
+            if (activo) { Registro.add("Reconexión pedida por el usuario"); forzarReconexion = true }
+            return START_STICKY
         }
         // START o reinicio del sistema (intent nulo): si el usuario la quiere encendida, se enciende
         val prefs = Prefs(this)
@@ -136,19 +146,16 @@ class ZumoVpnService : VpnService() {
         cfgActual = cfg
         vigilarRed()
         hilo = Thread({ bucle(cfg, user, pass) }, "zumo-ssh").also { it.start() }
-        monitor = Thread({ vigilar(cfg) }, "zumo-monitor").also { it.start() }
+        monitor = Thread({ vigilar() }, "zumo-monitor").also { it.start() }
     }
 
     /**
-     * Corre aparte de la conexión SSH: actualiza la velocidad en la notificación y, cada 20
-     * segundos, prueba si el túnel realmente responde (no solo si "parece" conectado). Esto
-     * detecta el caso típico de una red móvil que corta en silencio: la sesión SSH queda sin
-     * avisar que murió y la app se queda "conectada" sin pasar datos.
+     * Corre aparte de la conexión SSH: solo actualiza la velocidad y los datos en la notificación.
+     * NO decide reconectar: la app se reconecta únicamente si la sesión SSH se cae (el bucle de
+     * conexión lo nota) o si el usuario toca "Reconectar".
      */
-    private fun vigilar(cfg: Config) {
+    private fun vigilar() {
         var txAnt = 0L; var rxAnt = 0L; var t0 = System.currentTimeMillis()
-        var tick = 0
-        var fallos = 0
         try {
             while (activo) {
                 Thread.sleep(2000)
@@ -165,27 +172,12 @@ class ZumoVpnService : VpnService() {
                     txAnt = tx; rxAnt = rx; t0 = t1
                     actualizarNoti()
                 }
-                tick++
-                if (tick % 10 == 0 && conectado) {   // cada ~20s
-                    val t = tunel
-                    val viva = t != null && probarSalud(t, cfg)
-                    if (viva) fallos = 0 else {
-                        fallos++
-                        if (fallos >= 2) { forzarReconexion = true; fallos = 0 }
-                    }
-                }
             }
         } catch (e: InterruptedException) {
             // El hilo se interrumpe a propósito al desconectar (apagar() llama a monitor?.interrupt()).
             // Si no se captura acá, la excepción sube sin control y tumba toda la app.
             return
         }
-    }
-
-    /** Abre un canal de prueba hacia el propio servidor: si no responde, el túnel está muerto aunque parezca activo. */
-    private fun probarSalud(t: SshTunnel, cfg: Config): Boolean {
-        val ch = try { t.abrirCanal(cfg.host, cfg.sshPort) } catch (_: Exception) { return false } ?: return false
-        return try { ch.connect(8000); true } catch (_: Exception) { false } finally { try { ch.disconnect() } catch (_: Exception) {} }
     }
 
     private fun abrirTun() {
@@ -334,10 +326,12 @@ class ZumoVpnService : VpnService() {
             .build()
         val c = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                if (!conectado) forzarReconexion = true
+                // Nada: antes esto forzaba reconexiones al aparecer cualquier red (y al registrarse el
+                // callback), lo que podía cortar una conexión recién hecha. Ahora solo reconecta el
+                // bucle cuando la sesión SSH se cae, o el botón "Reconectar".
             }
             override fun onLost(network: Network) {
-                forzarReconexion = true
+                // Solo se anota: si la conexión SSH se cae por esto, el bucle de conexión la reintenta solo.
                 Registro.add("Se perdió la red")
             }
         }

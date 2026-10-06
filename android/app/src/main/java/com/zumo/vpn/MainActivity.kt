@@ -45,6 +45,7 @@ class MainActivity : Activity() {
     private lateinit var tvEstado: TextView
     private lateinit var tvError: TextView
     private lateinit var btn: Button
+    private lateinit var btnRec: Button
     private lateinit var puntoEstado: View
     private lateinit var tvVelocidad: TextView
     private lateinit var tvTiempo: TextView
@@ -314,6 +315,8 @@ class MainActivity : Activity() {
         cEstado.addView(tvError)
         btn = botonPrimario("Conectar", VERDE) { alternar() }
         cEstado.addView(btn)
+        btnRec = botonSecundario("↻  Reconectar") { ZumoVpnService.reconectar(this) }
+        cEstado.addView(btnRec)
         col.addView(cEstado)
 
         // vencimiento de la cuenta
@@ -452,6 +455,7 @@ class MainActivity : Activity() {
         }
         btn.text = if (corr) "◼  Desconectar" else "▶  Conectar"
         btn.background = redondo(if (corr) ROJO else VERDE, radio(0.8f))
+        btnRec.visibility = if (corr) View.VISIBLE else View.GONE
 
         // vencimiento: lo trae el .zs; entrando con usuario y contraseña la app no lo conoce
         cVence.visibility = if (prefs.servidor.isNotBlank()) View.GONE else View.VISIBLE
