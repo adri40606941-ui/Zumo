@@ -1001,11 +1001,11 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
 
     def _compilar(self, chat, asegurar=False):
         try:
-            if self.local_activo:
-                return self._compilar_local(chat, cargar_app())
             gh = self.gh
             if asegurar:
                 return self._asegurar_clave(chat, solo_traer=(asegurar == "traer"))
+            if self.local_activo:
+                return self._compilar_local(chat, cargar_app())
             lista = cargar_app()
             self.tg.mensaje(chat, "🔨 Arrancando…")
             if lista:

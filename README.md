@@ -201,6 +201,10 @@ Pregunta el dominio, el token del bot, tu ID de Telegram y una contraseña de re
   clave de `/etc/zumo/firma/`. Para que la app no cambie de firma, traé la clave que ya usás:
   en el bot de la VPS vieja, "💾 Respaldo → ☁️ Traer la clave de GitHub" y "📤 Exportar clave";
   en el bot del centro, "📥 Importar clave de firma".
+  Si compilás tanto en la VPS centro como en GitHub, las dos tienen que usar la misma clave o la
+  app no se actualiza encima. En el centro: "💾 Respaldo → 🔐 Token de GitHub" (una vez), y después
+  "⬆️ Usar esta clave en GitHub" (GitHub firma como el centro) o "☁️ Traer la clave de GitHub"
+  (el centro firma como GitHub; la clave que tenía queda guardada como copia).
 - **Respaldo:** "💾 Respaldo" manda a Telegram un archivo cifrado (AES-256, tu contraseña) con
   `/etc/zumo` (bot, clave de firma, usuarios, servidores). Se envía solo una vez por día. Para
   recuperarte: instalá el centro en otra VPS, "♻️ Restaurar" y mandá el archivo.

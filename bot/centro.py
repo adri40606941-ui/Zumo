@@ -58,8 +58,14 @@ class CentroMixin:
         filas = [[("💾 Respaldar ahora", "rnow")],
                  [("🔒 Contraseña del respaldo", "rpass"), ("♻️ Restaurar", "rrest")],
                  [("📥 Importar clave de firma", "kimp"), ("📤 Exportar clave", "kexp")]]
-        if not c and getattr(self, "gh", None) and not self.local_activo:
+        if getattr(self, "gh", None):
+            txt += ("\nGitHub: ✅ conectado (si compilás en los dos lados, que la clave sea la misma)")
+            filas.append([("⬆️ Usar esta clave en GitHub", "ksubir")] if c else [])
             filas.append([("☁️ Traer la clave de GitHub", "ktraer")])
+            filas = [f for f in filas if f]
+        else:
+            txt += "\nGitHub: sin token (hace falta para igualar la clave con la de GitHub)"
+            filas.append([("🔐 Token de GitHub", "ghtok")])
         if not c:
             filas.append([("🆕 Crear clave nueva", "knew")])
         filas.append([("◂ Menú", "menu")])
@@ -85,11 +91,27 @@ class CentroMixin:
             if not respaldo.clave_firma():
                 return self.pantalla_resp(chat, mid, "No hay clave de firma en esta VPS.") or True
             self.pedir(chat, "📤 Elegí una contraseña para proteger el archivo (mínimo 8 caracteres). Mandame la contraseña:", "kexp_clave")
+        elif acc == "ghtok":
+            self.pedir(chat, "🔐 Pegá el token de GitHub (fine-grained, solo el repo Zumo; permisos Actions: Read and write, "
+                             "Secrets: Read and write, Contents: Read-only). Lo borro del chat apenas lo leo.", "gh_token")
+        elif acc == "ksubir":
+            if not getattr(self, "gh", None):
+                return self.pantalla_resp(chat, mid, "Falta el token de GitHub.") or True
+            self.mostrar(chat, mid, "⬆️ Usar la clave de esta VPS en GitHub\n\nGuarda la clave de firma de esta VPS como secreto fijo del repo "
+                                    "(ZUMO_KEYSTORE_B64 y ZUMO_KS_PASS). Desde ahí, las compilaciones de GitHub salen con la misma firma que las de acá "
+                                    "y se actualizan una encima de la otra.\n\n"
+                                    "⚠️ Si tus clientes tienen una app firmada con la clave de GitHub de antes, no van a poder actualizar encima: "
+                                    "en ese caso usá mejor «Traer la clave de GitHub».",
+                         [[("✅ Subirla", "ksubir_si"), ("✖ No", "resp")]])
+        elif acc == "ksubir_si":
+            self.subir_clave_github(chat)
         elif acc == "ktraer":
             if not getattr(self, "gh", None):
-                return self.pantalla_resp(chat, mid, "Falta GITHUB_TOKEN en bot.env.") or True
+                return self.pantalla_resp(chat, mid, "Falta el token de GitHub.") or True
+            hay = respaldo.clave_firma() is not None
             self.mostrar(chat, mid, "☁️ Traer la clave de firma de GitHub\n\nHace una compilación en GitHub, saca la clave actual cifrada y la guarda en esta VPS. "
-                                    "La app no cambia. Sirve para llevar la clave a una VPS nueva.",
+                                    "La app no cambia" + (" (la que tenés acá queda guardada como copia .ant-…)" if hay else "") + ". "
+                                    "Sirve para que las compilaciones de acá salgan con la misma firma que las de GitHub.",
                          [[("✅ Hacerlo ahora", "ktraer_si"), ("✖ No", "resp")]])
         elif acc == "ktraer_si":
             self.compilar_app(chat, asegurar="traer")
@@ -111,6 +133,20 @@ class CentroMixin:
     # ------------------------------------------------------------ texto y documentos
     def texto_resp(self, chat, e, paso, t):
         """Devuelve True si manejó el paso."""
+        if paso == "gh_token":
+            self.borrar_entrada(chat, e)
+            self.estado.pop(chat, None)
+            t = t.strip()
+            if len(t) < 20 or " " in t:
+                self.tg.mensaje(chat, "⚠️ Eso no parece un token de GitHub.", [[("🔐 Reintentar", "ghtok")], [("◂ Respaldo", "resp")]])
+                return True
+            fijar_env("GITHUB_TOKEN", t)
+            env = self.leer_env_fn() if self.leer_env_fn else {}
+            if not env.get("GITHUB_REPO"):
+                fijar_env("GITHUB_REPO", "adri40606941-ui/Zumo")
+            self.tg.mensaje(chat, "✅ Token guardado. Reinicio el bot para que lo tome (unos segundos); después entrá de nuevo a 💾 Respaldo.")
+            reiniciar_bot()
+            return True
         if paso == "r_pass":
             self.borrar_entrada(chat, e)
             if len(t) < 8:
@@ -176,6 +212,25 @@ class CentroMixin:
         self.estado[chat] = {"paso": sig, "datos": datos}
         self.tg.mensaje(chat, "🔑 Ahora escribí la contraseña de ese archivo (la borro del chat):", [[("✖ Cancelar", "resp")]])
         return True
+
+    # -------------------------------------------------- clave de firma: igualar con GitHub
+    def subir_clave_github(self, chat):
+        """Guarda la clave de esta VPS como secreto fijo del repo: GitHub firma igual que acá."""
+        import base64
+        c = respaldo.clave_firma()
+        if not c:
+            return self.tg.mensaje(chat, "⚠️ No hay clave de firma en esta VPS.", [[("◂ Respaldo", "resp")]])
+        try:
+            with open(c[0], "rb") as f:
+                jks = f.read()
+            self.gh.subir_secreto("ZUMO_KEYSTORE_B64", base64.b64encode(jks).decode())
+            self.gh.subir_secreto("ZUMO_KS_PASS", c[1])
+        except compilar.ErrorGitHub as ex:
+            return self.tg.mensaje(chat, "⚠️ " + str(ex), [[("◂ Respaldo", "resp")]])
+        self.tg.mensaje(chat, "✅ Listo: GitHub ahora firma con la clave de esta VPS"
+                              + (f" (huella {respaldo.huella_clave()})" if respaldo.huella_clave() else "")
+                              + ". Los APK de las dos partes se actualizan uno encima del otro.",
+                        [[("◂ Respaldo", "resp")]])
 
     # ------------------------------------------------------------------- respaldo
     def respaldar(self, chat, manual=False):
