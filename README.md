@@ -167,6 +167,7 @@ instalado, volvé a correr `bot/instalar-bot.sh`.
 | `scripts/zumo-datos.sh` | Contador de datos por usuario (mide lo que mueve cada sesión SSH); alimenta Herramientas → Uso de datos. |
 | `tests/` | Pruebas del limitador, de "Eliminar usuario" y de las herramientas (`sudo bash tests/prueba-limitador.sh`, `prueba-borrar.sh`, `prueba-herramientas.sh`, `prueba-datos.sh`, `prueba-respaldo.sh`). |
 | `binarios/` | `hcr-install.sh` y `hcr-server` (HCR); `bhttp-server-*`, `bhttp-shim-*` y `bhttp-server.sha256` (BHTTP, por arquitectura). Los baja el instalador. |
+| `binarios/bilola-server` / `bilola-install.sh` | Servidor BilolaGo (BHTTP v1/v2 y XHTTP opcional), solo x86_64, de origen externo. Se instala aparte, en otro puerto: `bash <(curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/binarios/bilola-install.sh) --port 8081` (quitar: `--uninstall`). Verifica su `sha256` antes de instalar. |
 | `fuentes/bhttp-shim/main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
 | `android/` | App Android (Zumo VPN). `android/servidores.txt` es la lista de servidores que trae la app. |
 | `bot/respaldo.py` / `bot/centro.py` | Respaldo cifrado, clave de firma y sus botones del bot. |
