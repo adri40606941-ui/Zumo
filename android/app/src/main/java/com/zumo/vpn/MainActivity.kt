@@ -206,9 +206,8 @@ class MainActivity : Activity() {
         }
         root.addView(col)
 
-        // encabezado: título centrado + botón de menú (☰) en la esquina
+        // encabezado: título centrado
         val filaCab = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val espaciador = View(this).apply { layoutParams = LinearLayout.LayoutParams(dp(44), dp(1)) }
         val cab = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -233,13 +232,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
         })
-        val btnMenu = TextView(this).apply {
-            text = "☰"; textSize = 20f; setTextColor(ACENTO); gravity = Gravity.CENTER
-            background = redondo(conOpacidad(CARD), radio(0.7f), trazo = 1)
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
-            setOnClickListener { abrirMenu() }
-        }
-        filaCab.addView(espaciador); filaCab.addView(cab); filaCab.addView(btnMenu)
+        filaCab.addView(cab)
         col.addView(filaCab)
 
         // app sin servidores adentro y sin cuenta cargada: solo se pide abrir el .zs
@@ -387,34 +380,6 @@ class MainActivity : Activity() {
         if (foto == null && Tema.esClaro(fondo2 ?: BG) && Build.VERSION.SDK_INT >= 26) barras = barras or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = barras
-    }
-
-    /** Menú ☰: botones de contacto del tema, importar una cuenta nueva (renovación) y la guía de batería. */
-    private fun abrirMenu() {
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-
-        if (tema.enlaces.isNotEmpty()) {
-            val cContacto = tarjeta()
-            seccion(cContacto, "💬", "Contacto")
-            for (e in tema.enlaces) cContacto.addView(botonSecundario(e.texto) { abrirEnlace(e.url) })
-            col.addView(cContacto)
-        }
-
-        if (tema.verImportar) {
-            val cCuenta = tarjeta()
-            seccion(cCuenta, "📥", "Cuenta")
-            cCuenta.addView(texto("¿Te mandaron un archivo .zs nuevo (renovación u otra cuenta)? Importalo acá.", 13f, TEXTO_SUAVE))
-            cCuenta.addView(botonSecundario("📂  Importar archivo .zs") { elegirArchivo() })
-            col.addView(cCuenta)
-        }
-
-        val cEst = tarjeta()
-        seccion(cEst, "⚙️", "Evitar desconexiones")
-        cEst.addView(botonSecundario("🔋  Guía para evitar cortes de batería", NARANJA) { guiaBateria() })
-        col.addView(cEst)
-
-        val sv = ScrollView(this).apply { addView(col) }
-        dialogo("Configuración", sv).setPositiveButton("Cerrar", null).mostrar()
     }
 
     private fun refrescar() {
