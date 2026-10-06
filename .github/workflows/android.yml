@@ -96,6 +96,21 @@ jobs:
             echo "Lista de servidores: android/servidores.txt"
           fi
           echo "Servidores cargados: $(grep -c '^[[:space:]]*\[[^]=[]\+\][[:space:]]*$' android/servidores.txt || true)"
+          # Botón ↻ de la app: se hornea la URL de donde baja la lista (la rama donde se publica este build)
+          # y se deja servidores.bin listo para subir a esa rama (así una app recién compilada ya puede actualizar).
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then RAMA=apk; else RAMA=apk-prueba; fi
+          echo "ZUMO_ACTUALIZAR_URL=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${RAMA}/servidores.bin" >> "$GITHUB_ENV"
+          pip install --quiet cryptography
+          mkdir -p out
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "bot")
+          import zs
+          with open("android/servidores.txt", encoding="utf-8") as f:
+              texto = f.read()
+          with open("out/servidores.bin", "wb") as f:
+              f.write(zs.cifrar_lista(texto))
+          PY
 
       # Apariencia de la app (nombre, colores, letra, ícono, fondo). Por defecto sale de android/marca.
       # Si el bot subió una, viene partida en los secretos ZUMO_MARCA (cabecera) y ZUMO_MARCA_1..14

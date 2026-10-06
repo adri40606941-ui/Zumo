@@ -332,6 +332,42 @@ class Pruebas(unittest.TestCase):
                 else:
                     self.assertFalse(tg.docs); self.assertTrue(any("error: no compila" in m for m in tg.mensajes))
 
+    def test_publicar_servidores_para_la_app(self):
+        import zs
+        # cifrado de la lista: mismo formato ZL1 que abre la app, y descifra de vuelta
+        texto = "[A]\nhost = a.com\npuerto = 80\ntls = no\nsni =\npayload = GET / HTTP/1.1[crlf][crlf]\n"
+        blob = zs.cifrar_lista(texto)
+        self.assertEqual(blob[:3], b"ZL1")
+        self.assertEqual(zs.descifrar_lista(blob), texto)
+        self.assertEqual(zs.cifrar_lista(texto), blob)        # determinista: la misma lista da el mismo archivo
+        self.assertNotIn(b"a.com", blob)
+
+        class GHpub:
+            def __init__(self): self.llamadas = []
+            def ultimo_run(self): return 5
+            def lanzar(self): self.llamadas.append("lanzar")
+            def run_nuevo(self, antes): return 6
+            def run(self, i): return {"status": "completed", "conclusion": "success", "html_url": "http://x"}
+        class GHsec:
+            repo, rama = "o/r", "main"
+            def __init__(self): self.sec = {}
+            def subir_secreto(self, n, v): self.sec[n] = v
+        with tempfile.TemporaryDirectory() as tmp:
+            gh = GHsec()
+            bot, tg, b, txt, btn = self.armar(tmp, gh)
+            b.gh_pub = GHpub()
+            bot.guardar_app([{"name": "APP 02", "host": "h.com", "port": 80, "payload": "GET /", "tls": False, "sni": ""}])
+            btn("app"); self.assertIn("apub", tg.datos_botones())
+            btn("apub"); self.assertIn("apub_si", tg.datos_botones())
+            btn("apub_si")
+            for _ in range(100):
+                if not b.compilando.locked(): break
+                import time; time.sleep(0.05)
+            self.assertIn("ZUMO_SERVIDORES", gh.sec)
+            self.assertIn("[APP 02]", gh.sec["ZUMO_SERVIDORES"])
+            self.assertEqual(b.gh_pub.llamadas, ["lanzar"])
+            self.assertTrue(any("publicada" in m.lower() for m in tg.mensajes))
+
     def test_compilar_sin_token(self):
         with tempfile.TemporaryDirectory() as tmp:
             bot, tg, b, txt, btn = self.armar(tmp)
