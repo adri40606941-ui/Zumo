@@ -3,8 +3,10 @@
 # panel de terminal, librería compartida y limitador (recompilado).
 # No reinstala los protocolos; solo actualiza lo que cambió.
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+# Si se instala/actualiza desde otra dirección (ZUMO_BASE), se recuerda para las próximas veces.
+if [ -n "${ZUMO_BASE:-}" ]; then case "$ZUMO_BASE" in https://*) mkdir -p /etc/zumo; printf '%s' "${ZUMO_BASE%/}" > /etc/zumo/base.url ;; esac; fi
 
-BASE="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+BASE="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
 NC="?nocache=$(date +%s)"
 V='\e[1;38;5;141m'; G='\e[1;32m'; R='\e[1;31m'; N='\e[0m'
 ok()  { echo -e " ${G}✔ $1${N}"; }
@@ -135,7 +137,6 @@ rm -f "$tmp"
 }
 refrescar activar-pdirect.sh   ZUMOPDIRECTACT
 refrescar desactivar-pdirect.sh DESPDEOF
-refrescar activar-zumoid.sh    ZUMOIDACT
 refrescar activar-bhttp.sh     ZUMOBHTTPACT
 refrescar desactivar-bhttp.sh  DESBHTTPEOF
 refrescar activar-hcr.sh       ZUMOHCRACT
@@ -149,10 +150,6 @@ if systemctl is-active --quiet pdirect-80 2>/dev/null; then
 	if bash /etc/zumo/activar-pdirect.sh >/dev/null 2>&1 && systemctl is-active --quiet pdirect-80; then ok "PDirect recompilado y reiniciado"
 	else err "PDirect no quedó activo: reactivalo desde el panel (o bash /etc/zumo/activar-pdirect.sh)"; fi
 fi
-# Control de dispositivo (Android ID): se instala o se actualiza solo (si ya está al día no toca nada).
-echo -e "${V}Control de dispositivo (zumo-id)...${N}"
-if bash /etc/zumo/activar-zumoid.sh 2>&1 | sed 's/^/   /'; then :; fi
-systemctl is-active --quiet zumo-id 2>/dev/null && ok "zumo-id activo" || err "zumo-id no quedó activo: bash /etc/zumo/activar-zumoid.sh"
 echo -e " \e[2mLos demás protocolos (BHTTP, HCR, etc.) se reactivan desde el panel si querés actualizarlos.${N}"
 else
 err "no se pudo refrescar los activadores (sin install.sh)"
@@ -162,6 +159,15 @@ rm -rf "$TMP"
 if systemctl list-unit-files 2>/dev/null | grep -q '^zumo-web.service'; then
 	echo -e " ${V}—${N} El panel web ya no forma parte de Zumo y no se actualiza. Para quitarlo de esta VPS:"
 	echo -e "   curl -fsSL \"$BASE/quitar-panelweb.sh\" | bash"
+fi
+
+# El control de dispositivo por Android ID ya no forma parte de Zumo. Si una versión anterior lo
+# instaló, se apaga y se borra: si quedara andando, cortaría a los usuarios que estaban vinculados.
+if [ -f /etc/systemd/system/zumo-id.service ] || [ -x /usr/local/bin/zumoid ]; then
+	systemctl disable --now zumo-id >/dev/null 2>&1
+	rm -f /etc/systemd/system/zumo-id.service /usr/local/bin/zumoid /etc/zumo/activar-zumoid.sh
+	systemctl daemon-reload 2>/dev/null
+	ok "control de Android ID quitado"
 fi
 
 echo

@@ -410,12 +410,6 @@ class MainActivity : Activity() {
 
         val cEst = tarjeta()
         seccion(cEst, "⚙️", "Evitar desconexiones")
-        val sw = Switch(this).apply {
-            text = "Reconectar al encender el teléfono"; setTextColor(TEXTO); typeface = letra(false); isChecked = prefs.autoStart
-            if (tema.escala != 100) textSize = sp(14f)
-            setOnCheckedChangeListener { _, on -> prefs.autoStart = on }
-        }
-        cEst.addView(sw)
         cEst.addView(botonSecundario("🔋  Guía para evitar cortes de batería", NARANJA) { guiaBateria() })
         col.addView(cEst)
 

@@ -21,9 +21,11 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import centro  # noqa: E402
+import instalacion  # noqa: E402
 import compilar  # noqa: E402
 import marca  # noqa: E402
 import servidores as srv  # noqa: E402
@@ -37,7 +39,6 @@ DB = os.environ.get("ZUMO_DB", "/etc/zumo/usuarios.db")
 CLAVES = os.environ.get("ZUMO_CLAVES", "/etc/zumo/claves.db")
 LIB = os.environ.get("ZUMO_LIB", "/etc/zumo/zumo-lib.sh")
 LIMCONF = os.environ.get("ZUMO_LIMCONF", "/etc/zumo/limit.conf")
-ZUMOID = os.environ.get("ZUMO_ZUMOID", "/usr/local/bin/zumoid")  # control de dispositivo (Android ID)
 PASSWD = os.environ.get("ZUMO_PASSWD", "/etc/passwd")
 TEMPDB = os.environ.get("ZUMO_TEMPDB", "/etc/zumo/temporales.db")
 BORRADOR = os.environ.get("ZUMO_BORRADOR", "/etc/zumo/borrar-temporal.sh")
@@ -263,7 +264,6 @@ u="$1"
 pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 if command -v zumo_db_del >/dev/null 2>&1; then zumo_db_del "$u"; else sed -i "/^$u:/d" /etc/zumo/usuarios.db 2>/dev/null; fi
-command -v zumo_disp_forget >/dev/null 2>&1 && zumo_disp_forget "$u"
 if [ -f /etc/zumo/temporales.db ]; then grep -v "^$u:" /etc/zumo/temporales.db > /etc/zumo/temporales.db.tmp 2>/dev/null && mv /etc/zumo/temporales.db.tmp /etc/zumo/temporales.db; fi
 exit 0
 """
@@ -368,46 +368,10 @@ def mensaje_cliente(u):
             f"🔌 {'1 dispositivo' if n == 1 else f'{n} dispositivos'}\n📄 {banner_pdirect()}")
 
 
-# ------------------------------------------------------------ dispositivo (Android ID)
-def zid(*args):
-    """Llama a zumoid (el servicio que guarda el Android ID de cada usuario). None si no está instalado."""
-    if not os.access(ZUMOID, os.X_OK):
-        return None
-    try:
-        return subprocess.run([ZUMOID, *args], capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-
-
-def disp_get(u):
-    """{'id', 'lock', 'last'} del celular del usuario, o None si todavía no mandó su ID."""
-    r = zid("get", u)
-    if not r or r.returncode != 0 or not r.stdout.strip():
-        return None
-    p = r.stdout.rstrip("\n").split("\t")
-    if len(p) < 4:
-        return None
-    return {"id": p[0], "lock": p[1] == "1", "last": int(p[3] or 0)}
-
-
-def disp_ultimo(u):
-    """Último evento bloqueado: {'epoch', 'evento', 'id'} o None."""
-    r = zid("last", u)
-    if not r or r.returncode != 0:
-        return None
-    p = r.stdout.rstrip("\n").split("\t")
-    return {"epoch": int(p[0] or 0), "evento": p[1], "id": p[2]} if len(p) >= 3 else None
-
-
-def fecha_corta(epoch):
-    return datetime.fromtimestamp(epoch).strftime("%d/%m %H:%M")
-
-
 def borrar_usuario(u):
     run("pkill", "-9", "-u", u)
     run("userdel", u)
     bash_lib("zumo_db_del", u)
-    zid("forget", u)
     clave_borrar(u)
     run("systemctl", "stop", f"zumo-temp-{u}.timer")
     temp_quitar(u)
@@ -518,6 +482,7 @@ POR_PAGINA = 20
 MENU = [[("➕ Crear usuario", "crear")],
         [("👥 Usuarios", "lista:0")],
         [("📱 App Android", "app")],
+        [("💾 Respaldo", "resp")],
         [("🪪 Mi ID", "id")]]
 CANCELAR = [[("✖ Cancelar", "menu")]]
 
@@ -540,7 +505,7 @@ def teclado_dias(prefijo):
             [("✖ Cancelar", "menu")]]
 
 
-class Bot:
+class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
     def __init__(self, tg, admins, gh=None):
         self.tg, self.admins, self.gh = tg, admins, gh
         self.estado = {}      # chat -> {"paso": ..., datos}
@@ -555,8 +520,16 @@ class Bot:
 
     def menu(self, chat, mid=None, aviso=""):
         self.estado.pop(chat, None)
+        if self.local_activo:
+            # VPS centro: no hay clientes acá; solo la app, instalar VPS y respaldo
+            botones = [[("📱 App Android", "app")]]
+            if instalacion.base_publica():
+                botones.append([("🖥 Instalar VPS nueva", "ivps")])
+            botones.append([("💾 Respaldo", "resp")])
+            return self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + "🛡 Zumo · centro\n¿Qué querés hacer?", botones)
         n = len(usuarios())
-        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + f"🛡 Zumo VPN · {n} usuario(s)\n¿Qué querés hacer?", MENU)
+        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + f"🛡 Zumo VPN · {n} usuario(s)\n¿Qué querés hacer?",
+                    MENU[:3] + [[("🖥 Instalar VPS nueva", "ivps")]] + MENU[3:] if instalacion.base_publica() else MENU)
 
     def pantalla_crear(self, chat, mid):
         self.estado.pop(chat, None)
@@ -614,19 +587,6 @@ class Bot:
         if fila:
             botones.append(fila)
         botones.append([("🔢 Límite", f"l:{u}"), ("🗑 Borrar", f"b:{u}")])
-        d = disp_get(u)
-        if d:
-            txt += f"\n\n📱 Android ID: {d['id']}\n" + ("🔒 Vinculado: solo ese celular puede entrar" if d["lock"] else "🔓 Sin vincular: entra desde cualquier celular")
-            txt += f"\nÚltimo ingreso: {fecha_corta(d['last'])}"
-            ult = disp_ultimo(u)
-            if ult and ult["evento"] == "otro-dispositivo":
-                txt += f"\n⚠️ Intento bloqueado: otro celular ({ult['id']}) el {fecha_corta(ult['epoch'])}"
-            elif ult and ult["evento"] == "sin-verificar":
-                txt += f"\n⚠️ Sesión cortada: entró sin mandar el ID (app vieja u otra app) el {fecha_corta(ult['epoch'])}"
-            botones.append([("🔓 Desvincular celular" if d["lock"] else "🔒 Vincular a este celular", f"dv:{u}"),
-                            ("🗑 Olvidar celular", f"dx:{u}")])
-        elif zid("get", u) is not None:
-            txt += "\n\n📱 Android ID: todavía no conectó con la app nueva"
         botones.append([("◂ Usuarios", "lista:0")])
         self.mostrar(chat, mid, txt, botones)
 
@@ -641,7 +601,7 @@ class Bot:
         botones += [[("➕ Agregar servidor", "aadd"), ("📥 Pegar lista", "apegar")],
                     [("🎨 Apariencia de la app", "t")],
                     [("🔨 Compilar y enviarme el APK", "acomp")],
-                    [("🔑 Asegurar clave de firma", "aclave")],
+                    [("💾 Respaldo y clave de firma", "resp") if self.local_activo else ("🔑 Asegurar clave de firma", "aclave")],
                     [("◂ Menú", "menu")]]
         self.mostrar(chat, mid, txt, botones)
 
@@ -680,6 +640,8 @@ class Bot:
         if uid not in self.admins:
             return self.tg.mensaje(chat, f"No autorizado. Tu ID es {uid}: pasáselo al administrador.")
         try:
+            if msg.get("document") and self.documento_resp(chat, msg):
+                return
             if texto.startswith("/"):
                 return self.menu(chat)
             if chat in self.estado:
@@ -713,6 +675,8 @@ class Bot:
         acc, _, arg = d.partition(":")
         if acc == "menu":
             return self.menu(chat, mid)
+        if self.boton_resp(chat, mid, acc) or self.boton_instalar(chat, mid, acc):
+            return
         if acc == "lista":
             self.estado.pop(chat, None)
             return self.pantalla_lista(chat, mid, int(arg or 0))
@@ -744,20 +708,6 @@ class Bot:
             if arg not in usuarios():
                 return self.menu(chat, mid, "Ese usuario ya no existe.")
             return self.enviar_datos(chat, arg)
-        if acc == "dv":      # vincular / desvincular al celular
-            d = disp_get(arg)
-            if not d:
-                return self.pantalla_usuario(chat, mid, arg)
-            r = zid("unlock" if d["lock"] else "lock", arg)
-            if r is not None and r.returncode != 0:
-                self.tg.mensaje(chat, "⚠️ " + (r.stderr.strip() or "No se pudo cambiar"))
-            return self.pantalla_usuario(chat, mid, arg)
-        if acc == "dx":
-            return self.mostrar(chat, mid, f"🗑 ¿Olvidar el celular de {arg}?\nSe desvincula y se anota el próximo que conecte con ese usuario.",
-                                [[("✅ Sí, olvidar", f"dxs:{arg}"), ("✖ No", f"u:{arg}")]])
-        if acc == "dxs":
-            zid("forget", arg)
-            return self.pantalla_usuario(chat, mid, arg)
         if acc == "r":
             return self.mostrar(chat, mid, f"🔄 Renovar {arg}\n¿Por cuántos días desde hoy?", teclado_dias(f"rd:{arg}"))
         if acc == "rd":
@@ -799,6 +749,11 @@ class Bot:
                                     "[APP 02]\nhost = dominio.com\npuerto = 80\npayload = GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]\n\n"
                                     "⚠️ Reemplaza TODA la lista que tiene el bot ahora.", "a_pegar")
         if acc == "acomp":
+            if self.local_activo:
+                n = len(cargar_app())
+                return self.mostrar(chat, mid, f"🔨 Compilar la app en esta VPS\n{n} servidor(es) de la lista del bot van dentro de la app."
+                                    f"{'' if n else ' (Lista vacía: se usa la que trae el código.)'}\nTarda unos minutos. ¿Compilo?",
+                                    [[("✅ Compilar ahora", "acomp_si"), ("✖ No", "app")]])
             if not self.gh:
                 return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env. Corré de nuevo el instalador del bot para cargarlo.", [[("◂ App Android", "app")]])
             n = len(cargar_app())
@@ -811,6 +766,8 @@ class Bot:
         if acc == "acomp_si":
             return self.compilar_app(chat)
         if acc == "aclave":
+            if self.local_activo:
+                return self.pantalla_resp(chat, mid)
             if not self.gh:
                 return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "app")]])
             return self.mostrar(chat, mid, "🔑 Asegurar la clave de firma\n\nHoy la clave con la que se firma la app vive en un caché de GitHub que se borra si pasan 7 días sin compilar; "
@@ -897,6 +854,8 @@ class Bot:
             self.tg.mensaje(chat, f"✅ Contraseña de {u} cambiada. Los datos para el cliente:")
             self.enviar_datos(chat, u)
             return self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + u, f"u:{u}")], [("◂ Menú", "menu")]])
+        if self.texto_resp(chat, e, paso, t):
+            return
         if paso.startswith("a_"):
             return self.texto_app(chat, e, paso, t)
         if paso.startswith("t_"):
@@ -1012,7 +971,7 @@ class Bot:
             linea += f"\n⚙️ {actual}"
         return linea + f"\n⏱ {minutos} min"
 
-    def _asegurar_clave(self, chat):
+    def _asegurar_clave(self, chat, solo_traer=False):
         gh = self.gh
         self.tg.mensaje(chat, "🔑 Arrancando…")
         clave = uuid.uuid4().hex + uuid.uuid4().hex
@@ -1027,6 +986,13 @@ class Bot:
         if cifrado is None:
             return self.tg.mensaje(chat, "✅ La clave ya estaba guardada como secreto fijo en el repo. No hay nada que hacer.", [[("📱 App Android", "app")]])
         jks, ks_pass = compilar.abrir_clave_exportada(cifrado, clave)
+        if solo_traer:
+            if centro.respaldo.clave_firma():
+                os.rename(centro.respaldo.FIRMA, centro.respaldo.FIRMA + ".ant-" + time.strftime("%Y%m%d%H%M%S"))
+            centro.respaldo.guardar_clave_firma(jks, ks_pass)
+            return self.tg.mensaje(chat, "✅ Clave de firma traída de GitHub y guardada en esta VPS. "
+                                         "Ahora podés exportarla (📤) y mandarla a la VPS nueva.",
+                                   [[("📤 Exportar clave", "kexp")], [("◂ Respaldo", "resp")]])
         gh.subir_secreto("ZUMO_KEYSTORE_B64", base64.b64encode(jks).decode())
         gh.subir_secreto("ZUMO_KS_PASS", ks_pass)
         self.tg.mensaje(chat, "✅ Clave de firma guardada como secreto fijo del repo (ZUMO_KEYSTORE_B64 y ZUMO_KS_PASS). "
@@ -1035,9 +1001,11 @@ class Bot:
 
     def _compilar(self, chat, asegurar=False):
         try:
+            if self.local_activo:
+                return self._compilar_local(chat, cargar_app())
             gh = self.gh
             if asegurar:
-                return self._asegurar_clave(chat)
+                return self._asegurar_clave(chat, solo_traer=(asegurar == "traer"))
             lista = cargar_app()
             self.tg.mensaje(chat, "🔨 Arrancando…")
             if lista:
@@ -1504,6 +1472,17 @@ def main():
         gh = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
                              rama=env.get("GITHUB_REF") or "main")
     bot = Bot(Telegram(token), admins, gh)
+    bot.local_activo = env.get("COMPILAR") == "local"
+    bot.leer_env_fn = leer_env
+    centro.ENV = ENV
+    threading.Thread(target=bot.respaldo_diario, daemon=True).start()
+    if instalacion.base_publica():      # VPS centro: entrega el install.sh con códigos de un solo uso
+        try:
+            bot.codigos = instalacion.Codigos()
+            srv = instalacion.hacer_servidor(bot.codigos, bot.aviso_codigo_usado)
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+        except OSError as e:
+            print("zumo-bot: no se pudo abrir el servidor de códigos de instalación:", e, flush=True)
     print("zumo-bot: listo, admins:", sorted(admins) or "ninguno (mandá /id al bot)", flush=True)
     offset = 0
     while True:

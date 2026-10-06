@@ -3,7 +3,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/bot/instalar-bot.sh | bash
 # Pide el token del bot (@BotFather) y tu ID de Telegram (lo ves con /id en el bot).
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
-BASE="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/bot"
+# Si se instala/actualiza desde otra dirección (ZUMO_BASE), se recuerda para las próximas veces.
+if [ -n "${ZUMO_BASE:-}" ]; then case "$ZUMO_BASE" in https://*) mkdir -p /etc/zumo; printf '%s' "${ZUMO_BASE%/}" > /etc/zumo/base.url ;; esac; fi
+BASE="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}/bot"
 NC="?nocache=$(date +%s)"
 mkdir -p /etc/zumo /opt/zumo-bot
 
@@ -20,17 +22,22 @@ for p in fonts-noto-color-emoji fonts-dejavu-extra; do
 	apt-get install -y --no-install-recommends "$p" >/dev/null 2>&1 || echo "Aviso: no se pudo instalar $p (la vista previa lo aproxima)."
 done
 
-ARCHIVOS="servidores.py compilar.py tema.py vista.py marca.py zumo-bot.py"
+ARCHIVOS="servidores.py compilar.py tema.py vista.py marca.py respaldo.py local.py centro.py instalacion.py zumo-bot.py"
 for f in $ARCHIVOS; do
-	curl -fsSL "$BASE/$f$NC" -o "/opt/zumo-bot/$f" || { echo "✘ No se pudo bajar $f"; exit 1; }
+	if [ -n "${ZUMO_BOT_SRC:-}" ]; then   # VPS centro: se copian del clon local
+		cp "$ZUMO_BOT_SRC/$f" "/opt/zumo-bot/$f" || { echo "✘ No se pudo copiar $f"; exit 1; }
+	else
+		curl -fsSL "$BASE/$f$NC" -o "/opt/zumo-bot/$f" || { echo "✘ No se pudo bajar $f"; exit 1; }
+	fi
 done
 rm -f /opt/zumo-bot/zs.py   # el bot ya no arma archivos .zs
 ( cd /opt/zumo-bot && python3 -m py_compile $ARCHIVOS ) || { echo "✘ El bot bajado tiene errores"; exit 1; }
 chmod 755 /opt/zumo-bot/zumo-bot.py
 
 if [ ! -f /etc/zumo/bot.env ]; then
-	read -rp "Token del bot (@BotFather): " TOK </dev/tty
-	read -rp "Tu ID de Telegram (si no lo sabés, dejalo vacío y mandá /id al bot): " ADM </dev/tty
+	TOK="${BOT_TOKEN:-}"; ADM="${ADMINS:-}"
+	[ -n "$TOK" ] || read -rp "Token del bot (@BotFather): " TOK </dev/tty
+	[ -n "${BOT_TOKEN:-}" ] || read -rp "Tu ID de Telegram (si no lo sabés, dejalo vacío y mandá /id al bot): " ADM </dev/tty
 	( umask 077
 	  {
 	  echo "BOT_TOKEN=$TOK"
@@ -42,7 +49,12 @@ fi
 
 # Compilar la app desde el bot: token de GitHub (fine-grained, solo el repo Zumo, permisos
 # Actions: Read and write, Secrets: Read and write, Contents: Read-only). Se puede dejar vacío.
-if ! grep -q '^GITHUB_TOKEN=.\+' /etc/zumo/bot.env; then
+if [ "${ZUMO_COMPILAR:-}" = "local" ]; then
+	# VPS centro: la app se compila acá, no hace falta token de GitHub para eso
+	sed -i '/^COMPILAR=/d' /etc/zumo/bot.env; echo "COMPILAR=local" >> /etc/zumo/bot.env
+	if [ -n "${RESPALDO_PASS:-}" ]; then sed -i '/^RESPALDO_PASS=/d' /etc/zumo/bot.env; echo "RESPALDO_PASS=$RESPALDO_PASS" >> /etc/zumo/bot.env; fi
+	chmod 600 /etc/zumo/bot.env
+elif ! grep -q '^GITHUB_TOKEN=.\+' /etc/zumo/bot.env; then
 	echo
 	echo "Para compilar la app desde el bot hace falta un token de GitHub (ver README, sección Bot)."
 	read -rp "Token de GitHub (vacío = sin compilar desde el bot): " GHT </dev/tty

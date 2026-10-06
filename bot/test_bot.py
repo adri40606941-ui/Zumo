@@ -23,9 +23,7 @@ def cargar_bot(tmp):
                        "ZUMO_TEMPDB": f"{tmp}/temporales.db", "ZUMO_BORRADOR": f"{tmp}/borrar-temporal.sh",
                        "ZUMO_PDIRECT_ENV": f"{tmp}/pdirect.env",
                        "ZUMO_DB": f"{tmp}/usuarios.db", "ZUMO_CLAVES": f"{tmp}/claves.db",
-                       "ZUMO_APP_SERVIDORES": f"{tmp}/app-servidores.json", "ZUMO_APP_MARCA": f"{tmp}/app-marca",
-                       "ZUMO_ZUMOID": f"{tmp}/zumoid", "ZUMO_DISP_DB": f"{tmp}/disp.db",
-                       "ZUMO_DISP_LOCK": f"{tmp}/disp.lock", "ZUMO_DISP_LOG": f"{tmp}/disp.log"})
+                       "ZUMO_APP_SERVIDORES": f"{tmp}/app-servidores.json", "ZUMO_APP_MARCA": f"{tmp}/app-marca"})
     spec = importlib.util.spec_from_file_location("zumo_bot", os.path.join(AQUI, "zumo-bot.py"))
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
@@ -114,7 +112,7 @@ class Pruebas(unittest.TestCase):
             self.assertIn("No autorizado", tg.mensajes[-1])
             # cualquier texto abre el menú con botones: ya no hay "Servidor y payload"
             txt("hola")
-            self.assertEqual(tg.datos_botones(), ["crear", "lista:0", "app", "id"])
+            self.assertEqual(tg.datos_botones(), ["crear", "lista:0", "app", "resp", "id"])
             # la lista trae el botón de crear, y la ficha ya no ofrece el .zs
             btn("lista:0"); self.assertEqual(tg.datos_botones()[:2], ["crear", "u:cliente1"])
             btn("u:cliente1")
@@ -388,75 +386,93 @@ class Pruebas(unittest.TestCase):
                         self.assertNotIn("ZUMO_KEYSTORE_B64", gh.sec)
                         self.assertIn("ya estaba guardada", tg.mensajes[-1])
 
-    def _con_zumoid(self, tmp):
-        """Copia el binario real de zumoid (o lo compila) a tmp/zumoid. Devuelve False si no se pudo."""
-        import platform, shutil, subprocess
-        repo = os.path.join(AQUI, "..")
-        src = os.path.join(repo, "zumoid-amd64")
-        if platform.machine() in ("x86_64", "AMD64") and os.path.exists(src):
-            shutil.copy(src, f"{tmp}/zumoid")
-        else:
-            r = subprocess.run(["go", "build", "-o", f"{tmp}/zumoid", "."], cwd=os.path.join(repo, "zumoid"),
-                               capture_output=True, env={**os.environ, "CGO_ENABLED": "0"})
-            if r.returncode != 0:
-                return False
-        os.chmod(f"{tmp}/zumoid", 0o755)
-        return True
-
-    def test_dispositivo_ver_vincular_olvidar(self):
+    def test_respaldo_y_clave_por_botones(self):
+        import shutil
+        import respaldo
+        import centro
         with tempfile.TemporaryDirectory() as tmp:
-            if not self._con_zumoid(tmp):
-                self.skipTest("no hay binario zumoid ni Go para compilarlo")
             bot, tg, b, txt, btn = self.armar(tmp)
+            respaldo.DIR = tmp
+            respaldo.FIRMA = f"{tmp}/firma"
+            centro.ENV = f"{tmp}/bot.env"
+            centro.ULTIMO = f"{tmp}/ultimo"
+            centro.reiniciar_bot = lambda: tg.mensajes.append("REINICIO")
+            b.leer_env_fn = bot.leer_env
+            open(f"{tmp}/bot.env", "w").write("BOT_TOKEN=abc\n")
             open(f"{tmp}/usuarios.db", "w").write("ana:1:2030-01-01\n")
-            # todavía no mandó su ID: se avisa, sin botones de vincular
-            btn("u:ana")
-            self.assertIn("todavía no conectó", tg.mensajes[-1])
-            self.assertNotIn("dv:ana", tg.datos_botones())
-            # ya mandó su ID (lo escribe el servicio)
-            open(f"{tmp}/disp.db", "w").write("ana:aaaaaaaaaaaaaaaa:0:1700000000:1700003600\n")
-            btn("u:ana")
-            self.assertIn("Android ID: aaaaaaaaaaaaaaaa", tg.mensajes[-1])
-            self.assertIn("Sin vincular", tg.mensajes[-1])
-            self.assertIn("dv:ana", tg.datos_botones()); self.assertIn("dx:ana", tg.datos_botones())
-            # vincular
-            btn("dv:ana")
-            self.assertIn("Vinculado", tg.mensajes[-1])
-            self.assertIn(":1:", open(f"{tmp}/disp.db").read())
-            # intento de otro celular
-            open(f"{tmp}/disp.log", "w").write("1700007200\tana\totro-dispositivo\tbbbbbbbbbbbbbbbb\n")
-            btn("u:ana")
-            self.assertIn("Intento bloqueado: otro celular (bbbbbbbbbbbbbbbb)", tg.mensajes[-1])
-            # desvincular
-            btn("dv:ana")
-            self.assertIn("Sin vincular", tg.mensajes[-1])
-            # olvidar pide confirmación
-            btn("dx:ana"); self.assertIn("dxs:ana", tg.datos_botones())
-            self.assertIn("aaaaaaaaaaaaaaaa", open(f"{tmp}/disp.db").read())
-            btn("dxs:ana")
-            self.assertNotIn("aaaaaaaaaaaaaaaa", open(f"{tmp}/disp.db").read())
-            self.assertIn("todavía no conectó", tg.mensajes[-1])
+            btn("resp"); self.assertIn("rnow", tg.datos_botones()); self.assertIn("falta", tg.mensajes[-1])
+            btn("rnow"); self.assertIn("contraseña del respaldo", tg.mensajes[-1])
+            btn("rpass"); txt("corta"); self.assertIn("Muy corta", tg.mensajes[-1])
+            txt("clave-del-respaldo"); self.assertIn("guardada", tg.mensajes[-1])
+            self.assertIn("RESPALDO_PASS=clave-del-respaldo", open(f"{tmp}/bot.env").read())
+            self.assertEqual(oct(os.stat(f"{tmp}/bot.env").st_mode & 0o777), "0o600")
+            self.assertTrue(tg.borrados)                                  # la contraseña se borra del chat
+            btn("rnow")
+            nombre, blob, _ = tg.docs[-1]
+            self.assertTrue(nombre.startswith("zumo-respaldo-") and nombre.endswith(".enc"))
+            self.assertNotIn(b"BOT_TOKEN", blob)
+            # se pierde todo y se restaura mandando el archivo
+            os.remove(f"{tmp}/usuarios.db")
+            tg.archivos["f1"] = blob
+            btn("rrest")
+            b.manejar({"chat": {"id": 1}, "from": {"id": 7}, "message_id": 9, "document": {"file_id": "f1", "file_size": len(blob)}})
+            txt("mala-clave-xx"); self.assertIn("incorrecta", tg.mensajes[-1])
+            btn("rrest")
+            b.manejar({"chat": {"id": 1}, "from": {"id": 7}, "message_id": 9, "document": {"file_id": "f1", "file_size": len(blob)}})
+            txt("clave-del-respaldo")
+            self.assertEqual(open(f"{tmp}/usuarios.db").read(), "ana:1:2030-01-01\n")
+            self.assertIn("REINICIO", tg.mensajes)
+            # un documento fuera de lugar no se toma
+            b.manejar({"chat": {"id": 1}, "from": {"id": 7}, "message_id": 10, "document": {"file_id": "f1"}})
+            self.assertNotIn("ki_clave", str(b.estado))
+            if shutil.which("keytool"):
+                btn("knew_si"); self.assertTrue(respaldo.clave_firma())
+                btn("kexp"); txt("pass-export-1")
+                enc = tg.docs[-1][1]; self.assertEqual(tg.docs[-1][0], "clave-firma.enc")
+                viejo = open(respaldo.clave_firma()[0], "rb").read()
+                shutil.rmtree(f"{tmp}/firma")
+                tg.archivos["k"] = enc
+                btn("kimp")
+                b.manejar({"chat": {"id": 1}, "from": {"id": 7}, "message_id": 11, "document": {"file_id": "k", "file_size": len(enc)}})
+                txt("pass-export-1")
+                self.assertEqual(open(respaldo.clave_firma()[0], "rb").read(), viejo)
 
-    def test_dispositivo_sin_servicio_instalado(self):
-        with tempfile.TemporaryDirectory() as tmp:  # no hay tmp/zumoid: VPS sin actualizar
-            bot, tg, b, txt, btn = self.armar(tmp)
-            open(f"{tmp}/usuarios.db", "w").write("ana:1:2030-01-01\n")
-            btn("u:ana")
-            self.assertNotIn("Android", tg.mensajes[-1])
-            self.assertNotIn("dv:ana", tg.datos_botones())
-            btn("dv:ana")  # un botón viejo no rompe nada
-            self.assertIn("ana", tg.mensajes[-1])
-
-    def test_borrar_usuario_olvida_el_celular(self):
+    def test_menu_del_centro_sin_usuarios(self):
+        import instalacion
         with tempfile.TemporaryDirectory() as tmp:
-            if not self._con_zumoid(tmp):
-                self.skipTest("no hay binario zumoid ni Go para compilarlo")
-            bot = cargar_bot(tmp)
-            open(f"{tmp}/disp.db", "w").write("ana:aaaaaaaaaaaaaaaa:1:1:1\nbeto:bbbbbbbbbbbbbbbb:0:1:1\n")
-            bot.run = lambda *a, **k: None
-            bot.bash_lib = lambda *a: None
-            bot.borrar_usuario("ana")
-            self.assertEqual(open(f"{tmp}/disp.db").read(), "beto:bbbbbbbbbbbbbbbb:0:1:1\n")
+            bot, tg, b, txt, btn = self.armar(tmp)
+            instalacion.BASE_URL = f"{tmp}/base.url"
+            open(instalacion.BASE_URL, "w").write("https://d.example/sec\n")
+            b.local_activo = True
+            txt("hola")
+            self.assertEqual(tg.datos_botones(), ["app", "ivps", "resp"])
+            self.assertNotIn("usuario(s)", tg.mensajes[-1])
+            b.local_activo = False
+            txt("hola")
+            self.assertIn("crear", tg.datos_botones()); self.assertIn("lista:0", tg.datos_botones())
+
+    def test_compilar_en_la_vps(self):
+        import shutil
+        import subprocess
+        import local
+        import respaldo
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            b.local_activo = True
+            respaldo.FIRMA = f"{tmp}/firma"
+            local.SRC = f"{tmp}/src"; local.CONTADOR = f"{tmp}/n"
+            os.makedirs(f"{local.SRC}/android")
+            open(f"{local.SRC}/android/servidores.txt", "w").write("[X]\n")
+            subprocess.run(["git", "-C", local.SRC, "init", "-q"], check=True)
+            respaldo.guardar_clave_firma(b"J" * 600, "pw")
+            open(f"{tmp}/gradle", "w").write("#!/bin/bash\nD=" + local.SRC + "/android/app/build/outputs/apk/release; mkdir -p $D; echo APK > $D/a.apk\n")
+            os.chmod(f"{tmp}/gradle", 0o755); local.GRADLE = f"{tmp}/gradle"
+            local.actualizar_codigo = lambda: ""
+            btn("app"); self.assertIn("resp", tg.datos_botones()); self.assertNotIn("aclave", tg.datos_botones())
+            btn("acomp"); self.assertIn("esta VPS", tg.mensajes[-1])
+            b.compilando.acquire(); b._compilar(1)
+            self.assertEqual(tg.docs[-1][0], "zumo-vpn.apk")
+            self.assertEqual(tg.docs[-1][1], b"APK\n")
 
 
     # ------------------------------------------------------------ apariencia de la app
@@ -737,6 +753,23 @@ class Pruebas(unittest.TestCase):
             btn("t:rs"); self.assertIn("t:rs_si", tg.datos_botones())
             btn("t:rs_si"); self.assertEqual(bot.cargar_tema(), T.normalizar({}))
             self.assertTrue(bot.tema_guardado())                      # queda guardado: al compilar pisa lo que hubiera en el repo
+
+    def test_boton_instalar_vps_nueva_da_un_codigo_cada_vez(self):
+        import instalacion
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            instalacion.BASE_URL = f"{tmp}/base.url"
+            btn("menu")
+            self.assertNotIn("ivps", tg.datos_botones())    # sin dominio no se ofrece
+            open(instalacion.BASE_URL, "w").write("https://d.example/sec\n")
+            b.codigos = instalacion.Codigos(f"{tmp}/codigos.json")
+            btn("menu")
+            self.assertIn("ivps", tg.datos_botones())
+            btn("ivps"); btn("ivps")
+            cmds = [m for m in tg.mensajes if "https://d.example/i/" in m]
+            self.assertEqual(len(cmds), 2)
+            self.assertNotIn("/sec/", cmds[0])                                       # no muestra el código secreto del centro
+            self.assertNotEqual(cmds[0], cmds[1])
 
     def test_apariencia_imagenes_y_vista_previa(self):
         import io, vista

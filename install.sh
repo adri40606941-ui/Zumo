@@ -48,7 +48,6 @@ zumo_db_del "$u"
 else
 sed -i "/^$u:/d" /etc/zumo/usuarios.db 2>/dev/null
 fi
-command -v zumo_disp_forget >/dev/null 2>&1 && zumo_disp_forget "$u"
 if [ -f /etc/zumo/temporales.db ]; then
 grep -v "^$u:" /etc/zumo/temporales.db > /etc/zumo/temporales.db.tmp 2>/dev/null && mv /etc/zumo/temporales.db.tmp /etc/zumo/temporales.db
 fi
@@ -113,6 +112,8 @@ paso "Instalando WebSocket / PDirect (puerto 80)"
 cat > /etc/zumo/activar-pdirect.sh <<'ZUMOPDIRECTACT'
 #!/bin/bash
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+# Si se instala desde otra dirección (ZUMO_BASE), se recuerda para actualizar después.
+if [ -n "${ZUMO_BASE:-}" ]; then case "$ZUMO_BASE" in https://*) mkdir -p /etc/zumo; printf '%s' "${ZUMO_BASE%/}" > /etc/zumo/base.url ;; esac; fi
 export DEBIAN_FRONTEND=noninteractive
 WORK=$(mktemp -d)
 
@@ -876,7 +877,7 @@ ok "desactivador de BadVPN instalado"
 paso "Compilando limitador de conexiones (gcc)"
 
 LIMWORK=$(mktemp -d)
-ZUMO_RAW="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+ZUMO_RAW="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
 if ! curl -fsSL "$ZUMO_RAW/zumo-limit.c" -o "$LIMWORK/zumo-limit.c" || [ ! -s "$LIMWORK/zumo-limit.c" ]; then
 echo -e " \e[1;31m✘ No se pudo descargar zumo-limit.c desde el repo.\e[0m"
 rm -rf "$LIMWORK"
@@ -948,7 +949,7 @@ PUERTO="${1:-8880}"
 case "$PUERTO" in ''|*[!0-9]*) echo "Puerto inválido: $PUERTO"; exit 1 ;; esac
 PUERTO=$((10#$PUERTO))
 if [ "$PUERTO" -lt 1 ] || [ "$PUERTO" -gt 65535 ]; then echo "El puerto debe estar entre 1 y 65535"; exit 1; fi
-BASE="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+BASE="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
 
 __oculto() {
 local msg="$1"; shift
@@ -1039,7 +1040,7 @@ case "$PUERTO" in ''|*[!0-9]*) echo "Puerto inválido: $PUERTO"; exit 1 ;; esac
 PUERTO=$((10#$PUERTO))
 if [ "$PUERTO" -lt 1 ] || [ "$PUERTO" -gt 65535 ]; then echo "El puerto debe estar entre 1 y 65535"; exit 1; fi
 [ "$PUERTO" -eq "$INTERNO" ] && INTERNO=18023
-ZUMO="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+ZUMO="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
 
 case "$(uname -m)" in
 x86_64|amd64) ARCH=amd64 ;;
@@ -1190,92 +1191,11 @@ DESBHTTPEOF
 chmod +x /etc/zumo/desactivar-bhttp.sh
 ok "BHTTP instalado"
 
-paso "Instalando control de dispositivo (Android ID)"
-
-cat > /etc/zumo/activar-zumoid.sh <<'ZUMOIDACT'
-#!/bin/bash
-# zumo-id: servicio local (127.0.0.1:7390) que recibe el Android ID que manda la app y, en los
-# usuarios que vos vincules desde el panel o el bot, deja entrar solo a ese celular.
-# Binario ya compilado en el repo (zumoid-amd64 / zumoid-arm64), verificado con SHA256.
-# Es seguro correrlo más de una vez: si ya está al día no toca nada.
-[ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
-export DEBIAN_FRONTEND=noninteractive
-ZUMO="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
-case "$(uname -m)" in
-x86_64|amd64) ARCH=amd64 ;;
-aarch64|arm64) ARCH=arm64 ;;
-*) echo "Arquitectura no soportada: $(uname -m)"; exit 1 ;;
-esac
-NAME="zumoid-${ARCH}"
-if ! command -v curl >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1 || ! command -v ss >/dev/null 2>&1; then
-apt-get update >/dev/null 2>&1; apt-get install -y --no-install-recommends ca-certificates curl coreutils iproute2 >/dev/null 2>&1 || { echo "No se pudieron instalar las dependencias"; exit 1; }
-fi
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
-curl -fsSL "$ZUMO/$NAME?nocache=$(date +%s)" -o "$TMP/zumoid" || { echo "No se pudo descargar $NAME"; exit 1; }
-curl -fsSL "$ZUMO/zumoid.sha256?nocache=$(date +%s)" -o "$TMP/SHA256SUMS.txt" || { echo "No se pudo descargar zumoid.sha256"; exit 1; }
-ESPERADO=$(awk -v n="$NAME" '{f=$2; sub(/^\*/,"",f)} f==n{print $1; exit}' "$TMP/SHA256SUMS.txt")
-[ -n "$ESPERADO" ] || { echo "zumoid.sha256 no lista $NAME"; exit 1; }
-REAL=$(sha256sum "$TMP/zumoid" | awk '{print $1}')
-[ "$ESPERADO" = "$REAL" ] || { echo "El SHA256 no coincide (esperado $ESPERADO, real $REAL). No se instala."; exit 1; }
-chmod 0755 "$TMP/zumoid"
-timeout 5 "$TMP/zumoid" -version 2>&1 | grep -q "^zumoid " || { echo "El binario descargado no es válido para esta VPS"; exit 1; }
-
-ACTUAL=$(sha256sum /usr/local/bin/zumoid 2>/dev/null | awk '{print $1}')
-if [ "$ACTUAL" = "$ESPERADO" ] && systemctl is-active --quiet zumo-id 2>/dev/null; then
-echo "zumo-id ya está al día"
-exit 0
-fi
-
-systemctl stop zumo-id 2>/dev/null || true
-if ss -ltnH "sport = :7390" 2>/dev/null | grep -q .; then
-echo "El puerto local 7390 está ocupado por otro servicio:"; ss -ltnpH "sport = :7390"; exit 1
-fi
-install -m 0755 "$TMP/zumoid" /usr/local/bin/zumoid
-mkdir -p /etc/zumo
-cat > /etc/systemd/system/zumo-id.service <<'ZIDUNIT'
-[Unit]
-Description=ZUMO - control de dispositivo (Android ID)
-After=network.target ssh.service sshd.service
-
-[Service]
-ExecStart=/usr/local/bin/zumoid serve
-Restart=always
-RestartSec=2
-NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=/etc/zumo
-ProtectHome=true
-PrivateTmp=true
-PrivateDevices=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictAddressFamilies=AF_INET AF_INET6
-RestrictNamespaces=true
-LockPersonality=true
-LimitNOFILE=4096
-MemoryMax=128M
-
-[Install]
-WantedBy=multi-user.target
-ZIDUNIT
-systemctl daemon-reload
-systemctl enable --now zumo-id >/dev/null 2>&1
-sleep 1
-if ! systemctl is-active --quiet zumo-id; then
-echo "zumo-id no quedó activo:"; journalctl -u zumo-id -n 15 --no-pager 2>/dev/null; exit 1
-fi
-echo "zumo-id activo (control de dispositivo)"
-ZUMOIDACT
-
-chmod +x /etc/zumo/activar-zumoid.sh
-if bash /etc/zumo/activar-zumoid.sh; then ok "control de dispositivo instalado"; else echo -e " \e[1;31m✘ No se pudo activar el control de dispositivo (el resto funciona igual). Reintentá con: bash /etc/zumo/activar-zumoid.sh\e[0m"; fi
-
 paso "Descargando panel y librería"
 
 # Librería compartida de operaciones sobre el DB (lock + escritura atómica),
 # usada por el panel de terminal y por el borrador de usuarios temporales.
-LIB_URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/zumo-lib.sh"
+LIB_URL="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}/zumo-lib.sh"
 LIB_TMP=$(mktemp)
 if curl -fsSL "$LIB_URL" -o "$LIB_TMP" && bash -n "$LIB_TMP" 2>/dev/null; then
 install -m 0644 "$LIB_TMP" /etc/zumo/zumo-lib.sh
@@ -1286,7 +1206,7 @@ echo -e " \e[1;31m✘ No se pudo descargar zumo-lib.sh desde el repo.\e[0m"
 exit 1
 fi
 
-PANEL_URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/panel.sh"
+PANEL_URL="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}/panel.sh"
 PANEL_TMP=$(mktemp)
 if curl -fsSL "$PANEL_URL" -o "$PANEL_TMP" && bash -n "$PANEL_TMP" 2>/dev/null; then
 install -m 0755 "$PANEL_TMP" /usr/local/bin/zumo

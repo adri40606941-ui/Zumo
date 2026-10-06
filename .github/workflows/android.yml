@@ -38,9 +38,9 @@ jobs:
           key: zumo-keystore-v1
 
       # Firma fija: si existen los secretos ZUMO_KEYSTORE_B64 y ZUMO_KS_PASS se usan siempre (la
-      # clave nunca se pierde). Si no, se usa la del caché (como antes). Mientras falte el secreto
-      # fijo y exista ZUMO_EXPORT_PASS (lo pone el bot), la clave del caché se exporta cifrada con esa
-      # contraseña para que el bot la guarde como secreto fijo.
+      # clave nunca se pierde). Si no, se usa la del caché (como antes). Si existe
+      # ZUMO_EXPORT_PASS (lo pone el bot un momento), la clave en uso se exporta cifrada con esa
+      # contraseña: para guardarla como secreto fijo o para llevarla a otra VPS.
       - name: Preparar firma
         id: firma
         env:
@@ -68,7 +68,7 @@ jobs:
           echo "ZUMO_KS_PASS=$(cat ks/pass)" >> "$GITHUB_ENV"
           echo "fija=$FIJA" >> "$GITHUB_OUTPUT"
           EXPORTAR=no
-          if [ "$FIJA" = no ] && [ -n "$EXPORT_PASS" ]; then
+          if [ -n "$EXPORT_PASS" ]; then
             mkdir -p clave-export
             tar -C ks -cf - zumo.jks pass | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -pass env:EXPORT_PASS -out clave-export/clave-firma.enc
             EXPORTAR=si
@@ -141,6 +141,14 @@ jobs:
           mkdir -p out
           set -o pipefail
           gradle -p android assembleRelease --no-daemon --stacktrace 2>&1 | tee out/compilacion-completa.log | grep -E "^e: |FAILED|BUILD|error:|Exception" | head -n 150 | tee out/compilacion.log
+
+      # Celulares con páginas de 16 KB (Android 15+): la parte nativa tiene que ir alineada. Solo avisa.
+      - name: Comprobar compatibilidad con páginas de 16 KB
+        if: steps.compilar.outcome == 'success'
+        continue-on-error: true
+        run: |
+          mkdir -p out
+          python3 android/comprobar-16kb.py android/app/build/outputs/apk/release/*.apk 2>&1 | tee out/alineacion-16kb.log
 
       - uses: actions/upload-artifact@v4
         if: steps.compilar.outcome == 'success'
