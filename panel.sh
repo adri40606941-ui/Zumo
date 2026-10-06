@@ -8,7 +8,7 @@ L='\e[38;5;97m━━━━━━━━━━━━━━━━━━━━━━
 # la misma que usa el borrador de temporales. Si falta, se baja del repo.
 ZUMO_LIB=/etc/zumo/zumo-lib.sh
 if [ ! -f "$ZUMO_LIB" ]; then
-	curl -fsSL "https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/zumo-lib.sh" -o "$ZUMO_LIB" 2>/dev/null
+	curl -fsSL "${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}/zumo-lib.sh" -o "$ZUMO_LIB" 2>/dev/null
 fi
 # shellcheck source=/dev/null
 if ! source "$ZUMO_LIB" 2>/dev/null; then

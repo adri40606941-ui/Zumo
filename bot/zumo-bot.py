@@ -24,6 +24,7 @@ import uuid
 from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import centro  # noqa: E402
 import compilar  # noqa: E402
 import marca  # noqa: E402
 import servidores as srv  # noqa: E402
@@ -518,6 +519,7 @@ POR_PAGINA = 20
 MENU = [[("➕ Crear usuario", "crear")],
         [("👥 Usuarios", "lista:0")],
         [("📱 App Android", "app")],
+        [("💾 Respaldo", "resp")],
         [("🪪 Mi ID", "id")]]
 CANCELAR = [[("✖ Cancelar", "menu")]]
 
@@ -540,7 +542,7 @@ def teclado_dias(prefijo):
             [("✖ Cancelar", "menu")]]
 
 
-class Bot:
+class Bot(centro.CentroMixin):
     def __init__(self, tg, admins, gh=None):
         self.tg, self.admins, self.gh = tg, admins, gh
         self.estado = {}      # chat -> {"paso": ..., datos}
@@ -641,7 +643,7 @@ class Bot:
         botones += [[("➕ Agregar servidor", "aadd"), ("📥 Pegar lista", "apegar")],
                     [("🎨 Apariencia de la app", "t")],
                     [("🔨 Compilar y enviarme el APK", "acomp")],
-                    [("🔑 Asegurar clave de firma", "aclave")],
+                    [("💾 Respaldo y clave de firma", "resp") if self.local_activo else ("🔑 Asegurar clave de firma", "aclave")],
                     [("◂ Menú", "menu")]]
         self.mostrar(chat, mid, txt, botones)
 
@@ -680,6 +682,8 @@ class Bot:
         if uid not in self.admins:
             return self.tg.mensaje(chat, f"No autorizado. Tu ID es {uid}: pasáselo al administrador.")
         try:
+            if msg.get("document") and self.documento_resp(chat, msg):
+                return
             if texto.startswith("/"):
                 return self.menu(chat)
             if chat in self.estado:
@@ -713,6 +717,8 @@ class Bot:
         acc, _, arg = d.partition(":")
         if acc == "menu":
             return self.menu(chat, mid)
+        if self.boton_resp(chat, mid, acc):
+            return
         if acc == "lista":
             self.estado.pop(chat, None)
             return self.pantalla_lista(chat, mid, int(arg or 0))
@@ -799,6 +805,11 @@ class Bot:
                                     "[APP 02]\nhost = dominio.com\npuerto = 80\npayload = GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]\n\n"
                                     "⚠️ Reemplaza TODA la lista que tiene el bot ahora.", "a_pegar")
         if acc == "acomp":
+            if self.local_activo:
+                n = len(cargar_app())
+                return self.mostrar(chat, mid, f"🔨 Compilar la app en esta VPS\n{n} servidor(es) de la lista del bot van dentro de la app."
+                                    f"{'' if n else ' (Lista vacía: se usa la que trae el código.)'}\nTarda unos minutos. ¿Compilo?",
+                                    [[("✅ Compilar ahora", "acomp_si"), ("✖ No", "app")]])
             if not self.gh:
                 return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env. Corré de nuevo el instalador del bot para cargarlo.", [[("◂ App Android", "app")]])
             n = len(cargar_app())
@@ -811,6 +822,8 @@ class Bot:
         if acc == "acomp_si":
             return self.compilar_app(chat)
         if acc == "aclave":
+            if self.local_activo:
+                return self.pantalla_resp(chat, mid)
             if not self.gh:
                 return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "app")]])
             return self.mostrar(chat, mid, "🔑 Asegurar la clave de firma\n\nHoy la clave con la que se firma la app vive en un caché de GitHub que se borra si pasan 7 días sin compilar; "
@@ -897,6 +910,8 @@ class Bot:
             self.tg.mensaje(chat, f"✅ Contraseña de {u} cambiada. Los datos para el cliente:")
             self.enviar_datos(chat, u)
             return self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + u, f"u:{u}")], [("◂ Menú", "menu")]])
+        if self.texto_resp(chat, e, paso, t):
+            return
         if paso.startswith("a_"):
             return self.texto_app(chat, e, paso, t)
         if paso.startswith("t_"):
@@ -1012,7 +1027,7 @@ class Bot:
             linea += f"\n⚙️ {actual}"
         return linea + f"\n⏱ {minutos} min"
 
-    def _asegurar_clave(self, chat):
+    def _asegurar_clave(self, chat, solo_traer=False):
         gh = self.gh
         self.tg.mensaje(chat, "🔑 Arrancando…")
         clave = uuid.uuid4().hex + uuid.uuid4().hex
@@ -1027,6 +1042,13 @@ class Bot:
         if cifrado is None:
             return self.tg.mensaje(chat, "✅ La clave ya estaba guardada como secreto fijo en el repo. No hay nada que hacer.", [[("📱 App Android", "app")]])
         jks, ks_pass = compilar.abrir_clave_exportada(cifrado, clave)
+        if solo_traer:
+            if centro.respaldo.clave_firma():
+                os.rename(centro.respaldo.FIRMA, centro.respaldo.FIRMA + ".ant-" + time.strftime("%Y%m%d%H%M%S"))
+            centro.respaldo.guardar_clave_firma(jks, ks_pass)
+            return self.tg.mensaje(chat, "✅ Clave de firma traída de GitHub y guardada en esta VPS. "
+                                         "Ahora podés exportarla (📤) y mandarla a la VPS nueva.",
+                                   [[("📤 Exportar clave", "kexp")], [("◂ Respaldo", "resp")]])
         gh.subir_secreto("ZUMO_KEYSTORE_B64", base64.b64encode(jks).decode())
         gh.subir_secreto("ZUMO_KS_PASS", ks_pass)
         self.tg.mensaje(chat, "✅ Clave de firma guardada como secreto fijo del repo (ZUMO_KEYSTORE_B64 y ZUMO_KS_PASS). "
@@ -1035,9 +1057,11 @@ class Bot:
 
     def _compilar(self, chat, asegurar=False):
         try:
+            if self.local_activo:
+                return self._compilar_local(chat, cargar_app())
             gh = self.gh
             if asegurar:
-                return self._asegurar_clave(chat)
+                return self._asegurar_clave(chat, solo_traer=(asegurar == "traer"))
             lista = cargar_app()
             self.tg.mensaje(chat, "🔨 Arrancando…")
             if lista:
@@ -1478,6 +1502,10 @@ def main():
         gh = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
                              rama=env.get("GITHUB_REF") or "main")
     bot = Bot(Telegram(token), admins, gh)
+    bot.local_activo = env.get("COMPILAR") == "local"
+    bot.leer_env_fn = leer_env
+    centro.ENV = ENV
+    threading.Thread(target=bot.respaldo_diario, daemon=True).start()
     print("zumo-bot: listo, admins:", sorted(admins) or "ninguno (mandá /id al bot)", flush=True)
     offset = 0
     while True:

@@ -3,8 +3,10 @@
 # panel de terminal, librería compartida y limitador (recompilado).
 # No reinstala los protocolos; solo actualiza lo que cambió.
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+# Si se instala/actualiza desde otra dirección (ZUMO_BASE), se recuerda para las próximas veces.
+if [ -n "${ZUMO_BASE:-}" ]; then case "$ZUMO_BASE" in https://*) mkdir -p /etc/zumo; printf '%s' "${ZUMO_BASE%/}" > /etc/zumo/base.url ;; esac; fi
 
-BASE="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+BASE="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
 NC="?nocache=$(date +%s)"
 V='\e[1;38;5;141m'; G='\e[1;32m'; R='\e[1;31m'; N='\e[0m'
 ok()  { echo -e " ${G}✔ $1${N}"; }
