@@ -478,9 +478,8 @@ class Telegram:
 
 # ------------------------------------------------------------------------ menús
 POR_PAGINA = 20
-MENU = [[("➕ Crear usuario", "crear")],
-        [("👥 Usuarios", "lista:0")],
-        [("📱 App Android", "app")],
+MENU = [[("📱 App Android", "app")],
+        [("🔗 Enlazar GitHub", "ghenl")],
         [("💾 Respaldo", "resp")],
         [("🪪 Mi ID", "id")]]
 CANCELAR = [[("✖ Cancelar", "menu")]]
@@ -519,8 +518,7 @@ class Bot(centro.CentroMixin):
 
     def menu(self, chat, mid=None, aviso=""):
         self.estado.pop(chat, None)
-        n = len(usuarios())
-        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + f"🛡 Zumo VPN · {n} usuario(s)\n¿Qué querés hacer?",
+        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + "🛡 Zumo VPN\n¿Qué querés hacer?",
                     MENU)
 
     def pantalla_crear(self, chat, mid):

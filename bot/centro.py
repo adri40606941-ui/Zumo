@@ -75,6 +75,19 @@ class CentroMixin:
         if acc == "resp":
             self.estado.pop(chat, None)
             self.pantalla_resp(chat, mid)
+        elif acc == "ghenl":
+            self.estado.pop(chat, None)
+            gh = getattr(self, "gh", None)
+            if gh:
+                txt = (f"🔗 GitHub enlazado ✅\nRepo: {gh.repo} (rama {gh.rama})\n\n"
+                       "Con esto el bot compila la app en GitHub y puede igualar la clave de firma.")
+                filas = [[("🔐 Cambiar token", "ghtok")], [("🔑 Asegurar clave de firma", "aclave")],
+                         [("💾 Respaldo y clave", "resp")], [("◂ Menú", "menu")]]
+            else:
+                txt = ("🔗 Enlazar GitHub\n\nTodavía no hay token. Hace falta para compilar la app y para igualar la clave de firma.\n"
+                       "Token fine-grained, solo el repo Zumo: Actions (Read and write), Secrets (Read and write), Contents (Read-only).")
+                filas = [[("🔐 Pegar token de GitHub", "ghtok")], [("◂ Menú", "menu")]]
+            self.mostrar(chat, mid, txt, filas)
         elif acc == "rnow":
             self.respaldar(chat, manual=True)
         elif acc == "rpass":
@@ -136,13 +149,13 @@ class CentroMixin:
             self.estado.pop(chat, None)
             t = t.strip()
             if len(t) < 20 or " " in t:
-                self.tg.mensaje(chat, "⚠️ Eso no parece un token de GitHub.", [[("🔐 Reintentar", "ghtok")], [("◂ Respaldo", "resp")]])
+                self.tg.mensaje(chat, "⚠️ Eso no parece un token de GitHub.", [[("🔐 Reintentar", "ghtok")], [("◂ Menú", "menu")]])
                 return True
             fijar_env("GITHUB_TOKEN", t)
             env = self.leer_env_fn() if self.leer_env_fn else {}
             if not env.get("GITHUB_REPO"):
                 fijar_env("GITHUB_REPO", "adri40606941-ui/Zumo")
-            self.tg.mensaje(chat, "✅ Token guardado. Reinicio el bot para que lo tome (unos segundos); después entrá de nuevo a 💾 Respaldo.")
+            self.tg.mensaje(chat, "✅ Token guardado. Reinicio el bot para que lo tome (unos segundos); después entrá a 🔗 Enlazar GitHub.")
             reiniciar_bot()
             return True
         if paso == "r_pass":

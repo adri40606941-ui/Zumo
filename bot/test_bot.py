@@ -112,7 +112,10 @@ class Pruebas(unittest.TestCase):
             self.assertIn("No autorizado", tg.mensajes[-1])
             # cualquier texto abre el menú con botones: ya no hay "Servidor y payload"
             txt("hola")
-            self.assertEqual(tg.datos_botones(), ["crear", "lista:0", "app", "resp", "id"])
+            self.assertEqual(tg.datos_botones(), ["app", "ghenl", "resp", "id"])
+            btn("ghenl"); self.assertIn("ghtok", tg.datos_botones())          # sin token: ofrece pegarlo
+            b.gh = type("GH", (), {"repo": "o/r", "rama": "main"})()
+            btn("ghenl"); self.assertIn("enlazado", tg.mensajes[-1]); self.assertIn("aclave", tg.datos_botones())
             # la lista trae el botón de crear, y la ficha ya no ofrece el .zs
             btn("lista:0"); self.assertEqual(tg.datos_botones()[:2], ["crear", "u:cliente1"])
             btn("u:cliente1")
