@@ -57,9 +57,20 @@ class Pruebas(unittest.TestCase):
     def test_progreso(self):
         self.gradle('echo "> Task :app:x"; sleep 2; D=' + local.SRC + '/android/app/build/outputs/apk/release; mkdir -p $D; echo a > $D/z.apk\n')
         vistos = []
-        r = local.compilar("", progreso=lambda m, t: vistos.append((m, t)), actualizar=False)
+        r = local.compilar("", progreso=lambda m, t, h=0, n=0: vistos.append((m, t, h, n)), actualizar=False)
         self.assertTrue(r["ok"])
         self.assertTrue(vistos)
+
+    def test_porcentaje_con_simulacro(self):
+        D = local.SRC + '/android/app/build/outputs/apk/release'
+        self.gradle('if [[ "$*" == *--dry-run* ]]; then printf ":a SKIPPED\\n:b SKIPPED\\n:c SKIPPED\\n:d SKIPPED\\n"; exit 0; fi\n'
+                    'echo "> Task :a"; echo "> Task :b UP-TO-DATE"; sleep 7; echo "> Task :c"; echo "> Task :d"; '
+                    'mkdir -p ' + D + '; echo a > ' + D + '/z.apk\n')
+        vistos = []
+        r = local.compilar("", progreso=lambda m, t, h=0, n=0: vistos.append((h, n)), actualizar=False)
+        self.assertTrue(r["ok"])
+        self.assertTrue(all(n == 4 for _, n in vistos[1:]), vistos)
+        self.assertTrue(any(0 < h <= 4 for h, _ in vistos), vistos)
 
 
 if __name__ == "__main__":

@@ -217,8 +217,16 @@ class CentroMixin:
         mid = self.tg.mensaje(chat, "🔨 Compilando en esta VPS… 0 min")
         ult = {"txt": ""}
 
-        def progreso(minutos, tarea):
-            txt = f"🔨 Compilando en esta VPS… {minutos} min" + (f"\n⚙️ {tarea}" if tarea else "")
+        def progreso(minutos, tarea, hechas=0, total=0):
+            if total:
+                pct = min(99, int(hechas * 100 / total))
+                barra = "▓" * (pct // 10) + "░" * (10 - pct // 10)
+                txt = f"🔨 Compilando… {barra} {pct}%  (paso {hechas}/{total})"
+            else:
+                txt = "🔨 Compilando…"
+            if tarea:
+                txt += f"\n⚙️ {tarea}"
+            txt += f"\n⏱ {minutos} min"
             if txt != ult["txt"]:
                 ult["txt"] = txt
                 self.tg.editar(chat, mid, txt)
