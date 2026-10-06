@@ -406,29 +406,33 @@ class MainActivity : Activity() {
         cSinCuenta.visibility = if (!hayLista && !tieneCuenta) View.VISIBLE else View.GONE
         cCuenta.visibility = if (hayLista) View.VISIBLE else View.GONE
 
-        val corr = ZumoVpnService.corriendo
         val con = ZumoVpnService.conectado
-        // con la VPN encendida no se cambia de servidor ni de usuario
-        if (etUser.isEnabled == corr) {
-            etUser.isEnabled = !corr; etPass.isEnabled = !corr
-            val a = if (corr) 0.55f else 1f
+        val conectando = ZumoVpnService.conectando && !con
+        val ocupado = con || conectando     // con la VPN encendida o conectando no se cambia servidor/usuario
+        if (etUser.isEnabled == ocupado) {
+            etUser.isEnabled = !ocupado; etPass.isEnabled = !ocupado
+            val a = if (ocupado) 0.55f else 1f
             tvServidor.alpha = a; etUser.alpha = a; etPass.alpha = a
         }
-        tvEstado.text = ZumoVpnService.estado
+        tvEstado.text = if (conectando) "Conectando…" else ZumoVpnService.estado
         val colorEstado = when {
             con -> VERDE
-            corr -> NARANJA
+            conectando -> NARANJA
             else -> ROJO
         }
         tvEstado.setTextColor(colorEstado)
         puntoEstado.background = redondo(colorEstado, 10)
         tvError.text = when {
-            con -> ""
-            corr || ZumoVpnService.estado == "Error" -> ZumoVpnService.ultimoError
+            con || conectando -> ""
+            ZumoVpnService.estado == "Error" -> ZumoVpnService.ultimoError
             else -> ""
         }
-        btn.text = if (corr) "◼  Desconectar" else "▶  Conectar"
-        btn.background = redondo(if (corr) ROJO else VERDE, radio(0.8f))
+        btn.text = when {
+            con -> "◼  Desconectar"
+            conectando -> "⏳  Conectando…  (tocá para cancelar)"
+            else -> "▶  Conectar"
+        }
+        btn.background = redondo(when { con -> ROJO; conectando -> NARANJA; else -> VERDE }, radio(0.8f))
 
         // vencimiento: lo trae el .zs; entrando con usuario y contraseña la app no lo conoce
         cVence.visibility = if (prefs.servidor.isNotBlank()) View.GONE else View.VISIBLE
@@ -462,10 +466,12 @@ class MainActivity : Activity() {
 
     // ---------- acciones ----------
     private fun alternar() {
-        if (ZumoVpnService.corriendo) {
+        // Si está conectado o intentando conectar, el botón corta (cancela el intento).
+        if (ZumoVpnService.corriendo || ZumoVpnService.conectando || ZumoVpnService.conectado) {
             prefs.wanted = false
             ZumoVpnService.detener(this)
-            Registro.add("Desconectado")
+            Registro.add(if (ZumoVpnService.conectado) "Desconectado" else "Conexión cancelada")
+            refrescar()
             return
         }
         ocultarTeclado()
@@ -503,13 +509,13 @@ class MainActivity : Activity() {
     private fun conectarDeVerdad() {
         prefs.wanted = true
         val i = VpnService.prepare(this)
-        if (i != null) startActivityForResult(i, 1) else ZumoVpnService.iniciar(this)
+        if (i != null) startActivityForResult(i, 1) else { ZumoVpnService.iniciar(this); refrescar() }
     }
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
-        if (req == 1 && res == RESULT_OK) ZumoVpnService.iniciar(this)
+        if (req == 1 && res == RESULT_OK) { ZumoVpnService.iniciar(this); refrescar() }
         if (req == 2 && res == RESULT_OK) data?.data?.let { leerArchivo(it) }
     }
 
