@@ -8,9 +8,15 @@ Secrets: write, y Contents: read) vive en /etc/zumo/bot.env y nunca va al repo.
 import base64
 import ctypes
 import ctypes.util
+import io
 import json
+import os
+import subprocess
+import tarfile
+import tempfile
 import time
 import urllib.error
+import zipfile
 import urllib.request
 
 API = "https://api.github.com"
@@ -40,6 +46,30 @@ def sellar(clave_publica_b64, texto):
     if lib.crypto_box_seal(salida, datos, ctypes.c_ulonglong(len(datos)), pk) != 0:
         raise ErrorGitHub("No se pudo cifrar el secreto")
     return base64.b64encode(salida.raw).decode()
+
+
+# ------------------------------------------------------------ clave de firma exportada
+def abrir_clave_exportada(cifrado, contrasena):
+    """Descifra clave-firma.enc (openssl aes-256-cbc -pbkdf2 -iter 200000 de un tar con zumo.jks y pass).
+    Devuelve (keystore_bytes, contraseña_del_keystore)."""
+    with tempfile.TemporaryDirectory() as d:
+        ruta = os.path.join(d, "c.enc")
+        with open(ruta, "wb") as f:
+            f.write(cifrado)
+        r = subprocess.run(["openssl", "enc", "-d", "-aes-256-cbc", "-pbkdf2", "-iter", "200000",
+                            "-pass", "env:ZUMO_EXPORT", "-in", ruta],
+                           capture_output=True, env={**os.environ, "ZUMO_EXPORT": contrasena})
+        if r.returncode != 0:
+            raise ErrorGitHub("No se pudo descifrar la clave exportada.")
+        try:
+            with tarfile.open(fileobj=io.BytesIO(r.stdout)) as t:
+                jks = t.extractfile("zumo.jks").read()
+                clave = t.extractfile("pass").read().decode().strip()
+        except Exception:
+            raise ErrorGitHub("La clave exportada no tiene el formato esperado.") from None
+    if len(jks) < 500 or not clave:
+        raise ErrorGitHub("La clave exportada está vacía.")
+    return jks, clave
 
 
 # --------------------------------------------------------------------------- GitHub
@@ -88,6 +118,38 @@ class GitHub:
         pk = self._pedir("GET", f"/repos/{self.repo}/actions/secrets/public-key")
         self._pedir("PUT", f"/repos/{self.repo}/actions/secrets/{nombre}",
                     {"encrypted_value": sellar(pk["key"], valor), "key_id": pk["key_id"]})
+
+    def borrar_secreto(self, nombre):
+        try:
+            self._pedir("DELETE", f"/repos/{self.repo}/actions/secrets/{nombre}")
+        except ErrorGitHub as e:
+            if "no encontró" not in str(e):
+                raise
+
+    def artefacto(self, nombre, run_id):
+        """Bytes del primer archivo del artefacto 'nombre' de ese run, o None si no existe."""
+        r = self._pedir("GET", f"/repos/{self.repo}/actions/runs/{run_id}/artifacts?name={nombre}")
+        arts = r.get("artifacts") or []
+        if not arts:
+            return None
+
+        class SinRedireccion(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *a, **k):
+                return None
+        req = urllib.request.Request(f"{API}/repos/{self.repo}/actions/artifacts/{arts[0]['id']}/zip",
+                                     headers={"Authorization": "Bearer " + self.token, "User-Agent": "zumo-bot",
+                                              "Accept": "application/vnd.github+json"})
+        try:
+            with urllib.request.build_opener(SinRedireccion).open(req, timeout=60) as resp:
+                zbytes = resp.read()
+        except urllib.error.HTTPError as e:
+            if e.code not in (301, 302, 303, 307, 308) or not e.headers.get("Location"):
+                raise ErrorGitHub(self._explicar(e.code, "")) from None
+            # la URL firmada de descarga no lleva el token de GitHub
+            with urllib.request.urlopen(urllib.request.Request(e.headers["Location"], headers={"User-Agent": "zumo-bot"}), timeout=120) as resp:
+                zbytes = resp.read()
+        with zipfile.ZipFile(io.BytesIO(zbytes)) as z:
+            return z.read(z.namelist()[0])
 
     def ultimo_run(self):
         r = self._pedir("GET", f"/repos/{self.repo}/actions/workflows/{self.workflow}/runs?per_page=1")

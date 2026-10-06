@@ -8,6 +8,7 @@ Configuración: /etc/zumo/bot.env  (BOT_TOKEN, ADMINS, ZS_SECRET)
 Datos del servidor (host, puerto, payload...): /etc/zumo/bot.json (se cambian desde el bot)
 Servidores de la app Android: /etc/zumo/app-servidores.json (y GITHUB_TOKEN / GITHUB_REPO en bot.env para compilar)
 """
+import base64
 import json
 import os
 import re
@@ -353,6 +354,7 @@ class Bot:
         botones = [[(f"{i + 1}. {s['name']}", f"a:{i}")] for i, s in enumerate(l)]
         botones += [[("➕ Agregar servidor", "aadd"), ("📥 Pegar lista", "apegar")],
                     [("🔨 Compilar y enviarme el APK", "acomp")],
+                    [("🔑 Asegurar clave de firma", "aclave")],
                     [("◂ Menú", "menu")]]
         self.mostrar(chat, mid, txt, botones)
 
@@ -466,7 +468,7 @@ class Bot:
             return self.pantalla_lista(chat, mid, 0)
         if acc == "s":
             return self.boton_servidor(chat, mid, arg)
-        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "ap", "ah", "an", "at", "as", "ab", "abs"):
+        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs"):
             return self.boton_app(chat, mid, acc, arg)
 
     def boton_app(self, chat, mid, acc, arg):
@@ -490,6 +492,16 @@ class Bot:
                                 [[("✅ Compilar ahora", "acomp_si"), ("✖ No", "app")]])
         if acc == "acomp_si":
             return self.compilar_app(chat)
+        if acc == "aclave":
+            if not self.gh:
+                return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "app")]])
+            return self.mostrar(chat, mid, "🔑 Asegurar la clave de firma\n\nHoy la clave con la que se firma la app vive en un caché de GitHub que se borra si pasan 7 días sin compilar; "
+                                "si se pierde, los clientes no podrían actualizar la app encima de la anterior.\n\n"
+                                "Esto hace una compilación, saca la clave actual cifrada, la guarda como secreto fijo del repo y borra el rastro. "
+                                "La app no cambia: sigue firmada con la misma clave. Se hace una sola vez.",
+                                [[("✅ Hacerlo ahora", "aclave_si"), ("✖ No", "app")]])
+        if acc == "aclave_si":
+            return self.compilar_app(chat, asegurar=True)
         i = int(arg) if arg.isdigit() else -1
         l = cargar_app()
         if not 0 <= i < len(l):
@@ -656,36 +668,65 @@ class Bot:
         return self.menu(chat)
 
     # -- compilar
-    def compilar_app(self, chat):
+    def compilar_app(self, chat, asegurar=False):
         if not self.compilando.acquire(blocking=False):
             return self.tg.mensaje(chat, "⏳ Ya hay una compilación en curso. Esperá a que termine.")
-        threading.Thread(target=self._compilar, args=(chat,), daemon=True).start()
+        threading.Thread(target=self._compilar, args=(chat, asegurar), daemon=True).start()
 
-    def _compilar(self, chat):
+    def _correr(self, chat):
+        """Lanza el workflow y espera a que termine. Devuelve el run."""
+        gh = self.gh
+        antes = gh.ultimo_run()
+        gh.lanzar()
+        rid = gh.run_nuevo(antes)
+        t0 = time.time()
+        mid = self.tg.mensaje(chat, "⏳ Compilando en GitHub… 0 min")
+        ult = 0
+        while True:
+            r = gh.run(rid)
+            if r.get("status") == "completed":
+                r["id"] = rid
+                return r
+            if time.time() - t0 > 45 * 60:
+                raise compilar.ErrorGitHub("La compilación tardó más de 45 minutos. Revisala en GitHub → Actions.")
+            m = int((time.time() - t0) // 60)
+            if m != ult:
+                ult = m
+                self.tg.editar(chat, mid, f"⏳ Compilando en GitHub… {m} min")
+            time.sleep(15)
+
+    def _asegurar_clave(self, chat):
+        gh = self.gh
+        self.tg.mensaje(chat, "🔑 Arrancando…")
+        clave = uuid.uuid4().hex + uuid.uuid4().hex
+        gh.subir_secreto("ZUMO_EXPORT_PASS", clave)
+        try:
+            r = self._correr(chat)
+            if r.get("conclusion") != "success":
+                raise compilar.ErrorGitHub(f"La compilación falló ({r.get('conclusion')}); no se tocó la clave. {r.get('html_url', '')}")
+            cifrado = gh.artefacto("clave-firma", r["id"])
+        finally:
+            gh.borrar_secreto("ZUMO_EXPORT_PASS")
+        if cifrado is None:
+            return self.tg.mensaje(chat, "✅ La clave ya estaba guardada como secreto fijo en el repo. No hay nada que hacer.", [[("📱 App Android", "app")]])
+        jks, ks_pass = compilar.abrir_clave_exportada(cifrado, clave)
+        gh.subir_secreto("ZUMO_KEYSTORE_B64", base64.b64encode(jks).decode())
+        gh.subir_secreto("ZUMO_KS_PASS", ks_pass)
+        self.tg.mensaje(chat, "✅ Clave de firma guardada como secreto fijo del repo (ZUMO_KEYSTORE_B64 y ZUMO_KS_PASS). "
+                              "La app sigue firmada con la misma clave de siempre. Ya no depende del caché.",
+                        [[("📱 App Android", "app")], [("◂ Menú", "menu")]])
+
+    def _compilar(self, chat, asegurar=False):
         try:
             gh = self.gh
+            if asegurar:
+                return self._asegurar_clave(chat)
             lista = cargar_app()
             self.tg.mensaje(chat, "🔨 Arrancando…")
             if lista:
                 gh.subir_secreto("ZUMO_SERVIDORES", srv.a_texto(lista))
                 self.tg.mensaje(chat, f"🔐 Lista de {len(lista)} servidor(es) subida al repo (cifrada).")
-            antes = gh.ultimo_run()
-            gh.lanzar()
-            rid = gh.run_nuevo(antes)
-            t0 = time.time()
-            mid = self.tg.mensaje(chat, "⏳ Compilando en GitHub… 0 min")
-            ult = 0
-            while True:
-                r = gh.run(rid)
-                if r.get("status") == "completed":
-                    break
-                if time.time() - t0 > 45 * 60:
-                    raise compilar.ErrorGitHub("La compilación tardó más de 45 minutos. Revisala en GitHub → Actions.")
-                m = int((time.time() - t0) // 60)
-                if m != ult:
-                    ult = m
-                    self.tg.editar(chat, mid, f"⏳ Compilando en GitHub… {m} min")
-                time.sleep(15)
+            r = self._correr(chat)
             if r.get("conclusion") == "success":
                 apk = gh.archivo_de_rama("zumo-vpn.apk")
                 n = r.get("run_number", "?")
