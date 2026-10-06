@@ -38,6 +38,8 @@ class FalsaTelegram:
     def responder_cb(self, *a, **k): pass
     def borrar(self, chat, mid): self.borrados.append(mid)
     def documento(self, chat, nombre, datos, leyenda=""): self.docs.append((nombre, datos, leyenda))
+    archivos = {}
+    def descargar(self, file_id): return self.archivos[file_id]
 
     def datos_botones(self):
         return [d for fila in (self.botones[-1] or []) for _, d in fila]
@@ -83,7 +85,7 @@ class Pruebas(unittest.TestCase):
             self.assertIn("No autorizado", tg.mensajes[-1])
             # cualquier texto abre el menú con botones
             txt("hola")
-            self.assertEqual(tg.datos_botones(), ["crear", "lista:0", "srv", "app", "id"])
+            self.assertEqual(tg.datos_botones(), ["crear", "lista:0", "srv", "app", "resp", "id"])
             # sin servidor no se puede crear ni exportar
             btn("crear")
             self.assertIn("Primero definí el servidor", tg.mensajes[-1])
@@ -334,6 +336,80 @@ class Pruebas(unittest.TestCase):
             bot.bash_lib = lambda *a: None
             bot.borrar_usuario("ana")
             self.assertEqual(open(f"{tmp}/disp.db").read(), "beto:bbbbbbbbbbbbbbbb:0:1:1\n")
+
+    def test_respaldo_y_clave_por_botones(self):
+        import shutil
+        import respaldo
+        import centro
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            respaldo.DIR = tmp
+            respaldo.FIRMA = f"{tmp}/firma"
+            centro.ENV = f"{tmp}/bot.env"
+            centro.ULTIMO = f"{tmp}/ultimo"
+            centro.reiniciar_bot = lambda: tg.mensajes.append("REINICIO")
+            b.leer_env_fn = bot.leer_env
+            open(f"{tmp}/bot.env", "w").write("BOT_TOKEN=abc\n")
+            open(f"{tmp}/usuarios.db", "w").write("ana:1:2030-01-01\n")
+            btn("resp"); self.assertIn("rnow", tg.datos_botones()); self.assertIn("falta", tg.mensajes[-1])
+            btn("rnow"); self.assertIn("contraseña del respaldo", tg.mensajes[-1])
+            btn("rpass"); txt("corta"); self.assertIn("Muy corta", tg.mensajes[-1])
+            txt("clave-del-respaldo"); self.assertIn("guardada", tg.mensajes[-1])
+            self.assertIn("RESPALDO_PASS=clave-del-respaldo", open(f"{tmp}/bot.env").read())
+            self.assertEqual(oct(os.stat(f"{tmp}/bot.env").st_mode & 0o777), "0o600")
+            self.assertTrue(tg.borrados)                                  # la contraseña se borra del chat
+            btn("rnow")
+            nombre, blob, _ = tg.docs[-1]
+            self.assertTrue(nombre.startswith("zumo-respaldo-") and nombre.endswith(".enc"))
+            self.assertNotIn(b"BOT_TOKEN", blob)
+            # se pierde todo y se restaura mandando el archivo
+            os.remove(f"{tmp}/usuarios.db")
+            tg.archivos["f1"] = blob
+            btn("rrest")
+            b.manejar({"chat": {"id": 1}, "from": {"id": 7}, "message_id": 9, "document": {"file_id": "f1", "file_size": len(blob)}})
+            txt("mala-clave-xx"); self.assertIn("incorrecta", tg.mensajes[-1])
+            btn("rrest")
+            b.manejar({"chat": {"id": 1}, "from": {"id": 7}, "message_id": 9, "document": {"file_id": "f1", "file_size": len(blob)}})
+            txt("clave-del-respaldo")
+            self.assertEqual(open(f"{tmp}/usuarios.db").read(), "ana:1:2030-01-01\n")
+            self.assertIn("REINICIO", tg.mensajes)
+            # un documento fuera de lugar no se toma
+            b.manejar({"chat": {"id": 1}, "from": {"id": 7}, "message_id": 10, "document": {"file_id": "f1"}})
+            self.assertNotIn("ki_clave", str(b.estado))
+            if shutil.which("keytool"):
+                btn("knew_si"); self.assertTrue(respaldo.clave_firma())
+                btn("kexp"); txt("pass-export-1")
+                enc = tg.docs[-1][1]; self.assertEqual(tg.docs[-1][0], "clave-firma.enc")
+                viejo = open(respaldo.clave_firma()[0], "rb").read()
+                shutil.rmtree(f"{tmp}/firma")
+                tg.archivos["k"] = enc
+                btn("kimp")
+                b.manejar({"chat": {"id": 1}, "from": {"id": 7}, "message_id": 11, "document": {"file_id": "k", "file_size": len(enc)}})
+                txt("pass-export-1")
+                self.assertEqual(open(respaldo.clave_firma()[0], "rb").read(), viejo)
+
+    def test_compilar_en_la_vps(self):
+        import shutil
+        import subprocess
+        import local
+        import respaldo
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            b.local_activo = True
+            respaldo.FIRMA = f"{tmp}/firma"
+            local.SRC = f"{tmp}/src"; local.CONTADOR = f"{tmp}/n"
+            os.makedirs(f"{local.SRC}/android")
+            open(f"{local.SRC}/android/servidores.txt", "w").write("[X]\n")
+            subprocess.run(["git", "-C", local.SRC, "init", "-q"], check=True)
+            respaldo.guardar_clave_firma(b"J" * 600, "pw")
+            open(f"{tmp}/gradle", "w").write("#!/bin/bash\nD=" + local.SRC + "/android/app/build/outputs/apk/release; mkdir -p $D; echo APK > $D/a.apk\n")
+            os.chmod(f"{tmp}/gradle", 0o755); local.GRADLE = f"{tmp}/gradle"
+            local.actualizar_codigo = lambda: ""
+            btn("app"); self.assertIn("resp", tg.datos_botones()); self.assertNotIn("aclave", tg.datos_botones())
+            btn("acomp"); self.assertIn("esta VPS", tg.mensajes[-1])
+            b.compilando.acquire(); b._compilar(1)
+            self.assertEqual(tg.docs[-1][0], "zumo-vpn.apk")
+            self.assertEqual(tg.docs[-1][1], b"APK\n")
 
 
 if __name__ == "__main__":

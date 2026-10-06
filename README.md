@@ -125,6 +125,8 @@ instalado, volvé a correr `bot/instalar-bot.sh`.
 | `main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
 | `android/` | App Android (Zumo VPN). `android/servidores.txt` es la lista de servidores que trae la app. |
 | `zumoid/` / `zumoid-*` / `zumoid.sha256` | Servicio `zumo-id` (control de Android ID): fuente, binarios y hash. |
+| `centro/instalar-centro.sh` | Instalador de la VPS centro (dominio, compilador de la app, bot, respaldo). |
+| `bot/respaldo.py` / `bot/local.py` / `bot/centro.py` | Respaldo y clave de firma, compilación local y sus botones del bot. |
 | `diagnostico.sh` | Chequeos de estado. |
 
 ## Vincular usuario a un celular (Android ID)
@@ -153,6 +155,31 @@ Límites a tener en cuenta:
 - Solo funciona en las VPS donde actualizaste el panel (`actualizar.sh`) y
   el bot solo ve el `/etc/zumo` de su propia VPS.
 - Reconstruir los binarios: `bash zumoid/build.sh`.
+
+## VPS centro (compilar la app, bot y respaldo sin depender de GitHub)
+
+Una VPS vacía (Ubuntu 22.04/24.04, 2 vCPU, 4 GB de RAM, 20 GB de disco o más) puede quedar
+como "centro": publica los instaladores con tu dominio, compila la app Android y corre el bot.
+
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/centro/instalar-centro.sh)
+```
+
+Pregunta el dominio, el token del bot, tu ID de Telegram y una contraseña de respaldo.
+
+- **Dominio (Cloudflare):** antes, creá un registro A del subdominio hacia la IP de la VPS en
+  **Solo DNS** (nube gris). Cuando ya salió el HTTPS podés activar el proxy (modo SSL: Full).
+- **Instalaciones y actualizaciones desde el dominio:** el instalador imprime los comandos con
+  `ZUMO_BASE=https://dominio/<código>`. La dirección lleva un código secreto: no la compartas.
+  La VPS que se instala o actualiza así recuerda la dirección (`/etc/zumo/base.url`) y sigue
+  usándola. El centro actualiza lo publicado cada hora desde GitHub (`zumo-publicar`).
+- **Compilar la app:** botón "📱 App Android → Compilar" del bot; se compila en la VPS con la
+  clave de `/etc/zumo/firma/`. Para que la app no cambie de firma, traé la clave que ya usás:
+  en el bot de la VPS vieja, "💾 Respaldo → ☁️ Traer la clave de GitHub" y "📤 Exportar clave";
+  en el bot del centro, "📥 Importar clave de firma".
+- **Respaldo:** "💾 Respaldo" manda a Telegram un archivo cifrado (AES-256, tu contraseña) con
+  `/etc/zumo` (bot, clave de firma, usuarios, servidores). Se envía solo una vez por día. Para
+  recuperarte: instalá el centro en otra VPS, "♻️ Restaurar" y mandá el archivo.
 
 ## Quitar el panel web de una VPS
 

@@ -113,6 +113,8 @@ paso "Instalando WebSocket / PDirect (puerto 80)"
 cat > /etc/zumo/activar-pdirect.sh <<'ZUMOPDIRECTACT'
 #!/bin/bash
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+# Si se instala desde otra dirección (ZUMO_BASE), se recuerda para actualizar después.
+if [ -n "${ZUMO_BASE:-}" ]; then case "$ZUMO_BASE" in https://*) mkdir -p /etc/zumo; printf '%s' "${ZUMO_BASE%/}" > /etc/zumo/base.url ;; esac; fi
 export DEBIAN_FRONTEND=noninteractive
 WORK=$(mktemp -d)
 
@@ -876,7 +878,7 @@ ok "desactivador de BadVPN instalado"
 paso "Compilando limitador de conexiones (gcc)"
 
 LIMWORK=$(mktemp -d)
-ZUMO_RAW="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+ZUMO_RAW="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
 if ! curl -fsSL "$ZUMO_RAW/zumo-limit.c" -o "$LIMWORK/zumo-limit.c" || [ ! -s "$LIMWORK/zumo-limit.c" ]; then
 echo -e " \e[1;31m✘ No se pudo descargar zumo-limit.c desde el repo.\e[0m"
 rm -rf "$LIMWORK"
@@ -948,7 +950,7 @@ PUERTO="${1:-8880}"
 case "$PUERTO" in ''|*[!0-9]*) echo "Puerto inválido: $PUERTO"; exit 1 ;; esac
 PUERTO=$((10#$PUERTO))
 if [ "$PUERTO" -lt 1 ] || [ "$PUERTO" -gt 65535 ]; then echo "El puerto debe estar entre 1 y 65535"; exit 1; fi
-BASE="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+BASE="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
 
 __oculto() {
 local msg="$1"; shift
@@ -1039,7 +1041,7 @@ case "$PUERTO" in ''|*[!0-9]*) echo "Puerto inválido: $PUERTO"; exit 1 ;; esac
 PUERTO=$((10#$PUERTO))
 if [ "$PUERTO" -lt 1 ] || [ "$PUERTO" -gt 65535 ]; then echo "El puerto debe estar entre 1 y 65535"; exit 1; fi
 [ "$PUERTO" -eq "$INTERNO" ] && INTERNO=18023
-ZUMO="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+ZUMO="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
 
 case "$(uname -m)" in
 x86_64|amd64) ARCH=amd64 ;;
@@ -1200,7 +1202,7 @@ cat > /etc/zumo/activar-zumoid.sh <<'ZUMOIDACT'
 # Es seguro correrlo más de una vez: si ya está al día no toca nada.
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
-ZUMO="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+ZUMO="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
 case "$(uname -m)" in
 x86_64|amd64) ARCH=amd64 ;;
 aarch64|arm64) ARCH=arm64 ;;
@@ -1275,7 +1277,7 @@ paso "Descargando panel y librería"
 
 # Librería compartida de operaciones sobre el DB (lock + escritura atómica),
 # usada por el panel de terminal y por el borrador de usuarios temporales.
-LIB_URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/zumo-lib.sh"
+LIB_URL="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}/zumo-lib.sh"
 LIB_TMP=$(mktemp)
 if curl -fsSL "$LIB_URL" -o "$LIB_TMP" && bash -n "$LIB_TMP" 2>/dev/null; then
 install -m 0644 "$LIB_TMP" /etc/zumo/zumo-lib.sh
@@ -1286,7 +1288,7 @@ echo -e " \e[1;31m✘ No se pudo descargar zumo-lib.sh desde el repo.\e[0m"
 exit 1
 fi
 
-PANEL_URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/panel.sh"
+PANEL_URL="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}/panel.sh"
 PANEL_TMP=$(mktemp)
 if curl -fsSL "$PANEL_URL" -o "$PANEL_TMP" && bash -n "$PANEL_TMP" 2>/dev/null; then
 install -m 0755 "$PANEL_TMP" /usr/local/bin/zumo

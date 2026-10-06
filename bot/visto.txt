@@ -1,0 +1,1 @@
+vc=2 ks=/tmp/tmp2c_ds1h4/firma/zumo.jks pw=pw123

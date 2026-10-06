@@ -2,7 +2,7 @@
 # Actualiza el panel "zumo" (/usr/local/bin/zumo) con la última versión de panel.sh del repo.
 [ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
 
-URL="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/panel.sh?nocache=$(date +%s)"
+URL="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}/panel.sh?nocache=$(date +%s)"
 TMP=$(mktemp)
 
 echo "Descargando panel.sh..."
