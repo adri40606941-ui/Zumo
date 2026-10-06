@@ -714,6 +714,8 @@ __oculto "[2/3] Compilando PDirect-C" _pdirect_build || exit 1
 
 echo "[3/3] Instalando y activando..."
 systemctl stop pdirect-80 2>/dev/null || true
+# Zumo Go usa el mismo puerto 80: si está prendido, se apaga (no pueden convivir).
+systemctl disable --now zumo-go-80 2>/dev/null || true
 install -m 0755 "$WORK/pdirect-c" /usr/local/bin/pdirect-c
 
 cat > /etc/systemd/system/pdirect-80.service <<'U1'
@@ -777,6 +779,93 @@ DESPDEOF
 
 chmod +x /etc/zumo/desactivar-pdirect.sh
 ok "desactivador de PDirect instalado"
+
+paso "Instalando Zumo Go (alternativa a PDirect en el 80)"
+
+# Zumo Go: mismo rol que PDirect (80 -> SSH, respuesta 101, mismo banner) pero en Go.
+# Baja un binario ya compilado del repo (no necesita Go en la VPS) y comparte el
+# archivo de banner /etc/zumo/pdirect.env con PDirect. Los dos usan el puerto 80, así
+# que activar uno apaga el otro.
+cat > /etc/zumo/activar-zumo-go.sh <<'ZUMOGOACT'
+#!/bin/bash
+[ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+BASE="https://raw.githubusercontent.com/adri40606941-ui/Zumo/main"
+
+# Banner/color opcionales (los pasa el panel), se guardan en el MISMO env que PDirect.
+A_BANNER="${1:-}"; A_COLOR="${2:-}"
+if [ -n "$A_BANNER" ] || [ -n "$A_COLOR" ]; then
+_pf() { [ -f /etc/zumo/pdirect.env ] && grep -m1 "^$1=" /etc/zumo/pdirect.env | cut -d= -f2-; }
+F_BANNER="${A_BANNER:-$(_pf PDIRECT_BANNER)}"
+F_COLOR="${A_COLOR:-$(_pf PDIRECT_COLOR)}"
+F_MODO="$(_pf PDIRECT_MODE)"
+mkdir -p /etc/zumo
+{
+[ -n "$F_BANNER" ] && echo "PDIRECT_BANNER=$F_BANNER"
+[ -n "$F_COLOR" ] && echo "PDIRECT_COLOR=$F_COLOR"
+[ -n "$F_MODO" ] && echo "PDIRECT_MODE=$F_MODO"
+} > /etc/zumo/pdirect.env
+chmod 644 /etc/zumo/pdirect.env
+fi
+
+case "$(uname -m)" in
+x86_64|amd64) ARCH=amd64 ;;
+aarch64|arm64) ARCH=arm64 ;;
+*) echo "Arquitectura no soportada: $(uname -m)"; exit 1 ;;
+esac
+
+TMP=$(mktemp)
+if ! curl -fsSL "$BASE/zumo-go-$ARCH" -o "$TMP" || [ ! -s "$TMP" ]; then
+echo "No se pudo descargar zumo-go-$ARCH del repo"; rm -f "$TMP"; exit 1
+fi
+chmod +x "$TMP"
+# Liberar el puerto 80: Zumo Go y PDirect no pueden convivir.
+systemctl disable --now pdirect-80 2>/dev/null
+systemctl stop zumo-go-80 2>/dev/null
+install -m 0755 "$TMP" /usr/local/bin/zumo-go
+rm -f "$TMP"
+
+cat > /etc/systemd/system/zumo-go-80.service <<'U3'
+[Unit]
+Description=ZUMO - Zumo Go (WebSocket 80 -> SSH)
+After=network.target
+[Service]
+EnvironmentFile=-/etc/zumo/pdirect.env
+ExecStart=/usr/local/bin/zumo-go 22 80 101
+Restart=always
+RestartSec=2
+DynamicUser=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+LimitNOFILE=65536
+TasksMax=1024
+MemoryMax=256M
+[Install]
+WantedBy=multi-user.target
+U3
+
+systemctl daemon-reload
+systemctl enable --now zumo-go-80
+sleep 1
+systemctl is-active --quiet zumo-go-80
+ZUMOGOACT
+
+chmod +x /etc/zumo/activar-zumo-go.sh
+ok "Zumo Go instalado"
+
+cat > /etc/zumo/desactivar-zumo-go.sh <<'DESGOEOF'
+#!/bin/bash
+systemctl disable --now zumo-go-80 2>/dev/null
+while read -r pid; do
+[ -z "$pid" ] && continue
+[ "$(ps -o comm= -p "$pid" 2>/dev/null)" = "zumo-go" ] && kill -9 "$pid" 2>/dev/null
+done < <(ss -ltnpH "sport = :80" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+rm -f /etc/systemd/system/zumo-go-80.service
+systemctl daemon-reload
+systemctl reset-failed zumo-go-80 2>/dev/null
+DESGOEOF
+
+chmod +x /etc/zumo/desactivar-zumo-go.sh
+ok "desactivador de Zumo Go instalado"
 
 paso "Instalando BadVPN (UDP 7300)"
 
