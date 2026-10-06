@@ -34,6 +34,7 @@ class ZumoVpnService : VpnService() {
 
         @Volatile var estado: String = "Desconectado"
         @Volatile var conectado: Boolean = false
+        @Volatile var conectando: Boolean = false     // intentando conectar (antes de lograrlo)
         @Volatile var ultimoError: String = ""
         @Volatile var corriendo: Boolean = false
         @Volatile var desde: Long = 0L
@@ -52,11 +53,15 @@ class ZumoVpnService : VpnService() {
         }
 
         fun iniciar(ctx: Context) {
+            // Estado inmediato: la pantalla muestra "Conectando…" apenas se toca, sin esperar al servicio.
+            conectando = true; conectado = false; corriendo = true; estado = "Conectando..."; ultimoError = ""
             val i = Intent(ctx, ZumoVpnService::class.java).setAction(ACTION_START)
             if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
         }
 
         fun detener(ctx: Context) {
+            // Corte inmediato en pantalla; el servicio termina de apagar en segundo plano.
+            conectando = false; conectado = false; corriendo = false; estado = "Desconectado"
             ctx.startService(Intent(ctx, ZumoVpnService::class.java).setAction(ACTION_STOP))
         }
     }
@@ -110,13 +115,13 @@ class ZumoVpnService : VpnService() {
         if (cfg == null || !cfg.valida() || user.isBlank() || pass.isBlank()) {
             ultimoError = "Falta la cuenta: elegí un servidor y poné tu usuario y contraseña, o abrí tu archivo .zs."
             Registro.add("✘ $ultimoError")
-            estado = "Error"; prefs.wanted = false
+            estado = "Error"; conectando = false; corriendo = false; prefs.wanted = false
             stopSelf(); return
         }
         if (Perfil.vencida(prefs.exp)) {
             ultimoError = "Tu cuenta venció el ${Perfil.fechaLinda(prefs.exp)}. Pedí la renovación."
             Registro.add("✘ $ultimoError")
-            estado = "Error"; prefs.wanted = false
+            estado = "Error"; conectando = false; corriendo = false; prefs.wanted = false
             stopSelf(); return
         }
         Registro.add("Iniciando…")
@@ -242,7 +247,7 @@ class ZumoVpnService : VpnService() {
             estado = "Conectando..."; conectado = false; actualizarNoti()
             t.connect()
             tunel = t
-            estado = "Conectado"; conectado = true; ultimoError = ""; actualizarNoti()
+            estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; actualizarNoti()
             Registro.add("✔ Conectado")
             while (activo && t.conectado) Thread.sleep(1000)
             if (activo) detenerPorError("Se perdió la conexión. Tocá Conectar para volver a conectar.")
@@ -306,7 +311,7 @@ class ZumoVpnService : VpnService() {
     }
 
     private fun apagar() {
-        activo = false; corriendo = false; conectado = false; estado = "Desconectado"
+        activo = false; corriendo = false; conectado = false; conectando = false; estado = "Desconectado"
         try { (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(cb!!) } catch (_: Exception) {}
         cb = null
         hilo?.interrupt(); hilo = null
