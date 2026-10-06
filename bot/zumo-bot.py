@@ -680,8 +680,8 @@ class Bot:
         gh.lanzar()
         rid = gh.run_nuevo(antes)
         t0 = time.time()
-        mid = self.tg.mensaje(chat, "⏳ Compilando en GitHub… 0 min")
-        ult = 0
+        mid = self.tg.mensaje(chat, "⏳ En cola en GitHub…")
+        ult = ""
         while True:
             r = gh.run(rid)
             if r.get("status") == "completed":
@@ -690,10 +690,30 @@ class Bot:
             if time.time() - t0 > 45 * 60:
                 raise compilar.ErrorGitHub("La compilación tardó más de 45 minutos. Revisala en GitHub → Actions.")
             m = int((time.time() - t0) // 60)
-            if m != ult:
-                ult = m
-                self.tg.editar(chat, mid, f"⏳ Compilando en GitHub… {m} min")
+            done = total = 0
+            actual = None
+            try:
+                done, total, actual = gh.pasos(rid)
+            except Exception:
+                pass
+            txt = self._barra_compilacion(r.get("status"), done, total, actual, m)
+            if txt != ult:
+                ult = txt
+                self.tg.editar(chat, mid, txt)
             time.sleep(15)
+
+    @staticmethod
+    def _barra_compilacion(status, done, total, actual, minutos):
+        """Texto con barra y % según los pasos ya completados del build."""
+        if status == "queued" or total == 0:
+            return f"⏳ En cola en GitHub… {minutos} min"
+        pct = int(done * 100 / total)
+        llenos = pct // 10
+        barra = "▓" * llenos + "░" * (10 - llenos)
+        linea = f"🔨 Compilando… {barra} {pct}%  (paso {done}/{total})"
+        if actual:
+            linea += f"\n⚙️ {actual}"
+        return linea + f"\n⏱ {minutos} min"
 
     def _asegurar_clave(self, chat):
         gh = self.gh

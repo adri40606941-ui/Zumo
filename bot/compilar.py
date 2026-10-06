@@ -174,5 +174,20 @@ class GitHub:
     def run(self, run_id):
         return self._pedir("GET", f"/repos/{self.repo}/actions/runs/{run_id}")
 
+    def pasos(self, run_id):
+        """Progreso real del build por pasos: (completados, total, nombre_del_paso_actual).
+        Devuelve (0, 0, None) si GitHub todavía no publicó los pasos (en cola)."""
+        r = self._pedir("GET", f"/repos/{self.repo}/actions/runs/{run_id}/jobs")
+        total = done = 0
+        actual = None
+        for job in r.get("jobs", []):
+            for s in job.get("steps", []):
+                total += 1
+                if s.get("status") == "completed":
+                    done += 1
+                elif s.get("status") == "in_progress" and actual is None:
+                    actual = s.get("name")
+        return done, total, actual
+
     def archivo_de_rama(self, ruta, rama=None):
         return self._pedir("GET", f"/repos/{self.repo}/contents/{ruta}?ref={rama or self.rama_apk}", raw=True, timeout=180)
