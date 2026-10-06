@@ -21,7 +21,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import centro  # noqa: E402
@@ -39,7 +39,6 @@ DB = os.environ.get("ZUMO_DB", "/etc/zumo/usuarios.db")
 CLAVES = os.environ.get("ZUMO_CLAVES", "/etc/zumo/claves.db")
 LIB = os.environ.get("ZUMO_LIB", "/etc/zumo/zumo-lib.sh")
 LIMCONF = os.environ.get("ZUMO_LIMCONF", "/etc/zumo/limit.conf")
-ZUMOID = os.environ.get("ZUMO_ZUMOID", "/usr/local/bin/zumoid")  # control de dispositivo (Android ID)
 PASSWD = os.environ.get("ZUMO_PASSWD", "/etc/passwd")
 TEMPDB = os.environ.get("ZUMO_TEMPDB", "/etc/zumo/temporales.db")
 BORRADOR = os.environ.get("ZUMO_BORRADOR", "/etc/zumo/borrar-temporal.sh")
@@ -265,7 +264,6 @@ u="$1"
 pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 if command -v zumo_db_del >/dev/null 2>&1; then zumo_db_del "$u"; else sed -i "/^$u:/d" /etc/zumo/usuarios.db 2>/dev/null; fi
-command -v zumo_disp_forget >/dev/null 2>&1 && zumo_disp_forget "$u"
 if [ -f /etc/zumo/temporales.db ]; then grep -v "^$u:" /etc/zumo/temporales.db > /etc/zumo/temporales.db.tmp 2>/dev/null && mv /etc/zumo/temporales.db.tmp /etc/zumo/temporales.db; fi
 exit 0
 """
@@ -370,46 +368,10 @@ def mensaje_cliente(u):
             f"🔌 {'1 dispositivo' if n == 1 else f'{n} dispositivos'}\n📄 {banner_pdirect()}")
 
 
-# ------------------------------------------------------------ dispositivo (Android ID)
-def zid(*args):
-    """Llama a zumoid (el servicio que guarda el Android ID de cada usuario). None si no está instalado."""
-    if not os.access(ZUMOID, os.X_OK):
-        return None
-    try:
-        return subprocess.run([ZUMOID, *args], capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-
-
-def disp_get(u):
-    """{'id', 'lock', 'last'} del celular del usuario, o None si todavía no mandó su ID."""
-    r = zid("get", u)
-    if not r or r.returncode != 0 or not r.stdout.strip():
-        return None
-    p = r.stdout.rstrip("\n").split("\t")
-    if len(p) < 4:
-        return None
-    return {"id": p[0], "lock": p[1] == "1", "last": int(p[3] or 0)}
-
-
-def disp_ultimo(u):
-    """Último evento bloqueado: {'epoch', 'evento', 'id'} o None."""
-    r = zid("last", u)
-    if not r or r.returncode != 0:
-        return None
-    p = r.stdout.rstrip("\n").split("\t")
-    return {"epoch": int(p[0] or 0), "evento": p[1], "id": p[2]} if len(p) >= 3 else None
-
-
-def fecha_corta(epoch):
-    return datetime.fromtimestamp(epoch).strftime("%d/%m %H:%M")
-
-
 def borrar_usuario(u):
     run("pkill", "-9", "-u", u)
     run("userdel", u)
     bash_lib("zumo_db_del", u)
-    zid("forget", u)
     clave_borrar(u)
     run("systemctl", "stop", f"zumo-temp-{u}.timer")
     temp_quitar(u)
@@ -625,19 +587,6 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
         if fila:
             botones.append(fila)
         botones.append([("🔢 Límite", f"l:{u}"), ("🗑 Borrar", f"b:{u}")])
-        d = disp_get(u)
-        if d:
-            txt += f"\n\n📱 Android ID: {d['id']}\n" + ("🔒 Vinculado: solo ese celular puede entrar" if d["lock"] else "🔓 Sin vincular: entra desde cualquier celular")
-            txt += f"\nÚltimo ingreso: {fecha_corta(d['last'])}"
-            ult = disp_ultimo(u)
-            if ult and ult["evento"] == "otro-dispositivo":
-                txt += f"\n⚠️ Intento bloqueado: otro celular ({ult['id']}) el {fecha_corta(ult['epoch'])}"
-            elif ult and ult["evento"] == "sin-verificar":
-                txt += f"\n⚠️ Sesión cortada: entró sin mandar el ID (app vieja u otra app) el {fecha_corta(ult['epoch'])}"
-            botones.append([("🔓 Desvincular celular" if d["lock"] else "🔒 Vincular a este celular", f"dv:{u}"),
-                            ("🗑 Olvidar celular", f"dx:{u}")])
-        elif zid("get", u) is not None:
-            txt += "\n\n📱 Android ID: todavía no conectó con la app nueva"
         botones.append([("◂ Usuarios", "lista:0")])
         self.mostrar(chat, mid, txt, botones)
 
@@ -759,20 +708,6 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
             if arg not in usuarios():
                 return self.menu(chat, mid, "Ese usuario ya no existe.")
             return self.enviar_datos(chat, arg)
-        if acc == "dv":      # vincular / desvincular al celular
-            d = disp_get(arg)
-            if not d:
-                return self.pantalla_usuario(chat, mid, arg)
-            r = zid("unlock" if d["lock"] else "lock", arg)
-            if r is not None and r.returncode != 0:
-                self.tg.mensaje(chat, "⚠️ " + (r.stderr.strip() or "No se pudo cambiar"))
-            return self.pantalla_usuario(chat, mid, arg)
-        if acc == "dx":
-            return self.mostrar(chat, mid, f"🗑 ¿Olvidar el celular de {arg}?\nSe desvincula y se anota el próximo que conecte con ese usuario.",
-                                [[("✅ Sí, olvidar", f"dxs:{arg}"), ("✖ No", f"u:{arg}")]])
-        if acc == "dxs":
-            zid("forget", arg)
-            return self.pantalla_usuario(chat, mid, arg)
         if acc == "r":
             return self.mostrar(chat, mid, f"🔄 Renovar {arg}\n¿Por cuántos días desde hoy?", teclado_dias(f"rd:{arg}"))
         if acc == "rd":
