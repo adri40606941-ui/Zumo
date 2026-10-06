@@ -8,6 +8,19 @@ if [ -n "${ZUMO_BASE:-}" ]; then case "$ZUMO_BASE" in https://*) mkdir -p /etc/z
 
 BASE="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
 NC="?nocache=$(date +%s)"
+
+# Comando "zumo-actualizar": actualiza esta VPS desde la misma dirección de donde se instaló.
+cat > /usr/local/bin/zumo-actualizar <<'ZACT'
+#!/bin/bash
+[ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+B="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
+T=$(mktemp) || exit 1
+if ! curl -fsSL "$B/actualizar.sh?nocache=$(date +%s)" -o "$T" || ! bash -n "$T" 2>/dev/null; then
+	echo "No se pudo bajar actualizar.sh desde $B"; rm -f "$T"; exit 1
+fi
+bash "$T"; r=$?; rm -f "$T"; exit $r
+ZACT
+chmod 755 /usr/local/bin/zumo-actualizar
 V='\e[1;38;5;141m'; G='\e[1;32m'; R='\e[1;31m'; N='\e[0m'
 ok()  { echo -e " ${G}✔ $1${N}"; }
 err() { echo -e " ${R}✘ $1${N}"; }

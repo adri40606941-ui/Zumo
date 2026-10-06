@@ -190,6 +190,11 @@ Pregunta el dominio, el token del bot, tu ID de Telegram y una contraseña de re
   `bash <(curl -fsSL https://dominio/<código>/install.sh)`: los scripts publicados ya traen esa dirección como origen, no hace falta `ZUMO_BASE=`. La dirección lleva un código secreto: no la compartas.
   La VPS que se instala o actualiza así recuerda la dirección (`/etc/zumo/base.url`) y sigue
   usándola. El centro actualiza lo publicado cada hora desde GitHub (`zumo-publicar`).
+- **Actualizar una VPS:** en cada VPS con el panel alcanza con escribir `zumo-actualizar`. Baja
+  `actualizar.sh` de la misma dirección de donde se instaló (el dominio del centro, o GitHub en las
+  VPS viejas). En una VPS que todavía no tiene ese comando, la primera vez corré
+  `bash <(curl -fsSL "$(cat /etc/zumo/base.url)/actualizar.sh")` (o, si no tiene `base.url`, el
+  instalador de GitHub); desde ahí ya queda el comando.
 - **Instalar una VPS nueva con un código de un solo uso:** en el bot del centro, botón
   "🖥 Instalar VPS nueva". Cada toque da un comando `bash <(curl -fsSL https://dominio/i/<código>/install.sh)`
   con un código aleatorio que sirve una sola vez y vence a los 15 minutos; al usarse el bot te avisa
