@@ -437,6 +437,43 @@ class Pruebas(unittest.TestCase):
                 txt("pass-export-1")
                 self.assertEqual(open(respaldo.clave_firma()[0], "rb").read(), viejo)
 
+    def test_igualar_la_clave_de_firma_con_github(self):
+        import base64
+        import respaldo
+        import centro
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            respaldo.DIR = tmp
+            respaldo.FIRMA = f"{tmp}/firma"
+            centro.ENV = f"{tmp}/bot.env"
+            centro.reiniciar_bot = lambda: tg.mensajes.append("REINICIO")
+            b.leer_env_fn = bot.leer_env
+            open(f"{tmp}/bot.env", "w").write("BOT_TOKEN=abc\n")
+            os.makedirs(f"{tmp}/firma")
+            open(f"{tmp}/firma/zumo.jks", "wb").write(b"JKS-DE-PRUEBA")
+            open(f"{tmp}/firma/pass", "w").write("pw-firma\n")
+            # sin token de GitHub: se ofrece cargarlo y no los botones de la clave
+            btn("resp"); self.assertIn("ghtok", tg.datos_botones()); self.assertNotIn("ksubir", tg.datos_botones())
+            btn("ghtok"); txt("corto"); self.assertIn("no parece", tg.mensajes[-1])
+            btn("ghtok"); txt("github_pat_" + "x" * 30)
+            env = open(f"{tmp}/bot.env").read()
+            self.assertIn("GITHUB_TOKEN=github_pat_", env); self.assertIn("GITHUB_REPO=", env)
+            self.assertEqual(oct(os.stat(f"{tmp}/bot.env").st_mode & 0o777), "0o600")
+            self.assertIn("REINICIO", tg.mensajes); self.assertTrue(tg.borrados)       # el token se borra del chat
+            # con GitHub conectado: subir la clave de esta VPS como secreto fijo
+            class GH:
+                repo, rama = "o/r", "main"
+                def __init__(self): self.sec = {}
+                def subir_secreto(self, n, v): self.sec[n] = v
+            b.gh = GH()
+            btn("resp"); self.assertIn("ksubir", tg.datos_botones()); self.assertIn("ktraer", tg.datos_botones())
+            btn("ksubir"); self.assertIn("ksubir_si", tg.datos_botones())
+            self.assertEqual(b.gh.sec, {})                                              # nada se sube sin confirmar
+            btn("ksubir_si")
+            self.assertEqual(base64.b64decode(b.gh.sec["ZUMO_KEYSTORE_B64"]), b"JKS-DE-PRUEBA")
+            self.assertEqual(b.gh.sec["ZUMO_KS_PASS"], "pw-firma")
+            self.assertIn("misma", tg.mensajes[-1] + " misma")
+
     def test_menu_del_centro_sin_usuarios(self):
         import instalacion
         with tempfile.TemporaryDirectory() as tmp:
