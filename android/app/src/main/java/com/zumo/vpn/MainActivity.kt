@@ -206,9 +206,8 @@ class MainActivity : Activity() {
         }
         root.addView(col)
 
-        // encabezado: título centrado + botón de menú (☰) en la esquina
+        // encabezado: título centrado
         val filaCab = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val espaciador = View(this).apply { layoutParams = LinearLayout.LayoutParams(dp(44), dp(1)) }
         val cab = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -233,13 +232,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
         })
-        val btnMenu = TextView(this).apply {
-            text = "☰"; textSize = 20f; setTextColor(ACENTO); gravity = Gravity.CENTER
-            background = redondo(conOpacidad(CARD), radio(0.7f), trazo = 1)
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
-            setOnClickListener { abrirMenu() }
-        }
-        filaCab.addView(espaciador); filaCab.addView(cab); filaCab.addView(btnMenu)
+        filaCab.addView(cab)
         col.addView(filaCab)
 
         // app sin servidores adentro y sin cuenta cargada: solo se pide abrir el .zs
@@ -389,34 +382,6 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility = barras
     }
 
-    /** Menú ☰: botones de contacto del tema, importar una cuenta nueva (renovación) y la guía de batería. */
-    private fun abrirMenu() {
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-
-        if (tema.enlaces.isNotEmpty()) {
-            val cContacto = tarjeta()
-            seccion(cContacto, "💬", "Contacto")
-            for (e in tema.enlaces) cContacto.addView(botonSecundario(e.texto) { abrirEnlace(e.url) })
-            col.addView(cContacto)
-        }
-
-        if (tema.verImportar) {
-            val cCuenta = tarjeta()
-            seccion(cCuenta, "📥", "Cuenta")
-            cCuenta.addView(texto("¿Te mandaron un archivo .zs nuevo (renovación u otra cuenta)? Importalo acá.", 13f, TEXTO_SUAVE))
-            cCuenta.addView(botonSecundario("📂  Importar archivo .zs") { elegirArchivo() })
-            col.addView(cCuenta)
-        }
-
-        val cEst = tarjeta()
-        seccion(cEst, "⚙️", "Evitar desconexiones")
-        cEst.addView(botonSecundario("🔋  Guía para evitar cortes de batería", NARANJA) { guiaBateria() })
-        col.addView(cEst)
-
-        val sv = ScrollView(this).apply { addView(col) }
-        dialogo("Configuración", sv).setPositiveButton("Cerrar", null).mostrar()
-    }
-
     private fun refrescar() {
         val tieneCuenta = prefs.config?.valida() == true && prefs.user.isNotBlank()
         val hayLista = servidores.isNotEmpty()
@@ -530,19 +495,44 @@ class MainActivity : Activity() {
         if (req == 2 && res == RESULT_OK) data?.data?.let { leerArchivo(it) }
     }
 
-    /** Abre la pantalla de DNS privado para que el usuario lo ponga en "Desactivado".
-     *  Android no deja que una app lo apague sola (es un ajuste protegido del sistema). */
-    private fun abrirDnsPrivado() {
-        aviso("Poné el DNS privado en \"Desactivado\" / \"Off\" y volvé a la app")
-        val intentos = listOf(
-            Intent("android.settings.PRIVATE_DNS_SETTINGS"),
-            Intent(Settings.ACTION_WIRELESS_SETTINGS),
-            Intent(Settings.ACTION_SETTINGS)
-        )
-        for (i in intentos) {
-            try { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(i); return } catch (_: Exception) {}
+    /** Ruta a mano hasta "DNS privado" según la marca del teléfono (cada fabricante lo guarda en otro lado). */
+    private fun rutaDnsPrivado(): String {
+        val m = Build.MANUFACTURER.lowercase()
+        return when {
+            "samsung" in m -> "Ajustes → Conexiones → Más ajustes de conexión → DNS privado"
+            "xiaomi" in m || "redmi" in m || "poco" in m -> "Ajustes → Conexión y uso compartido → DNS privado"
+            "oppo" in m || "realme" in m || "oneplus" in m -> "Ajustes → Conexión y uso compartido → DNS privado"
+            "tecno" in m || "infinix" in m || "itel" in m -> "Ajustes → Conexiones → Más conexiones → DNS privado"
+            "huawei" in m || "honor" in m -> "Ajustes → Conexiones → Más conexiones → DNS privado"
+            "vivo" in m || "iqoo" in m -> "Ajustes → Red móvil/Conexiones → Más ajustes → DNS privado"
+            else -> "Ajustes → Red e internet → DNS privado"
         }
-        aviso("Abrí Ajustes → Conexiones/Red → DNS privado y ponelo en Desactivado")
+    }
+
+    /** Abre la pantalla de DNS privado para que el usuario lo ponga en "Desactivado".
+     *  Android no deja que una app lo apague sola (es un ajuste protegido del sistema) ni tiene una
+     *  pantalla pública para abrirlo directo: se prueban las rutas conocidas y, si el teléfono no
+     *  responde a ninguna, se abre Conexiones y se muestra el camino exacto según la marca. */
+    private fun abrirDnsPrivado() {
+        val ruta = rutaDnsPrivado()
+        val resaltar = ":settings:fragment_args_key"
+        val intentos = listOf(
+            Intent().setClassName("com.android.settings", "com.android.settings.Settings\$PrivateDnsSettingsActivity"),
+            Intent("android.settings.PRIVATE_DNS_SETTINGS"),
+            Intent(Settings.ACTION_WIRELESS_SETTINGS).putExtra(resaltar, "private_dns_settings"),
+            Intent(Settings.ACTION_SETTINGS).putExtra(resaltar, "private_dns_settings")
+        )
+        for ((n, i) in intentos.withIndex()) {
+            try {
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(i)
+                // las dos primeras caen directo en DNS privado; las otras abren Conexiones y hay que seguir el camino
+                aviso(if (n <= 1) "Poné el DNS privado en \"Desactivado\" / \"Off\" y volvé a la app"
+                      else "Buscá: $ruta\nPonelo en \"Desactivado\" y volvé a la app")
+                return
+            } catch (_: Exception) {}
+        }
+        aviso("Buscá: $ruta\nPonelo en \"Desactivado\"")
     }
 
     /** Abre un botón de contacto del tema (WhatsApp, Telegram, una web...). */
