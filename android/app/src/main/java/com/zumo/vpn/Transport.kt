@@ -71,9 +71,8 @@ object Transport {
      *  resto (ver [PrimerCorte]). Lo usa SshTunnel para el stream que le entrega a JSch. */
     fun primerCorte(out: OutputStream): OutputStream = PrimerCorte(out)
 
-    /** Conecta por TCP (y TLS si se pidió) y, si hay payload, lo envía y consume las respuestas HTTP. */
-    fun connect(c: Config, etapa: (String) -> Unit = {}, proteger: (Socket) -> Unit = {}): Tunnel {
-        etapa("Conectando al servidor")
+    /** TCP (y TLS si se pidió) hacia el servidor, ya sacado de la VPN con [proteger]. */
+    internal fun abrirSocket(c: Config, etapa: (String) -> Unit = {}, proteger: (Socket) -> Unit = {}): Socket {
         var s = Socket()
         // Hay que sacar esta conexión de la VPN antes de que exista el túnel (TUN): si no, el
         // propio tráfico SSH que sostiene la VPN entraría a la VPN y se cortaría en bucle.
@@ -92,6 +91,22 @@ object Transport {
             ss.startHandshake()
             s = ss
         }
+        return s
+    }
+
+    /** Conecta por TCP (y TLS si se pidió). Con payload: lo envía y consume las respuestas HTTP
+     *  (WebSocket / proxy). Sin payload: detecta por el propio puerto si hay un servidor BHTTP
+     *  (lo reconoce por su respuesta) y lo usa; si no, SSH directo. */
+    fun connect(c: Config, etapa: (String) -> Unit = {}, proteger: (Socket) -> Unit = {}): Tunnel {
+        etapa("Conectando al servidor")
+        if (c.payload.isBlank()) {
+            etapa("Detectando tipo de servidor")
+            if (Bhttp.sonda { abrirSocket(c, {}, proteger) }) {
+                etapa("Abriendo sesión BHTTP")
+                return Bhttp.abrir { abrirSocket(c, {}, proteger) }
+            }
+        }
+        var s = abrirSocket(c, etapa, proteger)
         val pin = PushbackInputStream(StreamEspia(s.getInputStream(), CrudoDebug.entrada), 8192)
         val salida = StreamEspiaSalida(s.getOutputStream(), CrudoDebug.salida)
         if (c.payload.isNotBlank()) {
