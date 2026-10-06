@@ -212,7 +212,7 @@ Pregunta el dominio, el token del bot, tu ID de Telegram y una contraseña de re
 - **Dominio (Cloudflare):** antes, creá un registro A del subdominio hacia la IP de la VPS en
   **Solo DNS** (nube gris). Cuando ya salió el HTTPS podés activar el proxy (modo SSL: Full).
 - **Instalaciones y actualizaciones desde el dominio:** el instalador imprime los comandos con
-  `ZUMO_BASE=https://dominio/<código>`. La dirección lleva un código secreto: no la compartas.
+  `bash <(curl -fsSL https://dominio/<código>/install.sh)`: los scripts publicados ya traen esa dirección como origen, no hace falta `ZUMO_BASE=`. La dirección lleva un código secreto: no la compartas.
   La VPS que se instala o actualiza así recuerda la dirección (`/etc/zumo/base.url`) y sigue
   usándola. El centro actualiza lo publicado cada hora desde GitHub (`zumo-publicar`).
 - **Compilar la app:** botón "📱 App Android → Compilar" del bot; se compila en la VPS con la

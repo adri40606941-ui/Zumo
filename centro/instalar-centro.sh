@@ -121,6 +121,12 @@ git -C "$SRC" archive HEAD | tar -x -C "$NUEVO" || { echo "no se pudo preparar l
 rm -rf "$NUEVO/android"
 mkdir -p "$(dirname "$WEB")"
 rm -rf "$WEB.viejo"; [ -d "$WEB" ] && mv "$WEB" "$WEB.viejo"
+# Los scripts publicados ya traen esta dirección como origen por defecto: el comando para instalar
+# no necesita "ZUMO_BASE=..." delante y nada vuelve a GitHub (sirve con el repo privado).
+if [ -r /etc/zumo/base.url ]; then
+	PUB_URL=$(cat /etc/zumo/base.url)
+	find "$NUEVO" -name '*.sh' -exec sed -i "s#https://raw.githubusercontent.com/adri40606941-ui/Zumo/main#$PUB_URL#g" {} +
+fi
 mv "$NUEVO" "$WEB" && rm -rf "$WEB.viejo"
 chmod -R a+rX /var/www/zumo
 echo "publicado: $(git -C "$SRC" log -1 --format='%h %s' 2>/dev/null)"
@@ -187,9 +193,9 @@ paso "7/7" "Resumen"
 echo
 if [ -n "${BASE_PUB:-}" ]; then
 	echo -e " Para instalar en una VPS nueva:"
-	echo -e "   ${G}ZUMO_BASE=$BASE_PUB bash <(curl -fsSL $BASE_PUB/install.sh)${N}"
+	echo -e "   ${G}bash <(curl -fsSL $BASE_PUB/install.sh)${N}"
 	echo -e " Para actualizar una VPS que ya tenés:"
-	echo -e "   ${G}ZUMO_BASE=$BASE_PUB bash <(curl -fsSL $BASE_PUB/actualizar.sh)${N}"
+	echo -e "   ${G}bash <(curl -fsSL $BASE_PUB/actualizar.sh)${N}"
 	echo -e " (la dirección lleva un código secreto: no la compartas)"
 else
 	aviso "Todavía no hay dirección pública (falta el dominio o el HTTPS)."
