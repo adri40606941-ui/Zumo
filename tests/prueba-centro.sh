@@ -25,4 +25,16 @@ chequear "sin restos" "no" "$([ -e "$T/www/abc123.viejo" ] && echo si || echo no
 SNIP=$(grep -m1 '^if \[ -n "${ZUMO_BASE:-}" \]' "$AQUI/actualizar.sh" | sed "s#/etc/zumo#$T/zb#g")
 ZUMO_BASE="https://d.example/xyz/" bash -c "$SNIP"; chequear "base.url" "https://d.example/xyz" "$(cat "$T/zb/base.url")"
 rm -rf "$T/zb"; ZUMO_BASE="http://inseguro" bash -c "$SNIP"; chequear "rechaza http" "no" "$([ -e "$T/zb/base.url" ] && echo si || echo no)"
+# Reinstalar el centro no vuelve a preguntar lo que ya se cargó (token, ID, contraseña, email)
+mkdir -p "$T/re"
+printf 'BOT_TOKEN=tok:EN=1\nADMINS=\nRESPALDO_PASS=pa ss$x\n' > "$T/re/bot.env"
+sed -n '/^guardado() {/,/^\[ -z "\${EMAIL+x}" \]/p' "$AQUI/centro/instalar-centro.sh" | sed "s#/etc/zumo/bot.env#$T/re/bot.env#; s#/etc/zumo/base.url#$T/re/base.url#" > "$T/re/snip.sh"
+echo https://d.example/xyz > "$T/re/base.url"
+r=$(bash -c ". $T/re/snip.sh; printf '%s|%s|%s|%s|%s' \"\$BOT_TOKEN\" \"\${ADMINS+set}\" \"\$RESPALDO_PASS\" \"\${EMAIL+set}\" \"\$EMAIL\"")
+chequear "reusa token, contraseña y email" "tok:EN=1|set|pa ss\$x|set|" "$r"
+r=$(BOT_TOKEN=otro bash -c ". $T/re/snip.sh; printf '%s' \"\$BOT_TOKEN\"")
+chequear "lo que viene por entorno gana" "otro" "$r"
+rm -f "$T/re/base.url"
+r=$(bash -c ". $T/re/snip.sh; printf '%s' \"\${EMAIL+set}\"")
+chequear "centro nuevo: el email sí se pregunta" "" "$r"
 [ "$FALLOS" -eq 0 ] && echo "TODO OK" || { echo "$FALLOS fallos"; exit 1; }

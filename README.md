@@ -182,7 +182,7 @@ como "centro": publica los instaladores con tu dominio, compila la app Android y
 bash <(curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/centro/instalar-centro.sh)
 ```
 
-Pregunta el dominio, el token del bot, tu ID de Telegram y una contraseña de respaldo.
+Pregunta el dominio, el token del bot, tu ID de Telegram y una contraseña de respaldo. Si lo volvés a correr (para actualizar), no repite nada: reusa lo que ya cargaste (`/etc/zumo/centro.env` y `bot.env`).
 
 - **Dominio (Cloudflare):** antes, creá un registro A del subdominio hacia la IP de la VPS en
   **Solo DNS** (nube gris). Cuando ya salió el HTTPS podés activar el proxy (modo SSL: Full).
