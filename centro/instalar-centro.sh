@@ -19,7 +19,7 @@ paso() { echo -e "\n${V}[$1] $2${N}"; }
 fallar() { err "$1"; exit 1; }
 preguntar() { # preguntar VAR "texto" [secreto]
 	local v="$1" t="$2" r=""
-	[ -n "${!v:-}" ] && return 0
+	[ -n "${!v+x}" ] && return 0       # ya tiene valor (aunque sea vacío): no se vuelve a preguntar
 	if [ "${3:-}" = s ]; then read -rsp " $t: " r </dev/tty; echo; else read -rp " $t: " r </dev/tty; fi
 	printf -v "$v" '%s' "$r"
 }
@@ -41,7 +41,17 @@ echo -e "${V}╔═════════════════════�
 
 # --- datos -------------------------------------------------------------------
 [ -f /etc/zumo/centro.env ] && . /etc/zumo/centro.env
+# Lo que ya cargaste antes no se vuelve a pedir: el token, el ID y la contraseña del respaldo están en bot.env.
+guardado() { # guardado VAR archivo: toma VAR= del archivo si no vino ya por entorno (sin ejecutarlo)
+	local v="$1" f="$2" l
+	[ -n "${!v+x}" ] && return 0
+	l=$(grep -m1 "^$v=" "$f" 2>/dev/null) || return 0
+	printf -v "$v" '%s' "${l#*=}"
+}
+for v in BOT_TOKEN ADMINS RESPALDO_PASS; do guardado "$v" /etc/zumo/bot.env; done
+[ -z "${EMAIL+x}" ] && [ -s /etc/zumo/base.url ] && EMAIL=""    # centro ya instalado con HTTPS: sin email
 paso "0/7" "Datos"
+[ -z "${DOMINIO:-}" ] && unset DOMINIO     # sin dominio todavía: se vuelve a ofrecer
 preguntar DOMINIO "Dominio o subdominio de esta VPS (ej: panel.tudominio.com; vacío = sin dominio por ahora)"
 preguntar EMAIL "Email para el certificado HTTPS (vacío = sin email)"
 preguntar BOT_TOKEN "Token del bot de Telegram (@BotFather)"
@@ -50,7 +60,7 @@ preguntar RESPALDO_PASS "Contraseña del respaldo (mínimo 8, guardala aparte; s
 [ "${#RESPALDO_PASS}" -ge 8 ] || fallar "La contraseña del respaldo tiene que tener al menos 8 caracteres."
 [ -n "$BOT_TOKEN" ] || fallar "Falta el token del bot."
 if [ -z "${SECRETO:-}" ]; then SECRETO=$(openssl rand -hex 12); fi
-( umask 077; { echo "DOMINIO=$DOMINIO"; echo "SECRETO=$SECRETO"; echo "REPO_URL=$REPO_URL"; } > /etc/zumo/centro.env )
+( umask 077; { echo "DOMINIO=$DOMINIO"; echo "EMAIL=$EMAIL"; echo "SECRETO=$SECRETO"; echo "REPO_URL=$REPO_URL"; } > /etc/zumo/centro.env )
 
 # --- 1) swap -----------------------------------------------------------------
 paso "1/7" "Memoria"
