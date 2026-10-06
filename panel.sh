@@ -206,6 +206,7 @@ out="SSH ${ssh:-22}"
 systemctl is-active --quiet pdirect-80 2>/dev/null && out+=" · WebSocket 80"
 systemctl is-active --quiet udpgw-7300 2>/dev/null && out+=" · BadVPN 7300"
 if systemctl is-active --quiet bhttp-server 2>/dev/null && systemctl is-active --quiet bhttp-shim 2>/dev/null; then out+=" · BHTTP $(bhttp_port)"; fi
+systemctl is-active --quiet bhttp-v2 2>/dev/null && out+=" · BHTTP v2 $(bhttp2_port)"
 systemctl is-active --quiet hcr-server 2>/dev/null && out+=" · HCR $(hcr_port)"
 echo "$out"
 }
@@ -760,6 +761,13 @@ esac
 done
 }
 
+bhttp2_port() {
+local p
+p=$(cat /etc/zumo/bhttp2.port 2>/dev/null)
+[[ "$p" =~ ^[0-9]+$ ]] || p=8081
+echo "$p"
+}
+
 bhttp_port() {
 local p
 p=$(cat /etc/zumo/bhttp.port 2>/dev/null)
@@ -924,7 +932,7 @@ esac
 done
 }
 
-menu_bhttp() {
+menu_bhttp_v1() {
 while true; do
 banner; echo -e " \e[1;38;5;141mBHTTP${N}\n"
 if systemctl is-active --quiet bhttp-server && systemctl is-active --quiet bhttp-shim; then
@@ -956,6 +964,77 @@ fi; pausa ;;
 bash /etc/zumo/desactivar-bhttp.sh
 msg_ok "BHTTP desactivado; puerto liberado"; pausa ;;
 3) diag_bhttp ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
+menu_bhttp2() {
+while true; do
+banner; echo -e " \e[1;38;5;141mBHTTP v2${N}\n"
+if systemctl is-active --quiet bhttp-v2; then
+echo -e " \e[1;32m● BHTTP v2: activo ($(bhttp2_port) → SSH)${N}\n"
+else
+echo -e " \e[1;31m● BHTTP v2: inactivo${N}\n"
+fi
+op 1 "⚡" "Activar (elegís el puerto)"
+op 2 "✖" "Desactivar"
+op 3 "⚙" "Estado y registro"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) if systemctl is-active --quiet bhttp-v2; then
+msg_err "Ya está activo"; pausa; continue
+fi
+read -rp " Puerto para BHTTP v2 [8081]: " bp; bp=${bp:-8081}
+if ! [[ "$bp" =~ ^[0-9]+$ ]] || [ "$bp" -lt 1 ] || [ "$bp" -gt 65535 ]; then
+msg_err "Puerto inválido (1-65535)"
+else
+echo -e " \e[1;38;5;141mInstalando BHTTP v2 en el puerto ${bp}, aguardá...${N}"
+if bash /etc/zumo/activar-bhttp2.sh "$bp"; then
+msg_ok "BHTTP v2 activo en el puerto $bp (→ SSH 22)"
+else
+msg_err "Falló; usá la opción 3 (estado y registro)"
+fi
+fi; pausa ;;
+2) echo -e " \e[1;38;5;141mLiberando el puerto de BHTTP v2...${N}"
+bash /etc/zumo/desactivar-bhttp2.sh
+msg_ok "BHTTP v2 desactivado; puerto liberado"; pausa ;;
+3) banner; echo -e " \e[1;38;5;141mBHTTP v2 · estado${N}\n"
+if systemctl is-active --quiet bhttp-v2; then msg_ok "Servicio: activo"; else msg_err "Servicio: inactivo"; fi
+bp=$(bhttp2_port)
+if ss -ltnH "sport = :$bp" 2>/dev/null | grep -q .; then msg_ok "Escucha en el puerto $bp"; else msg_err "Nada escucha en el puerto $bp"; fi
+if ss -ltnH "sport = :22" 2>/dev/null | grep -q .; then msg_ok "sshd escucha en el puerto 22"; else msg_err "Nada escucha en el 22 (BHTTP v2 reenvía a 127.0.0.1:22)"; fi
+echo; echo -e " \e[1;38;5;141mÚltimas líneas del registro:${N}"
+journalctl -u bhttp-v2 -n 8 --no-pager -o cat 2>/dev/null | sed 's/^/   /'
+pausa ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
+menu_bhttp() {
+while true; do
+banner; echo -e " \e[1;38;5;141mBHTTP${N}\n"
+if systemctl is-active --quiet bhttp-server && systemctl is-active --quiet bhttp-shim; then
+echo -e " \e[1;32m● BHTTP: activo ($(bhttp_port))${N}"
+else
+echo -e " \e[1;31m● BHTTP: inactivo${N}"
+fi
+if systemctl is-active --quiet bhttp-v2; then
+echo -e " \e[1;32m● BHTTP v2: activo ($(bhttp2_port))${N}\n"
+else
+echo -e " \e[1;31m● BHTTP v2: inactivo${N}\n"
+fi
+op 1 "⚡" "BHTTP"
+op 2 "⚡" "BHTTP v2"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) menu_bhttp_v1 ;;
+2) menu_bhttp2 ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
@@ -1128,6 +1207,7 @@ sshd|sshd-session) echo "SSH (conexiones)" ;;
 badvpn-udpgw) echo "BadVPN (UDP)" ;;
 pdirect-c) echo "PDirect (WebSocket)" ;;
 bhttp-server|bhttp-shim) echo "BHTTP" ;;
+bhttp-v2) echo "BHTTP v2" ;;
 hcr-server) echo "HCR Server" ;;
 zumo-limit) echo "Limitador" ;;
 zumo) echo "Este panel" ;;

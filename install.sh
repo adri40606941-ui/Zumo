@@ -1189,6 +1189,90 @@ exit 0
 DESBHTTPEOF
 
 chmod +x /etc/zumo/desactivar-bhttp.sh
+
+cat > /etc/zumo/activar-bhttp2.sh <<'ZUMOBHTTP2ACT'
+#!/bin/bash
+# BHTTP v2: servidor propio (BHTTP v1/v2), escucha directo en el puerto elegido y reenvía al SSH local.
+[ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+DIR=/opt/bhttp-v2
+PUERTO="${1:-8081}"
+case "$PUERTO" in ''|*[!0-9]*) echo "Puerto inválido: $PUERTO"; exit 1 ;; esac
+PUERTO=$((10#$PUERTO))
+if [ "$PUERTO" -lt 1 ] || [ "$PUERTO" -gt 65535 ]; then echo "El puerto debe estar entre 1 y 65535"; exit 1; fi
+case "$(uname -m)" in x86_64|amd64) ;; *) echo "BHTTP v2 solo está disponible para x86_64 (amd64)"; exit 1 ;; esac
+ZUMO="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
+if ! command -v curl >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1 || ! command -v ss >/dev/null 2>&1; then
+export DEBIAN_FRONTEND=noninteractive
+apt-get update >/dev/null 2>&1; apt-get install -y --no-install-recommends ca-certificates curl coreutils iproute2 >/dev/null 2>&1 || { echo "No se pudieron instalar las dependencias"; exit 1; }
+fi
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+echo "[1/3] Descargando y verificando BHTTP v2..."
+curl -fsSL "$ZUMO/binarios/bhttp-v2-server?n=$(date +%s)" -o "$TMP/bhttp-v2" || { echo "No se pudo descargar bhttp-v2-server"; exit 1; }
+curl -fsSL "$ZUMO/binarios/bhttp-v2-server.sha256?n=$(date +%s)" -o "$TMP/SUMS" || { echo "No se pudo descargar bhttp-v2-server.sha256"; exit 1; }
+ESPERADO=$(awk '{f=$2; sub(/^\*/,"",f)} f=="bhttp-v2-server"{print $1; exit}' "$TMP/SUMS")
+REAL=$(sha256sum "$TMP/bhttp-v2" | awk '{print $1}')
+[ -n "$ESPERADO" ] && [ "$ESPERADO" = "$REAL" ] || { echo "El SHA256 no coincide. No se instala."; exit 1; }
+chmod 0755 "$TMP/bhttp-v2"
+timeout 5 "$TMP/bhttp-v2" -h 2>&1 | grep -q -- "-listen" || { echo "El binario descargado no es válido para esta VPS"; exit 1; }
+echo "[2/3] Instalando..."
+systemctl stop bhttp-v2 2>/dev/null || true
+if ss -ltnpH "sport = :$PUERTO" 2>/dev/null | grep -q .; then
+echo "El puerto $PUERTO está ocupado por otro servicio:"
+ss -ltnpH "sport = :$PUERTO"
+echo "Liberalo o elegí otro puerto."
+exit 1
+fi
+install -d -m 0755 "$DIR"
+install -m 0755 "$TMP/bhttp-v2" "$DIR/bhttp-v2"
+cat > /etc/systemd/system/bhttp-v2.service <<BHTTP2UNIT
+[Unit]
+Description=ZUMO - BHTTP v2 (0.0.0.0:$PUERTO -> SSH local)
+After=network-online.target
+Wants=network-online.target
+[Service]
+ExecStart=$DIR/bhttp-v2 -listen 0.0.0.0:$PUERTO -target 127.0.0.1:22
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+LimitNOFILE=65535
+[Install]
+WantedBy=multi-user.target
+BHTTP2UNIT
+echo "[3/3] Activando..."
+systemctl daemon-reload
+systemctl enable --now bhttp-v2 >/dev/null 2>&1
+sleep 2
+if ! systemctl is-active --quiet bhttp-v2; then
+echo "No quedó activo. Revisá: journalctl -u bhttp-v2 -n 30"
+exit 1
+fi
+if ! ss -ltnH "sport = :$PUERTO" 2>/dev/null | grep -q .; then
+echo "El servicio arrancó pero no escucha en el puerto $PUERTO"
+exit 1
+fi
+echo "$PUERTO" > /etc/zumo/bhttp2.port
+echo "BHTTP v2 activo en el puerto $PUERTO"
+ZUMOBHTTP2ACT
+
+chmod +x /etc/zumo/activar-bhttp2.sh
+
+cat > /etc/zumo/desactivar-bhttp2.sh <<'DESBHTTP2EOF'
+#!/bin/bash
+PUERTO=$(cat /etc/zumo/bhttp2.port 2>/dev/null)
+case "$PUERTO" in ''|*[!0-9]*) PUERTO=8081 ;; esac
+systemctl disable --now bhttp-v2 2>/dev/null
+while read -r pid; do
+[ -z "$pid" ] && continue
+c=$(ps -o comm= -p "$pid" 2>/dev/null)
+[ "$c" = "bhttp-v2" ] && kill -9 "$pid" 2>/dev/null
+done < <(ss -ltnpH "sport = :$PUERTO" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u)
+rm -f /etc/systemd/system/bhttp-v2.service /etc/zumo/bhttp2.port
+systemctl daemon-reload
+systemctl reset-failed bhttp-v2 2>/dev/null
+exit 0
+DESBHTTP2EOF
+
+chmod +x /etc/zumo/desactivar-bhttp2.sh
 ok "BHTTP instalado"
 
 paso "Descargando panel y librería"

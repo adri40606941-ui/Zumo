@@ -26,7 +26,7 @@ zumo
 | **Limitador** (`zumo-limit`) | Cada 3 s corta las sesiones SSH que pasan el límite de cada usuario, corta a los vencidos y borra los temporales vencidos. |
 | **PDirect** | WebSocket en el puerto 80 → SSH local. |
 | **BadVPN** | UDPGW en el 7300 (para el tráfico UDP de las apps). |
-| **BHTTP** | Transporte BHTTP → SSH local (servidor + adaptador para DTunnel). |
+| **BHTTP** | Transporte BHTTP → SSH local (servidor + adaptador para DTunnel). Hay dos motores a elegir en el panel: BHTTP (el de siempre) y BHTTP v2. |
 | **HCR Server** | Transporte HCR → SSH local, con TLS, plano o `auto`. |
 
 Los cuatro transportes (PDirect, BHTTP, HCR, BadVPN) son **paralelos**: cada uno
@@ -167,7 +167,7 @@ instalado, volvé a correr `bot/instalar-bot.sh`.
 | `scripts/zumo-datos.sh` | Contador de datos por usuario (mide lo que mueve cada sesión SSH); alimenta Herramientas → Uso de datos. |
 | `tests/` | Pruebas del limitador, de "Eliminar usuario" y de las herramientas (`sudo bash tests/prueba-limitador.sh`, `prueba-borrar.sh`, `prueba-herramientas.sh`, `prueba-datos.sh`, `prueba-respaldo.sh`). |
 | `binarios/` | `hcr-install.sh` y `hcr-server` (HCR); `bhttp-server-*`, `bhttp-shim-*` y `bhttp-server.sha256` (BHTTP, por arquitectura). Los baja el instalador. |
-| `binarios/bilola-server` / `bilola-install.sh` | Servidor BilolaGo (BHTTP v1/v2 y XHTTP opcional), solo x86_64, de origen externo. Se instala aparte, en otro puerto: `bash <(curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/binarios/bilola-install.sh) --port 8081` (quitar: `--uninstall`). Verifica su `sha256` antes de instalar. |
+| `binarios/bhttp-v2-server` | Servidor BHTTP v2 (BHTTP v1/v2), solo x86_64, de origen externo. Se activa desde el panel: Protocolos → BHTTP → BHTTP v2 (escucha directo en el puerto que elijas, por defecto 8081). Se verifica con `bhttp-v2-server.sha256` antes de instalar. |
 | `fuentes/bhttp-shim/main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
 | `android/` | App Android (Zumo VPN). `android/servidores.txt` es la lista de servidores que trae la app. |
 | `bot/respaldo.py` / `bot/centro.py` | Respaldo cifrado, clave de firma y sus botones del bot. |
