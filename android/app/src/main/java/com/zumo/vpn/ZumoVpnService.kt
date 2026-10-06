@@ -189,7 +189,7 @@ class ZumoVpnService : VpnService() {
 
     private fun abrirTun() {
         val b = Builder()
-            .setSession("Zumo VPN")
+            .setSession(Tema.actual(this).nombre)
             .setMtu(1500)
             .addAddress("198.18.0.1", 32)
             .addRoute("0.0.0.0", 0)
@@ -385,7 +385,7 @@ class ZumoVpnService : VpnService() {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             // IMPORTANCE_DEFAULT (no LOW): en HiOS (Tecno/Infinix/itel) una notificación "silenciosa"
             // hace que el gestor de batería trate a la app como inactiva y la mate antes.
-            nm.createNotificationChannel(NotificationChannel(CHANNEL, "Zumo VPN", NotificationManager.IMPORTANCE_DEFAULT))
+            nm.createNotificationChannel(NotificationChannel(CHANNEL, Tema.actual(this).nombre, NotificationManager.IMPORTANCE_DEFAULT))
         }
     }
 
@@ -396,7 +396,7 @@ class ZumoVpnService : VpnService() {
         )
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL) else @Suppress("DEPRECATION") Notification.Builder(this)
         val cuerpo = if (conectado && velocidad.isNotBlank()) "$txt  ·  $velocidad" else txt
-        b.setContentTitle("Zumo VPN").setContentText(cuerpo)
+        b.setContentTitle(Tema.actual(this).nombre).setContentText(cuerpo)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentIntent(abrir).setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)

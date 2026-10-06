@@ -12,10 +12,12 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
+    <!-- El nombre y el ícono salen de android/marca (ver app/build.gradle.kts): por defecto
+         "Zumo VPN" y @drawable/ic_launcher; con un ícono importado, @mipmap/ic_marca. -->
     <application
         android:allowBackup="false"
-        android:icon="@drawable/ic_launcher"
-        android:label="Zumo VPN"
+        android:icon="${iconoApp}"
+        android:label="${nombreApp}"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:usesCleartextTraffic="true">
 

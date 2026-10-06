@@ -114,8 +114,16 @@ class GitHub:
             return f"GitHub no aceptó el pedido: {detalle}"
         return f"GitHub respondió {codigo}: {detalle}"
 
+    def _clave_publica(self):
+        """Clave pública del repo para cifrar secretos (se pide una vez cada 10 minutos, no por cada secreto)."""
+        pk, cuando = getattr(self, "_pk", (None, 0))
+        if pk is None or time.time() - cuando > 600:
+            pk = self._pedir("GET", f"/repos/{self.repo}/actions/secrets/public-key")
+            self._pk = (pk, time.time())
+        return pk
+
     def subir_secreto(self, nombre, valor):
-        pk = self._pedir("GET", f"/repos/{self.repo}/actions/secrets/public-key")
+        pk = self._clave_publica()
         self._pedir("PUT", f"/repos/{self.repo}/actions/secrets/{nombre}",
                     {"encrypted_value": sellar(pk["key"], valor), "key_id": pk["key_id"]})
 

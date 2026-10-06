@@ -7,8 +7,10 @@ administrador el archivo .zs que abre la app. Solo responde a los IDs de ADMINS.
 Configuración: /etc/zumo/bot.env  (BOT_TOKEN, ADMINS, ZS_SECRET)
 Datos del servidor (host, puerto, payload...): /etc/zumo/bot.json (se cambian desde el bot)
 Servidores de la app Android: /etc/zumo/app-servidores.json (y GITHUB_TOKEN / GITHUB_REPO en bot.env para compilar)
+Apariencia de la app Android: /etc/zumo/app-marca/ (tema.json, icono.png, fondo.jpg); se cambia desde el bot
 """
 import base64
+import hashlib
 import json
 import os
 import re
@@ -23,12 +25,16 @@ from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import compilar  # noqa: E402
+import marca  # noqa: E402
 import servidores as srv  # noqa: E402
+import tema as T  # noqa: E402
+import vista  # noqa: E402
 import zs  # noqa: E402
 
 ENV = os.environ.get("ZUMO_BOT_ENV", "/etc/zumo/bot.env")
 ESTADO = os.environ.get("ZUMO_BOT_JSON", "/etc/zumo/bot.json")
 APPSRV = os.environ.get("ZUMO_APP_SERVIDORES", "/etc/zumo/app-servidores.json")
+MARCA = os.environ.get("ZUMO_APP_MARCA", "/etc/zumo/app-marca")
 DB = os.environ.get("ZUMO_DB", "/etc/zumo/usuarios.db")
 CLAVES = os.environ.get("ZUMO_CLAVES", "/etc/zumo/claves.db")
 LIB = os.environ.get("ZUMO_LIB", "/etc/zumo/zumo-lib.sh")
@@ -81,6 +87,62 @@ def guardar_app(lista):
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(lista, f, ensure_ascii=False, indent=1)
     os.replace(tmp, APPSRV)
+
+
+# ------------------------------------------------------------- apariencia de la app
+def tema_guardado():
+    """¿El dueño ya personalizó algo? (si no, al compilar no se toca la apariencia del repo)"""
+    return os.path.isfile(os.path.join(MARCA, "tema.json"))
+
+
+def cargar_tema():
+    try:
+        with open(os.path.join(MARCA, "tema.json"), encoding="utf-8") as f:
+            return T.normalizar(json.load(f))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return T.normalizar({})
+
+
+def _escribir_marca(nombre, datos):
+    os.makedirs(MARCA, mode=0o700, exist_ok=True)
+    ruta = os.path.join(MARCA, nombre)
+    fd = os.open(ruta + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(datos)
+    os.replace(ruta + ".tmp", ruta)
+
+
+def guardar_tema(t):
+    _escribir_marca("tema.json", T.a_json(t).encode("utf-8"))
+
+
+def imagen_marca(nombre):
+    """Bytes de icono.png o fondo.jpg guardados por el bot, o None."""
+    try:
+        with open(os.path.join(MARCA, nombre), "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+def guardar_imagen_marca(nombre, datos):
+    if not tema_guardado():
+        guardar_tema(cargar_tema())
+    _escribir_marca(nombre, datos)
+
+
+def borrar_imagen_marca(nombre):
+    try:
+        os.remove(os.path.join(MARCA, nombre))
+    except FileNotFoundError:
+        pass
+
+
+def secretos_marca():
+    """{secreto: valor} con la apariencia para subir al repo, o None si nunca se personalizó."""
+    if not tema_guardado():
+        return None
+    return marca.secretos(marca.empaquetar(T.a_json(cargar_tema()), imagen_marca("icono.png"), imagen_marca("fondo.jpg")))
 
 
 # --------------------------------------------------------------------- usuarios
@@ -292,16 +354,33 @@ class Telegram:
         except urllib.error.HTTPError:
             pass
 
-    def documento(self, chat, nombre, datos, leyenda=""):
+    def _subir(self, metodo, campo, nombre, datos, extras):
         borde = uuid.uuid4().hex
         cuerpo = b""
-        for k, v in (("chat_id", str(chat)), ("caption", leyenda)):
+        for k, v in extras:
             cuerpo += (f"--{borde}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n").encode()
-        cuerpo += (f"--{borde}\r\nContent-Disposition: form-data; name=\"document\"; filename=\"{nombre}\"\r\n"
+        cuerpo += (f"--{borde}\r\nContent-Disposition: form-data; name=\"{campo}\"; filename=\"{nombre}\"\r\n"
                    "Content-Type: application/octet-stream\r\n\r\n").encode() + datos + f"\r\n--{borde}--\r\n".encode()
-        req = urllib.request.Request(self.base + "sendDocument", data=cuerpo,
+        req = urllib.request.Request(self.base + metodo, data=cuerpo,
                                      headers={"Content-Type": f"multipart/form-data; boundary={borde}"})
         urllib.request.urlopen(req, timeout=60).read()
+
+    def documento(self, chat, nombre, datos, leyenda=""):
+        self._subir("sendDocument", "document", nombre, datos, (("chat_id", str(chat)), ("caption", leyenda)))
+
+    def foto(self, chat, datos, leyenda="", botones=None):
+        extras = [("chat_id", str(chat)), ("caption", leyenda[:1000])]
+        if botones:
+            extras.append(("reply_markup", json.dumps(self._teclado(botones))))
+        nombre = "vista.jpg" if datos[:3] == b"\xff\xd8\xff" else "vista.png"
+        self._subir("sendPhoto", "photo", nombre, datos, extras)
+
+    def bajar(self, file_id):
+        """Bytes de una foto o archivo que mandaron al bot (Telegram deja bajar hasta 20 MB)."""
+        ruta = self._post("getFile", {"file_id": file_id})["result"]["file_path"]
+        url = self.base.replace("/bot", "/file/bot", 1) + ruta
+        with urllib.request.urlopen(url, timeout=120) as r:
+            return r.read()
 
 
 # ------------------------------------------------------------------------ menús
@@ -405,6 +484,7 @@ class Bot:
             "Todavía no cargaste servidores en el bot.\nAl compilar sin servidores, la app usa lo que ya haya en el secreto ZUMO_SERVIDORES del repo.")
         botones = [[(f"{i + 1}. {s['name']}", f"a:{i}")] for i, s in enumerate(l)]
         botones += [[("➕ Agregar servidor", "aadd"), ("📥 Pegar lista", "apegar")],
+                    [("🎨 Apariencia de la app", "t")],
                     [("🔨 Compilar y enviarme el APK", "acomp")],
                     [("🔑 Asegurar clave de firma", "aclave")],
                     [("◂ Menú", "menu")]]
@@ -450,6 +530,8 @@ class Bot:
                 return self.menu(chat)
             if chat in self.estado:
                 self.estado[chat]["_mid"] = msg.get("message_id")
+                if self.estado[chat]["paso"] in ("t_icono", "t_fondo"):
+                    return self.imagen_recibida(chat, msg)
                 r = self.texto_libre(chat, texto)
                 return r
             self.menu(chat)
@@ -466,6 +548,8 @@ class Bot:
         try:
             if cb.get("data") == "id":
                 return self.tg.mensaje(chat, f"Tu ID de Telegram: {uid}")
+            if cb["message"].get("photo"):
+                mid = None      # el botón está debajo de una foto: no se puede editar, va un mensaje nuevo
             self.boton(chat, mid, cb.get("data", ""))
         except Exception as e:
             self.tg.mensaje(chat, f"⚠️ Error: {e}")
@@ -534,6 +618,8 @@ class Bot:
             return self.pantalla_lista(chat, mid, 0)
         if acc == "s":
             return self.boton_servidor(chat, mid, arg)
+        if acc == "t":
+            return self.boton_tema(chat, mid, arg)
         if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs"):
             return self.boton_app(chat, mid, acc, arg)
 
@@ -554,7 +640,8 @@ class Bot:
             donde = f"{self.gh.repo} (rama {self.gh.rama})"
             return self.mostrar(chat, mid, f"🔨 Compilar la app en GitHub\nRepo: {donde}\n"
                                 f"{n} servidor(es) de la lista del bot se suben al secreto antes de compilar."
-                                f"{'' if n else ' (Lista vacía: no se toca el secreto.)'}\nTarda unos minutos. ¿Compilo?",
+                                f"{'' if n else ' (Lista vacía: no se toca el secreto.)'}\n"
+                                f"{'La apariencia que armaste también se sube.' + chr(10) if tema_guardado() else ''}Tarda unos minutos. ¿Compilo?",
                                 [[("✅ Compilar ahora", "acomp_si"), ("✖ No", "app")]])
         if acc == "acomp_si":
             return self.compilar_app(chat)
@@ -652,6 +739,8 @@ class Bot:
             return self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + u, f"u:{u}")], [("◂ Menú", "menu")]])
         if paso.startswith("a_"):
             return self.texto_app(chat, e, paso, t)
+        if paso.startswith("t_"):
+            return self.texto_tema(chat, e, paso, t)
         st = cargar_estado()
         if paso == "s_host":
             host, _, puerto = t.partition(":")
@@ -812,6 +901,11 @@ class Bot:
             if lista:
                 gh.subir_secreto("ZUMO_SERVIDORES", srv.a_texto(lista))
                 self.tg.mensaje(chat, f"🔐 Lista de {len(lista)} servidor(es) subida al repo (cifrada).")
+            apariencia = secretos_marca()
+            if apariencia:
+                for nombre, valor in apariencia.items():
+                    gh.subir_secreto(nombre, valor)
+                self.tg.mensaje(chat, "🎨 Apariencia subida al repo (cifrada).")
             r = self._correr(chat)
             if r.get("conclusion") == "success":
                 apk = gh.archivo_de_rama("zumo-vpn.apk")
@@ -834,6 +928,344 @@ class Bot:
             self.tg.mensaje(chat, f"⚠️ Error inesperado al compilar: {ex}", [[("📱 App Android", "app")]])
         finally:
             self.compilando.release()
+
+    # -- apariencia de la app
+    NOTA_VISTA = "Vista aproximada: en el teléfono los emojis y algunas letras se ven un poco distinto."
+
+    def pantalla_tema(self, chat, mid, aviso=""):
+        t = cargar_tema()
+        hay_fondo, hay_icono = imagen_marca("fondo.jpg") is not None, imagen_marca("icono.png") is not None
+        fondo = "imagen" if hay_fondo else ("degradado" if t["fondo2"] else "color liso")
+        txt = (aviso + "\n\n" if aviso else "") + (
+            "🎨 Apariencia de la app\n\n"
+            f"Nombre: {t['nombre']}\nLema: {t['lema'] or '(sin lema)'}\n"
+            f"Plantilla: {T.nombre_plantilla(t)}\nFondo: {fondo}\n"
+            f"Ícono: {'el tuyo' if hay_icono else 'el original'}\n"
+            f"Letra: {dict(T.FUENTES)[t['fuente']]} · tamaño {dict(T.ESCALAS).get(t['escala'], str(t['escala']) + ' %').lower()}\n\n"
+            "Tus clientes ven los cambios cuando compilás y les pasás el APK nuevo.")
+        self.mostrar(chat, mid, txt, [
+            [("🧩 Plantillas", "t:pl"), ("👁 Vista previa", "t:v")],
+            [("🏷 Nombre", "t:n"), ("💬 Lema", "t:le")],
+            [("🎨 Colores", "t:co"), ("🌄 Fondo", "t:fo")],
+            [("🖼 Ícono y logo", "t:ic"), ("🔤 Letras", "t:lt")],
+            [("📋 Menús y secciones", "t:me")],
+            [("🔨 Compilar y enviarme el APK", "acomp")],
+            [("♻️ Volver al diseño original", "t:rs")],
+            [("◂ App Android", "app")]])
+
+    def enviar_vista(self, chat, t=None, leyenda="", botones=None):
+        """Manda la imagen de cómo queda la app. Sin Pillow en la VPS, avisa cómo instalarlo."""
+        botones = botones or [[("🎨 Seguir cambiando", "t")], [("🔨 Compilar y enviarme el APK", "acomp")]]
+        if not vista.HAY_PIL:
+            return self.tg.mensaje(chat, "👁 Para ver las vistas previas falta una herramienta en la VPS. Corré de nuevo el instalador del bot "
+                                         "(o: apt install -y python3-pil fonts-dejavu-core && systemctl restart zumo-bot).", botones)
+        img = vista.captura(t or cargar_tema(), imagen_marca("icono.png"), imagen_marca("fondo.jpg"))
+        self.tg.foto(chat, img, (leyenda + "\n\n" if leyenda else "") + self.NOTA_VISTA, botones)
+
+    def pantalla_plantillas(self, chat, mid):
+        botones, fila = [], []
+        for i, (pid, nombre, _, _) in enumerate(T.PLANTILLAS):
+            fila.append((f"{i + 1}. {nombre}", f"t:pv:{pid}"))
+            if len(fila) == 2:
+                botones.append(fila)
+                fila = []
+        if fila:
+            botones.append(fila)
+        botones.append([("◂ Apariencia", "t")])
+        if not vista.HAY_PIL:
+            lista = "\n".join(f"{i + 1}. {n}: {d}" for i, (_, n, d, _) in enumerate(T.PLANTILLAS))
+            return self.mostrar(chat, mid, "🧩 Plantillas\n\n" + lista + "\n\nTocá una para usarla.", botones)
+        base = cargar_tema()
+        icono, fondo = imagen_marca("icono.png"), imagen_marca("fondo.jpg")
+        clave = hashlib.sha256((T.a_json(T.aplicar_plantilla(base, "zumo"))).encode() + (icono or b"") + (fondo or b"")).hexdigest()
+        if getattr(self, "_muestrario", (None, None))[0] != clave:
+            temas = [(n, T.aplicar_plantilla(base, pid)) for pid, n, _, _ in T.PLANTILLAS]
+            self._muestrario = (clave, vista.muestrario(temas, icono, fondo))
+        self.tg.foto(chat, self._muestrario[1], "🧩 Plantillas: así quedaría tu app con cada una.\n"
+                                                "Tocá una para verla en grande; después podés cambiarle lo que quieras.", botones)
+
+    def pantalla_colores(self, chat, mid, aviso=""):
+        t = cargar_tema()
+        lineas = "\n".join(f"{nombre}: {t[k]}" for k, nombre in T.COLORES_EDITABLES)
+        botones, fila = [], []
+        for k, nombre in T.COLORES_EDITABLES:
+            fila.append((nombre, f"t:c:{k}"))
+            if len(fila) == 2:
+                botones.append(fila)
+                fila = []
+        botones += [[("👁 Vista previa", "t:v")], [("◂ Apariencia", "t")]]
+        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + "🎨 Colores\n\n" + lineas +
+                     "\n\nTocá el que quieras cambiar. Los bordes y los tonos intermedios se acomodan solos.", botones)
+
+    def pantalla_color(self, chat, mid, k):
+        t = cargar_tema()
+        nombre = "Segundo color del degradado" if k == "fondo2" else dict(T.COLORES_EDITABLES)[k]
+        botones, fila = [], []
+        for n, h in T.paleta(k):
+            fila.append((n, f"t:cs:{k}:{h[1:]}"))
+            if len(fila) == 3:
+                botones.append(fila)
+                fila = []
+        if fila:
+            botones.append(fila)
+        botones += [[("✏️ Escribir un código de color", f"t:ce:{k}")],
+                    [("◂ Fondo", "t:fo")] if k == "fondo2" else [("◂ Colores", "t:co")]]
+        self.mostrar(chat, mid, f"🎨 {nombre}\nAhora: {t.get(k) or '(sin definir)'}\n\nElegí uno, o escribí el código exacto (ej: #B388FF).", botones)
+
+    def pantalla_fondo(self, chat, mid, aviso=""):
+        t = cargar_tema()
+        hay = imagen_marca("fondo.jpg") is not None
+        ahora = "una imagen" if hay else (f"degradado {t['fondo']} → {t['fondo2']}" if t["fondo2"] else f"color liso {t['fondo']}")
+        txt = (aviso + "\n\n" if aviso else "") + f"🌄 Fondo\nAhora: {ahora}\n"
+        botones = [[("🎨 Color", "t:c:fondo"), ("🌗 Degradado", "t:c:fondo2")]]
+        if t["fondo2"]:
+            botones.append([("▫️ Quitar el degradado", "t:fl")])
+        botones.append([("📷 Poner una imagen", "t:fi")] + ([("🗑 Quitar la imagen", "t:fq")] if hay else []))
+        if hay:
+            txt += f"La imagen se oscurece un {t['velo']} % para que se lean las letras.\n"
+            botones.append([(("✓ " if t["velo"] == n else "") + nombre, f"t:fv:{n}") for n, nombre in T.VELOS[:4]])
+        txt += f"Tarjetas: {dict(T.OPACIDADES).get(t['opacidad'], str(t['opacidad']) + ' %').lower()} (cuánto se ve el fondo a través de ellas)."
+        botones.append([(("✓ " if t["opacidad"] == n else "") + nombre, f"t:op:{n}") for n, nombre in T.OPACIDADES[:3]])
+        botones += [[("👁 Vista previa", "t:v")], [("◂ Apariencia", "t")]]
+        self.mostrar(chat, mid, txt, botones)
+
+    def pantalla_icono(self, chat, mid, aviso=""):
+        t = cargar_tema()
+        hay = imagen_marca("icono.png") is not None
+        logo = "tu ícono" if (hay and t["logo_imagen"]) else (f"el emoji {t['logo']}" if t["logo"] else "nada")
+        botones = [[("📷 Importar un ícono", "t:ii")]]
+        if hay:
+            botones.append([("🗑 Quitar mi ícono", "t:iq")])
+            botones.append([(f"Arriba del título: {'mi ícono' if t['logo_imagen'] else 'el emoji'} (cambiar)", "t:il")])
+        botones += [[("😀 Cambiar el emoji del logo", "t:ie")], [("👁 Vista previa", "t:v")], [("◂ Apariencia", "t")]]
+        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") +
+                     f"🖼 Ícono y logo\nÍcono de la app en el teléfono: {'el tuyo' if hay else 'el original'}\n"
+                     f"Logo arriba del título: {logo}", botones)
+
+    def pantalla_letras(self, chat, mid):
+        t = cargar_tema()
+        botones, fila = [], []
+        for i, (f, nombre) in enumerate(T.FUENTES):
+            fila.append((("✓ " if t["fuente"] == f else "") + nombre, f"t:lf:{i}"))
+            if len(fila) == 2:
+                botones.append(fila)
+                fila = []
+        botones.append([(("✓ " if t["escala"] == n else "") + nombre, f"t:ls:{n}") for n, nombre in T.ESCALAS])
+        botones += [[(f"Título en MAYÚSCULAS: {'sí' if t['titulo_mayus'] else 'no'} (cambiar)", "t:lm")],
+                    [("👁 Vista previa", "t:v")], [("◂ Apariencia", "t")]]
+        self.mostrar(chat, mid, f"🔤 Letras\nTipo: {dict(T.FUENTES)[t['fuente']]}\n"
+                                f"Tamaño: {dict(T.ESCALAS).get(t['escala'], str(t['escala']) + ' %')}\n"
+                                f"Título: {T.titulo(t)}\n\nArriba el tipo de letra, abajo el tamaño.", botones)
+
+    def pantalla_menus(self, chat, mid, aviso=""):
+        t = cargar_tema()
+        secciones = "\n".join(f"{'✅' if t[k] else '⬜'} {nombre}" for k, nombre in T.SECCIONES)
+        contactos = "\n".join(f"{i + 1}. {e['texto']} → {e['url']}" for i, e in enumerate(t["enlaces"])) or "(ninguno)"
+        botones = [[(f"{'✅' if t[k] else '⬜'} {nombre}", f"t:ms:{i}")] for i, (k, nombre) in enumerate(T.SECCIONES)]
+        botones.append([(("✓ " if t["radio"] == n else "") + nombre, f"t:mr:{n}") for n, nombre in T.RADIOS])
+        botones += [[(f"🗑 Quitar: {e['texto']}", f"t:mq:{i}")] for i, e in enumerate(t["enlaces"])]
+        if len(t["enlaces"]) < T.MAX_ENLACES:
+            botones.append([("➕ Botón de contacto", "t:ma")])
+        botones += [[("👁 Vista previa", "t:v")], [("◂ Apariencia", "t")]]
+        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") +
+                     f"📋 Menús y secciones\n\nQué se ve en la app (tocá para mostrar u ocultar):\n{secciones}\n\n"
+                     f"Esquinas de las tarjetas y botones: {dict(T.RADIOS).get(t['radio'], str(t['radio']))}\n\n"
+                     f"Botones de contacto del menú ☰ (WhatsApp, Telegram, tu web):\n{contactos}", botones)
+
+    def boton_tema(self, chat, mid, arg):
+        self.estado.pop(chat, None)
+        acc, _, resto = arg.partition(":")
+        t = cargar_tema()
+        if acc == "":
+            return self.pantalla_tema(chat, mid)
+        if acc == "pl":
+            return self.pantalla_plantillas(chat, mid)
+        if acc in ("pv", "pu"):
+            p = T.plantilla(resto)
+            if p is None:
+                return self.pantalla_tema(chat, mid, "Esa plantilla ya no existe.")
+            nueva = T.aplicar_plantilla(t, resto)
+            if acc == "pu":
+                guardar_tema(nueva)
+                return self.pantalla_tema(chat, mid, f"✅ Plantilla {p[1]} puesta. Cambiale lo que quieras y compilá.")
+            botones = [[("✅ Usar esta plantilla", f"t:pu:{resto}")], [("◂ Plantillas", "t:pl"), ("◂ Apariencia", "t")]]
+            if not vista.HAY_PIL:
+                return self.mostrar(chat, mid, f"🧩 {p[1]}\n{p[2]}", botones)
+            return self.enviar_vista(chat, nueva, f"🧩 {p[1]}: {p[2]}", botones)
+        if acc == "v":
+            return self.enviar_vista(chat, t, "👁 Así queda tu app ahora.")
+        if acc == "n":
+            return self.pedir(chat, "🏷 Escribí el nombre de la app (el que aparece debajo del ícono y arriba en la pantalla). Máx. 30 letras.", "t_nombre")
+        if acc == "le":
+            return self.pedir(chat, "💬 Escribí la frase que va debajo del nombre (o - para no poner nada):", "t_lema")
+        if acc == "co":
+            return self.pantalla_colores(chat, mid)
+        if acc == "c":
+            return self.pantalla_color(chat, mid, resto)
+        if acc == "ce":
+            return self.pedir(chat, "✏️ Escribí el código del color, por ejemplo #B388FF", "t_color", k=resto)
+        if acc == "cs":
+            k, _, h = resto.partition(":")
+            return self.poner_color(chat, mid, k, "#" + h)
+        if acc == "fo":
+            return self.pantalla_fondo(chat, mid)
+        if acc == "fl":
+            t["fondo2"] = ""
+            guardar_tema(T.marcar_cambio(t))
+            return self.pantalla_fondo(chat, mid)
+        if acc == "fi":
+            return self.pedir(chat, "📷 Mandame la imagen de fondo como foto. Conviene que sea vertical; la app la recorta para llenar la pantalla "
+                                    "y la oscurece un poco para que se lean las letras.", "t_fondo")
+        if acc == "fq":
+            borrar_imagen_marca("fondo.jpg")
+            return self.pantalla_fondo(chat, mid, "🗑 Imagen de fondo quitada.")
+        if acc in ("fv", "op", "ls", "mr") and resto.isdigit():
+            t[{"fv": "velo", "op": "opacidad", "ls": "escala", "mr": "radio"}[acc]] = int(resto)
+            guardar_tema(T.marcar_cambio(t) if acc == "mr" else t)
+            return {"fv": self.pantalla_fondo, "op": self.pantalla_fondo, "ls": self.pantalla_letras, "mr": self.pantalla_menus}[acc](chat, mid)
+        if acc == "ic":
+            return self.pantalla_icono(chat, mid)
+        if acc == "ii":
+            return self.pedir(chat, "📷 Mandame la imagen del ícono. Conviene que sea cuadrada.\n"
+                                    "Si tiene fondo transparente, mandala como archivo (PNG) y no como foto, para que no lo pierda.", "t_icono")
+        if acc == "iq":
+            borrar_imagen_marca("icono.png")
+            t["logo_imagen"] = False
+            guardar_tema(t)
+            return self.pantalla_icono(chat, mid, "🗑 Ícono quitado: vuelve el original.")
+        if acc == "il":
+            t["logo_imagen"] = not t["logo_imagen"]
+            guardar_tema(t)
+            return self.pantalla_icono(chat, mid)
+        if acc == "ie":
+            return self.pedir(chat, "😀 Mandame el emoji que va arriba del título (o - para no poner ninguno):", "t_logo")
+        if acc == "lt":
+            return self.pantalla_letras(chat, mid)
+        if acc == "lf" and resto.isdigit() and int(resto) < len(T.FUENTES):
+            t["fuente"] = T.FUENTES[int(resto)][0]
+            guardar_tema(T.marcar_cambio(t))
+            return self.pantalla_letras(chat, mid)
+        if acc == "lm":
+            t["titulo_mayus"] = not t["titulo_mayus"]
+            guardar_tema(t)
+            return self.pantalla_letras(chat, mid)
+        if acc == "me":
+            return self.pantalla_menus(chat, mid)
+        if acc == "ms" and resto.isdigit() and int(resto) < len(T.SECCIONES):
+            k = T.SECCIONES[int(resto)][0]
+            t[k] = not t[k]
+            guardar_tema(t)
+            return self.pantalla_menus(chat, mid)
+        if acc == "ma":
+            if len(t["enlaces"]) >= T.MAX_ENLACES:
+                return self.pantalla_menus(chat, mid, f"Ya tenés {T.MAX_ENLACES} botones de contacto. Quitá uno para agregar otro.")
+            return self.pedir(chat, "➕ Escribí el texto del botón (ej: Soporte por WhatsApp):", "t_enl_texto")
+        if acc == "mq" and resto.isdigit() and int(resto) < len(t["enlaces"]):
+            t["enlaces"].pop(int(resto))
+            guardar_tema(t)
+            return self.pantalla_menus(chat, mid)
+        if acc == "rs":
+            return self.mostrar(chat, mid, "♻️ ¿Volver al diseño original?\nSe pierden el nombre, los colores, el ícono, el fondo y los botones de contacto que pusiste.",
+                                [[("✅ Sí, volver al original", "t:rs_si"), ("✖ No", "t")]])
+        if acc == "rs_si":
+            borrar_imagen_marca("icono.png")
+            borrar_imagen_marca("fondo.jpg")
+            guardar_tema(T.normalizar({}))
+            return self.pantalla_tema(chat, mid, "♻️ Listo: diseño original. Compilá para que la app vuelva a verse como antes.")
+        return self.pantalla_tema(chat, mid)
+
+    def poner_color(self, chat, mid, k, valor):
+        h = T.color(valor)
+        if h is None or k not in ("fondo2",) + tuple(c for c, _ in T.COLORES_EDITABLES):
+            return self.pantalla_colores(chat, mid, "⚠️ Ese color no es válido.")
+        t = cargar_tema()
+        t[k] = h
+        if k != "fondo2":
+            T.derivar(t, k)
+        guardar_tema(T.marcar_cambio(t))
+        if k == "fondo2":
+            return self.pantalla_fondo(chat, mid, f"✅ Degradado: {t['fondo']} → {h}")
+        return self.pantalla_colores(chat, mid, f"✅ {dict(T.COLORES_EDITABLES)[k]}: {h}")
+
+    def texto_tema(self, chat, e, paso, txt):
+        t = cargar_tema()
+        if paso == "t_nombre":
+            n = T.limpiar_nombre(txt)
+            if not n:
+                return self.tg.mensaje(chat, "⚠️ Nombre vacío. Escribí el nombre de la app:", CANCELAR)
+            t["nombre"] = n
+        elif paso == "t_lema":
+            t["lema"] = "" if txt == "-" else T.limpiar_texto(txt, 60)
+        elif paso == "t_logo":
+            t["logo"] = "" if txt == "-" else T.limpiar_texto(txt, 8)
+            t["logo_imagen"] = False
+        elif paso == "t_color":
+            if T.color(txt) is None:
+                return self.tg.mensaje(chat, "⚠️ No es un código de color. Son 6 letras o números después del #, por ejemplo #B388FF:", CANCELAR)
+            self.estado.pop(chat, None)
+            return self.poner_color(chat, None, e.get("k", ""), txt)
+        elif paso == "t_enl_texto":
+            texto = T.limpiar_texto(txt, 30)
+            if not texto:
+                return self.tg.mensaje(chat, "⚠️ Texto vacío. Escribí el texto del botón:", CANCELAR)
+            e.update(paso="t_enl_url", texto=texto)
+            return self.tg.mensaje(chat, f"Botón: {texto}\nAhora mandame a dónde lleva: un link (https://...), tu número de WhatsApp con código de país "
+                                         "(ej: 5491122334455) o tu @usuario de Telegram.", CANCELAR)
+        elif paso == "t_enl_url":
+            url = T.limpiar_enlace(txt)
+            if url is None:
+                return self.tg.mensaje(chat, "⚠️ No lo entendí. Mandame un link que empiece con https://, un número de WhatsApp o un @usuario:", CANCELAR)
+            t["enlaces"] = (t["enlaces"] + [{"texto": e["texto"], "url": url}])[:T.MAX_ENLACES]
+        else:
+            return self.menu(chat)
+        guardar_tema(t)
+        self.estado.pop(chat, None)
+        if paso in ("t_enl_url",):
+            return self.pantalla_menus(chat, None, "✅ Botón de contacto agregado.")
+        if paso == "t_logo":
+            return self.pantalla_icono(chat, None)
+        return self.pantalla_tema(chat, None)
+
+    def imagen_recibida(self, chat, msg):
+        """Llegó algo mientras se esperaba el ícono o el fondo."""
+        es_icono = self.estado[chat]["paso"] == "t_icono"
+        limite = None if vista.HAY_PIL else (vista.MAX_ICONO if es_icono else vista.MAX_FONDO)
+        if msg.get("photo"):
+            fotos = sorted(msg["photo"], key=lambda p: p.get("width", 0) * p.get("height", 0))
+            if limite:      # sin Pillow no se puede achicar: la más grande que entre
+                entran = [p for p in fotos if 0 < p.get("file_size", 0) <= limite]
+                elegida = entran[-1] if entran else fotos[0]
+            elif es_icono:  # para el ícono alcanza con ~432 px
+                elegida = next((p for p in fotos if min(p.get("width", 0), p.get("height", 0)) >= 432), fotos[-1])
+            else:
+                elegida = fotos[-1]
+            fid = elegida["file_id"]
+        elif msg.get("document"):
+            d = msg["document"]
+            if not d.get("mime_type", "").startswith("image/"):
+                return self.tg.mensaje(chat, "⚠️ Ese archivo no es una imagen. Mandá un PNG o un JPG:", CANCELAR)
+            if d.get("file_size", 0) > vista.MAX_ENTRADA:
+                return self.tg.mensaje(chat, "⚠️ Esa imagen pesa demasiado. Mandala como foto o achicala:", CANCELAR)
+            fid = d["file_id"]
+        else:
+            return self.tg.mensaje(chat, "Estoy esperando una imagen. Mandala como foto o como archivo (PNG o JPG).", CANCELAR)
+        try:
+            datos = self.tg.bajar(fid)
+            lista = vista.preparar_icono(datos) if es_icono else vista.preparar_fondo(datos)
+        except vista.ErrorImagen as ex:
+            return self.tg.mensaje(chat, f"⚠️ {ex}", CANCELAR)
+        self.estado.pop(chat, None)
+        if es_icono:
+            guardar_imagen_marca("icono.png", lista)
+            t = cargar_tema()
+            t["logo_imagen"] = True
+            guardar_tema(t)
+            self.pantalla_icono(chat, None, "✅ Ícono guardado. También lo puse arriba del título; si preferís el emoji, cambialo acá abajo.")
+        else:
+            guardar_imagen_marca("fondo.jpg", lista)
+            self.pantalla_fondo(chat, None, "✅ Imagen de fondo guardada.")
+        if vista.HAY_PIL:
+            self.enviar_vista(chat, None, "👁 Así queda.")
 
     # -- acciones
     def crear_limite(self, chat, dias):
