@@ -22,13 +22,9 @@ for p in fonts-noto-color-emoji fonts-dejavu-extra; do
 	apt-get install -y --no-install-recommends "$p" >/dev/null 2>&1 || echo "Aviso: no se pudo instalar $p (la vista previa lo aproxima)."
 done
 
-ARCHIVOS="servidores.py compilar.py tema.py vista.py marca.py respaldo.py local.py centro.py instalacion.py zumo-bot.py"
+ARCHIVOS="servidores.py compilar.py tema.py vista.py marca.py respaldo.py centro.py zumo-bot.py"
 for f in $ARCHIVOS; do
-	if [ -n "${ZUMO_BOT_SRC:-}" ]; then   # VPS centro: se copian del clon local
-		cp "$ZUMO_BOT_SRC/$f" "/opt/zumo-bot/$f" || { echo "✘ No se pudo copiar $f"; exit 1; }
-	else
-		curl -fsSL "$BASE/$f$NC" -o "/opt/zumo-bot/$f" || { echo "✘ No se pudo bajar $f"; exit 1; }
-	fi
+	curl -fsSL "$BASE/$f$NC" -o "/opt/zumo-bot/$f" || { echo "✘ No se pudo bajar $f"; exit 1; }
 done
 rm -f /opt/zumo-bot/zs.py   # el bot ya no arma archivos .zs
 ( cd /opt/zumo-bot && python3 -m py_compile $ARCHIVOS ) || { echo "✘ El bot bajado tiene errores"; exit 1; }
@@ -49,12 +45,7 @@ fi
 
 # Compilar la app desde el bot: token de GitHub (fine-grained, solo el repo Zumo, permisos
 # Actions: Read and write, Secrets: Read and write, Contents: Read-only). Se puede dejar vacío.
-if [ "${ZUMO_COMPILAR:-}" = "local" ]; then
-	# VPS centro: la app se compila acá, no hace falta token de GitHub para eso
-	sed -i '/^COMPILAR=/d' /etc/zumo/bot.env; echo "COMPILAR=local" >> /etc/zumo/bot.env
-	if [ -n "${RESPALDO_PASS:-}" ]; then sed -i '/^RESPALDO_PASS=/d' /etc/zumo/bot.env; echo "RESPALDO_PASS=$RESPALDO_PASS" >> /etc/zumo/bot.env; fi
-	chmod 600 /etc/zumo/bot.env
-elif ! grep -q '^GITHUB_TOKEN=.\+' /etc/zumo/bot.env; then
+if ! grep -q '^GITHUB_TOKEN=.\+' /etc/zumo/bot.env; then
 	echo
 	echo "Para compilar la app desde el bot hace falta un token de GitHub (ver README, sección Bot)."
 	read -rp "Token de GitHub (vacío = sin compilar desde el bot): " GHT </dev/tty

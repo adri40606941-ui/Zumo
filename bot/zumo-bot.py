@@ -25,7 +25,6 @@ from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import centro  # noqa: E402
-import instalacion  # noqa: E402
 import compilar  # noqa: E402
 import marca  # noqa: E402
 import servidores as srv  # noqa: E402
@@ -479,9 +478,8 @@ class Telegram:
 
 # ------------------------------------------------------------------------ menús
 POR_PAGINA = 20
-MENU = [[("➕ Crear usuario", "crear")],
-        [("👥 Usuarios", "lista:0")],
-        [("📱 App Android", "app")],
+MENU = [[("📱 App Android", "app")],
+        [("🔗 Enlazar GitHub", "ghenl")],
         [("💾 Respaldo", "resp")],
         [("🪪 Mi ID", "id")]]
 CANCELAR = [[("✖ Cancelar", "menu")]]
@@ -505,7 +503,7 @@ def teclado_dias(prefijo):
             [("✖ Cancelar", "menu")]]
 
 
-class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
+class Bot(centro.CentroMixin):
     def __init__(self, tg, admins, gh=None):
         self.tg, self.admins, self.gh = tg, admins, gh
         self.estado = {}      # chat -> {"paso": ..., datos}
@@ -520,16 +518,8 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
 
     def menu(self, chat, mid=None, aviso=""):
         self.estado.pop(chat, None)
-        if self.local_activo:
-            # VPS centro: no hay clientes acá; solo la app, instalar VPS y respaldo
-            botones = [[("📱 App Android", "app")]]
-            if instalacion.base_publica():
-                botones.append([("🖥 Instalar VPS nueva", "ivps")])
-            botones.append([("💾 Respaldo", "resp")])
-            return self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + "🛡 Zumo · centro\n¿Qué querés hacer?", botones)
-        n = len(usuarios())
-        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + f"🛡 Zumo VPN · {n} usuario(s)\n¿Qué querés hacer?",
-                    MENU[:3] + [[("🖥 Instalar VPS nueva", "ivps")]] + MENU[3:] if instalacion.base_publica() else MENU)
+        self.mostrar(chat, mid, (aviso + "\n\n" if aviso else "") + "🛡 Zumo VPN\n¿Qué querés hacer?",
+                    MENU)
 
     def pantalla_crear(self, chat, mid):
         self.estado.pop(chat, None)
@@ -601,7 +591,7 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
         botones += [[("➕ Agregar servidor", "aadd"), ("📥 Pegar lista", "apegar")],
                     [("🎨 Apariencia de la app", "t")],
                     [(self.etiqueta_compilar(), "acomp")],
-                    [("💾 Respaldo y clave de firma", "resp") if self.local_activo else ("🔑 Asegurar clave de firma", "aclave")],
+                    [("🔑 Asegurar clave de firma", "aclave")],
                     [("◂ Menú", "menu")]]
         self.mostrar(chat, mid, txt, botones)
 
@@ -675,7 +665,7 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
         acc, _, arg = d.partition(":")
         if acc == "menu":
             return self.menu(chat, mid)
-        if self.boton_resp(chat, mid, acc) or self.boton_instalar(chat, mid, acc):
+        if self.boton_resp(chat, mid, acc):
             return
         if acc == "lista":
             self.estado.pop(chat, None)
@@ -749,11 +739,6 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
                                     "[APP 02]\nhost = dominio.com\npuerto = 80\npayload = GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]\n\n"
                                     "⚠️ Reemplaza TODA la lista que tiene el bot ahora.", "a_pegar")
         if acc == "acomp":
-            if self.local_activo:
-                n = len(cargar_app())
-                return self.mostrar(chat, mid, f"🔨 Compilar la app en esta VPS\n{n} servidor(es) de la lista del bot van dentro de la app."
-                                    f"{'' if n else ' (Lista vacía: se usa la que trae el código.)'}\nTarda unos minutos. ¿Compilo?",
-                                    [[("✅ Compilar en esta VPS", "acomp_si"), ("✖ No", "app")]])
             if not self.gh:
                 return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env. Corré de nuevo el instalador del bot para cargarlo.", [[("◂ App Android", "app")]])
             n = len(cargar_app())
@@ -766,8 +751,6 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
         if acc == "acomp_si":
             return self.compilar_app(chat)
         if acc == "aclave":
-            if self.local_activo:
-                return self.pantalla_resp(chat, mid)
             if not self.gh:
                 return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "app")]])
             return self.mostrar(chat, mid, "🔑 Asegurar la clave de firma\n\nHoy la clave con la que se firma la app vive en un caché de GitHub que se borra si pasan 7 días sin compilar; "
@@ -924,11 +907,9 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
         return self.menu(chat)
 
     # -- compilar
-    def donde_compila(self):
-        return "esta VPS" if self.local_activo else "GitHub"
 
     def etiqueta_compilar(self):
-        return f"🔨 Compilar en {self.donde_compila()} y enviarme el APK"
+        return "🔨 Compilar en GitHub y enviarme el APK"
 
     def compilar_app(self, chat, asegurar=False):
         if not self.compilando.acquire(blocking=False):
@@ -996,7 +977,7 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
             if centro.respaldo.clave_firma():
                 os.rename(centro.respaldo.FIRMA, centro.respaldo.FIRMA + ".ant-" + time.strftime("%Y%m%d%H%M%S"))
             centro.respaldo.guardar_clave_firma(jks, ks_pass)
-            return self.tg.mensaje(chat, "✅ Clave de firma traída de GitHub y guardada en esta VPS. "
+            return self.tg.mensaje(chat, "✅ Clave de firma traída de GitHub y guardada en este servidor. "
                                          "Ahora podés exportarla (📤) y mandarla a la VPS nueva.",
                                    [[("📤 Exportar clave", "kexp")], [("◂ Respaldo", "resp")]])
         gh.subir_secreto("ZUMO_KEYSTORE_B64", base64.b64encode(jks).decode())
@@ -1010,8 +991,6 @@ class Bot(centro.CentroMixin, instalacion.InstalacionMixin):
             gh = self.gh
             if asegurar:
                 return self._asegurar_clave(chat, solo_traer=(asegurar == "traer"))
-            if self.local_activo:
-                return self._compilar_local(chat, cargar_app())
             lista = cargar_app()
             self.tg.mensaje(chat, "🔨 Arrancando…")
             if lista:
@@ -1478,17 +1457,9 @@ def main():
         gh = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
                              rama=env.get("GITHUB_REF") or "main")
     bot = Bot(Telegram(token), admins, gh)
-    bot.local_activo = env.get("COMPILAR") == "local"
     bot.leer_env_fn = leer_env
     centro.ENV = ENV
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()
-    if instalacion.base_publica():      # VPS centro: entrega el install.sh con códigos de un solo uso
-        try:
-            bot.codigos = instalacion.Codigos()
-            srv = instalacion.hacer_servidor(bot.codigos, bot.aviso_codigo_usado)
-            threading.Thread(target=srv.serve_forever, daemon=True).start()
-        except OSError as e:
-            print("zumo-bot: no se pudo abrir el servidor de códigos de instalación:", e, flush=True)
     print("zumo-bot: listo, admins:", sorted(admins) or "ninguno (mandá /id al bot)", flush=True)
     offset = 0
     while True:
