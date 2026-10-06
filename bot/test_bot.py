@@ -441,14 +441,17 @@ class Pruebas(unittest.TestCase):
         if not vista.HAY_PIL:
             self.skipTest("sin Pillow")
         from PIL import Image
+        # pantalla completa: es larga, así que va en dos columnas (más ancha que alta, para que Telegram no la achique)
         img = Image.open(io.BytesIO(vista.captura(T.normalizar({}))))
-        self.assertEqual((img.format, img.size[0]), ("PNG", 720))
-        self.assertEqual(img.convert("RGB").getpixel((5, img.size[1] - 5)), T.rgb("#14102B"))     # el fondo del tema
-        # sin secciones la pantalla es más corta; con fondo claro cambia el color
+        self.assertEqual(img.format, "PNG")
+        self.assertGreater(img.size[0], 1440); self.assertLess(img.size[1], img.size[0])
+        self.assertEqual(img.convert("RGB").getpixel((40, 40)), T.rgb("#14102B"))                # el fondo del tema
+        # sin secciones la pantalla es corta: una sola columna
         corto = Image.open(io.BytesIO(vista.captura(T.normalizar({"ver_vencimiento": False, "ver_conexion": False, "ver_telefono": False}))))
-        self.assertLess(corto.size[1], img.size[1] - 300)
+        self.assertEqual(corto.size[0], 720)
+        self.assertEqual(corto.convert("RGB").getpixel((5, corto.size[1] - 5)), T.rgb("#14102B"))
         claro = Image.open(io.BytesIO(vista.captura(T.aplicar_plantilla(T.normalizar({}), "claro"))))
-        self.assertEqual(claro.convert("RGB").getpixel((5, claro.size[1] - 5)), T.rgb("#F3F5FA"))
+        self.assertEqual(claro.convert("RGB").getpixel((40, 40)), T.rgb("#F3F5FA"))
         hoja = Image.open(io.BytesIO(vista.muestrario([(n, T.aplicar_plantilla(T.normalizar({}), p)) for p, n, _, _ in T.PLANTILLAS])))
         self.assertEqual(hoja.format, "JPEG")
         # ícono: queda cuadrado, PNG y liviano aunque llegue enorme y apaisado

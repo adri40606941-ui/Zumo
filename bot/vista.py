@@ -148,6 +148,7 @@ class _Pantalla:
         self._fondo(fondo)
         self.icono = icono
         self.y = 0
+        self.cortes = []        # alturas (dp) entre tarjeta y tarjeta: por ahí se puede partir la imagen
 
     # -- utilidades
     def px(self, dp):
@@ -219,6 +220,7 @@ class _Pantalla:
 
     def tarjeta(self, alto):
         """Caja de una tarjeta a la altura actual. Devuelve (x, y) del contenido."""
+        self.cortes.append(self.y + 7)
         self.y += 14
         alfa = int(255 * self.t["opacidad"] / 100)
         self.caja(18, self.y, self.ancho - 36, alto, self.t["tarjeta"], self.radio(), self.t["borde"], alfa)
@@ -344,11 +346,26 @@ class _Pantalla:
 
 
 def captura(t, icono=None, fondo=None, ancho=720):
-    """PNG con la pantalla principal de la app usando el tema t."""
+    """PNG con la pantalla principal de la app usando el tema t.
+
+    La pantalla entera es mucho más alta que ancha y Telegram achica las fotos largas hasta dejarlas
+    ilegibles. Por eso, si es larga, va en dos columnas: a la izquierda lo que se ve al abrir la app
+    y a la derecha lo que aparece al bajar."""
     t = T.normalizar(t)
     # primero en miniatura, solo para saber el alto: así el fondo (imagen o degradado) ocupa justo la pantalla dibujada
     alto = int(_Pantalla(t, icono, None, s=1).dibujar().y) + 1
-    im = _Pantalla(t, icono, fondo, alto_dp=alto).dibujar().imagen(ancho)
+    pantalla = _Pantalla(t, icono, fondo, alto_dp=alto).dibujar()
+    im = pantalla.imagen(ancho)
+    cortes = [c for c in pantalla.cortes if alto * 0.35 <= c <= alto * 0.65]
+    if alto > 820 and cortes:
+        corte = min(cortes, key=lambda c: abs(c - alto / 2))
+        y = int(round(corte * ancho / pantalla.ancho))
+        arriba, abajo = im.crop((0, 0, ancho, y)), im.crop((0, y, ancho, im.size[1]))
+        margen = ancho // 24
+        hoja = Image.new("RGB", (2 * ancho + 3 * margen, max(arriba.size[1], abajo.size[1]) + 2 * margen), (24, 24, 28))
+        hoja.paste(arriba, (margen, margen))
+        hoja.paste(abajo, (2 * margen + ancho, margen))
+        im = hoja
     b = io.BytesIO()
     im.save(b, "PNG", optimize=True)
     return b.getvalue()
