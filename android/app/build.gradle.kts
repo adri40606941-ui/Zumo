@@ -40,6 +40,9 @@ android {
         versionCode = (System.getenv("ZUMO_VERSION_CODE") ?: "1").toInt()
         versionName = "1.0." + (System.getenv("ZUMO_VERSION_CODE") ?: "1")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        // Celulares con páginas de memoria de 16 KB (Android 15 en adelante): la parte nativa se enlaza
+        // alineada a 16 KB. AGP 8.5.2 ya alinea el .so dentro del APK (se comprueba con comprobar-16kb.py).
+        externalNativeBuild { ndkBuild { arguments("APP_SUPPORT_FLEXIBLE_PAGE_SIZES=true") } }
         manifestPlaceholders["nombreApp"] = nombreApp
         manifestPlaceholders["iconoApp"] = if (hayIconoMarca) "@mipmap/ic_marca" else "@drawable/ic_launcher"
     }
