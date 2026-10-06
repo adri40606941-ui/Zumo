@@ -32,7 +32,6 @@ class Pruebas(unittest.TestCase):
 
     def test_compila_y_devuelve_apk(self):
         self.gradle('echo "> Task :app:compileKotlin"\n'
-                    'echo "vc=$ZUMO_VERSION_CODE ks=$ZUMO_KEYSTORE pw=$ZUMO_KS_PASS" > "$PWD/visto.txt" 2>/dev/null; '
                     'D=' + local.SRC + '/android/app/build/outputs/apk/release; mkdir -p $D; '
                     'cat ' + local.SRC + '/android/servidores.txt > $D/zumo.apk; echo "vc=$ZUMO_VERSION_CODE" >> $D/zumo.apk\n')
         r = local.compilar("[A]\nhost = x\n", actualizar=False)
