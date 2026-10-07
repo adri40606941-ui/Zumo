@@ -345,7 +345,7 @@ u="$1"
 pkill -9 -u "$u" 2>/dev/null
 userdel "$u" 2>/dev/null
 if command -v zumo_db_del >/dev/null 2>&1; then zumo_db_del "$u"; else sed -i "/^$u:/d" /etc/zumo/usuarios.db 2>/dev/null; fi
-if [ -f /etc/zumo/temporales.db ]; then grep -v "^$u:" /etc/zumo/temporales.db > /etc/zumo/temporales.db.tmp 2>/dev/null && mv /etc/zumo/temporales.db.tmp /etc/zumo/temporales.db; fi
+if [ -f /etc/zumo/temporales.db ]; then sed -i "/^$u:/d" /etc/zumo/temporales.db; fi
 exit 0
 BORRARTEMP
 chmod +x /etc/zumo/borrar-temporal.sh

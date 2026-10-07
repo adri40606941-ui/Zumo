@@ -49,7 +49,7 @@ else
 sed -i "/^$u:/d" /etc/zumo/usuarios.db 2>/dev/null
 fi
 if [ -f /etc/zumo/temporales.db ]; then
-grep -v "^$u:" /etc/zumo/temporales.db > /etc/zumo/temporales.db.tmp 2>/dev/null && mv /etc/zumo/temporales.db.tmp /etc/zumo/temporales.db
+sed -i "/^$u:/d" /etc/zumo/temporales.db
 fi
 exit 0
 BORRARTEMP
