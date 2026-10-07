@@ -124,10 +124,11 @@ class ZumoVpnService : VpnService() {
         val prefs = Prefs(this)
         Servidores.refrescar(this, prefs)   // servidor de la lista de la app: toma su payload actual
         val cfg = prefs.config
-        val user = prefs.user
-        val pass = prefs.pass
-        if (cfg == null || !cfg.valida() || user.isBlank() || pass.isBlank()) {
-            fallarEncendido("Falta la cuenta: elegí un servidor y poné tu usuario y contraseña, o abrí tu archivo .zs."); return
+        // En modo token, el token de este celular hace de usuario y de contraseña.
+        val user = if (prefs.modoToken) TokenCel.token(this, prefs) else prefs.user
+        val pass = if (prefs.modoToken) user else prefs.pass.ifBlank { prefs.user }
+        if (cfg == null || !cfg.valida() || user.isBlank()) {
+            fallarEncendido("Falta la cuenta: elegí un servidor y poné tu usuario y contraseña (o usá el token de este celular)."); return
         }
         if (Perfil.vencida(prefs.exp)) {
             fallarEncendido("Tu cuenta venció el ${Perfil.fechaLinda(prefs.exp)}. Pedí la renovación."); return
