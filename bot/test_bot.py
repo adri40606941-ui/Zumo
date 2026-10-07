@@ -110,9 +110,9 @@ class Pruebas(unittest.TestCase):
             # un extraño no entra
             b.manejar({"chat": {"id": 1}, "from": {"id": 99}, "text": "hola"})
             self.assertIn("No autorizado", tg.mensajes[-1])
-            # cualquier texto abre el menú con botones: ya no hay "Servidor y payload"
+            # cualquier texto abre el menú con botones: gestión de usuarios + app/GitHub
             txt("hola")
-            self.assertEqual(tg.datos_botones(), ["app", "ghenl", "resp", "id"])
+            self.assertEqual(tg.datos_botones(), ["crear", "lista:0", "app", "ghenl", "resp", "id"])
             btn("ghenl"); self.assertIn("ghtok", tg.datos_botones())          # sin token: ofrece pegarlo
             b.gh = type("GH", (), {"repo": "o/r", "rama": "main"})()
             btn("ghenl"); self.assertIn("enlazado", tg.mensajes[-1]); self.assertIn("aclave", tg.datos_botones())

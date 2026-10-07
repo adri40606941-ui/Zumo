@@ -478,7 +478,8 @@ class Telegram:
 
 # ------------------------------------------------------------------------ menús
 POR_PAGINA = 20
-MENU = [[("📱 App Android", "app")],
+MENU = [[("➕ Crear usuario", "crear"), ("👥 Usuarios", "lista:0")],
+        [("📱 App Android", "app")],
         [("🔗 Enlazar GitHub", "ghenl")],
         [("💾 Respaldo", "resp")],
         [("🪪 Mi ID", "id")]]
