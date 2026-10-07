@@ -43,4 +43,14 @@ class Prefs(ctx: Context) {
     var ultimoChequeoLista: Long
         get() = sp.getLong("ultimo_chequeo_lista", 0)
         set(v) { sp.edit().putLong("ultimo_chequeo_lista", v).apply() }
+
+    /** El cliente entra con el token de este celular (en vez de usuario y contraseña). */
+    var modoToken: Boolean
+        get() = sp.getBoolean("modo_token", false)
+        set(v) { sp.edit().putBoolean("modo_token", v).apply() }
+
+    /** Token al azar, solo si el teléfono no da un ANDROID_ID usable (no sobrevive a desinstalar). */
+    var tokenFallback: String
+        get() = sp.getString("token_fallback", "") ?: ""
+        set(v) { sp.edit().putString("token_fallback", v).apply() }
 }

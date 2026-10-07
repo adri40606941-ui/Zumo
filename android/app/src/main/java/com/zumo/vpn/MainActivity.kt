@@ -47,6 +47,10 @@ class MainActivity : Activity() {
     private lateinit var btn: Button
     private var btnActualizar: TextView? = null
     @Volatile private var actualizando = false
+    private lateinit var btnModoUser: TextView
+    private lateinit var btnModoToken: TextView
+    private lateinit var cajaToken: LinearLayout
+    private lateinit var tvTokenCel: TextView
     private lateinit var puntoEstado: View
     private lateinit var tvVelocidad: TextView
     private lateinit var tvTiempo: TextView
@@ -158,6 +162,15 @@ class MainActivity : Activity() {
             background = redondo(Color.TRANSPARENT, radio(0.7f), trazo = 1, colorTrazo = color)
             setOnClickListener { onClick() }
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { topMargin = dp(8) }
+        }
+
+    /** Botón-pestaña para elegir el modo de ingreso (usuario/clave o token). Se pinta en aplicarModo(). */
+    private fun botonModo(t: String, onClick: () -> Unit): TextView =
+        texto(t, 14f, TEXTO, true).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(10), dp(12), dp(10), dp(12))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { onClick() }
         }
 
     private fun tarjeta(): LinearLayout = LinearLayout(this).apply {
@@ -272,6 +285,42 @@ class MainActivity : Activity() {
             setOnClickListener { elegirServidor() }
         }
         cCuenta.addView(tvServidor)
+
+        // elegir cómo entra: usuario y contraseña, o el token de este celular
+        val filaModo = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
+        }
+        btnModoUser = botonModo("Usuario y clave") { prefs.modoToken = false; cargarCuenta(); refrescar() }
+        btnModoToken = botonModo("🎟 Mi token") { prefs.modoToken = true; cargarCuenta(); refrescar() }
+        (btnModoUser.layoutParams as LinearLayout.LayoutParams).apply { weight = 1f; marginEnd = dp(4) }
+        (btnModoToken.layoutParams as LinearLayout.LayoutParams).apply { weight = 1f; marginStart = dp(4) }
+        filaModo.addView(btnModoUser); filaModo.addView(btnModoToken)
+        cCuenta.addView(filaModo)
+
+        // caja del token de este celular (solo en modo token)
+        cajaToken = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
+        }
+        cajaToken.addView(texto("Token de este celular (es tu usuario y tu clave):", 12f, TEXTO_SUAVE))
+        tvTokenCel = texto("", 17f, ACENTO, true).apply {
+            background = redondo(conOpacidad(CAMPO), radio(0.6f), trazo = 1)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            letterSpacing = 0.05f
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) }
+        }
+        cajaToken.addView(tvTokenCel)
+        cajaToken.addView(botonSecundario("📋  Copiar token") {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("token", TokenCel.token(this, prefs)))
+            aviso("Token copiado. Pasáselo a tu proveedor para que te lo active.")
+        })
+        cajaToken.addView(texto("Pasale este código a tu proveedor. Cuando lo active, elegí un servidor y tocá Conectar.", 12f, TEXTO_SUAVE).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+        })
+        cCuenta.addView(cajaToken)
+
         tvCuentaZs = texto("Cuenta cargada desde un archivo .zs. Para entrar con usuario y contraseña, elegí un servidor de la lista.", 12.5f, TEXTO_SUAVE).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
         }
@@ -485,9 +534,9 @@ class MainActivity : Activity() {
         ocultarTeclado()
         Servidores.refrescar(this, prefs)
         val c = prefs.config
-        if (c == null || !c.valida() || prefs.user.isBlank() || prefs.pass.isBlank()) {
+        // En modo token no hace falta usuario ni contraseña: el token de este celular hace de las dos.
+        if (c == null || !c.valida() || (!prefs.modoToken && (prefs.user.isBlank() || prefs.pass.isBlank()))) {
             aviso(when {
-                servidores.isEmpty() -> "Primero importá el archivo .zs de tu cuenta"
                 c == null || !c.valida() -> "Primero elegí un servidor"
                 prefs.user.isBlank() -> "Poné tu usuario"
                 else -> "Poné tu contraseña"
@@ -621,12 +670,26 @@ class MainActivity : Activity() {
             else -> "Elegí un servidor   ▾"
         }
         tvServidor.setTextColor(if (elegido != null || porArchivo) TEXTO else NARANJA)
-        tvCuentaZs.visibility = if (porArchivo) View.VISIBLE else View.GONE
-        cajaLogin.visibility = if (elegido != null) View.VISIBLE else View.GONE
+        tvCuentaZs.visibility = if (porArchivo && !prefs.modoToken) View.VISIBLE else View.GONE
+        cajaLogin.visibility = if (!prefs.modoToken && elegido != null) View.VISIBLE else View.GONE
         cargando = true
         etUser.setText(if (elegido != null) prefs.user else "")
         etPass.setText(if (elegido != null) prefs.pass else "")
         cargando = false
+        aplicarModo()
+    }
+
+    /** Pinta las pestañas de modo y muestra la caja del token o la de usuario/clave. */
+    private fun aplicarModo() {
+        val tok = prefs.modoToken
+        fun pintar(b: TextView, activo: Boolean) {
+            b.background = redondo(conOpacidad(if (activo) ACENTO else CAMPO), radio(0.6f),
+                trazo = if (activo) 2 else 1, colorTrazo = if (activo) ACENTO else BORDE)
+            b.setTextColor(if (activo) ACENTO else TEXTO_SUAVE)
+        }
+        pintar(btnModoUser, !tok); pintar(btnModoToken, tok)
+        cajaToken.visibility = if (tok) View.VISIBLE else View.GONE
+        if (tok) tvTokenCel.text = TokenCel.token(this, prefs)
     }
 
     private fun elegirServidor() {
