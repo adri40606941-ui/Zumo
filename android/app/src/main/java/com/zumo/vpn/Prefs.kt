@@ -38,4 +38,9 @@ class Prefs(ctx: Context) {
     var pidioBateria: Boolean
         get() = sp.getBoolean("pidio_bateria", false)
         set(v) { sp.edit().putBoolean("pidio_bateria", v).apply() }
+
+    /** Cuándo (epoch ms) se buscó por última vez una lista de servidores nueva en segundo plano. */
+    var ultimoChequeoLista: Long
+        get() = sp.getLong("ultimo_chequeo_lista", 0)
+        set(v) { sp.edit().putLong("ultimo_chequeo_lista", v).apply() }
 }
