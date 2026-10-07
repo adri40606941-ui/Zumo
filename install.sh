@@ -849,11 +849,11 @@ systemctl stop udpgw-7300 2>/dev/null || true
 install -d -m 0755 /opt/badvpn
 install -m 0755 "$WORK/badvpn/build/udpgw/badvpn-udpgw" /opt/badvpn/badvpn-udpgw
 
-# límites elegidos desde el panel (Protocolos > BadVPN > Editar límites); por defecto 200 y 64
-MAXC=200; MAXCC=64
+# límites elegidos desde el panel (Protocolos > BadVPN > Editar límites); por defecto 200 y 16
+MAXC=200; MAXCC=16
 [ -f /etc/zumo/badvpn.conf ] && . /etc/zumo/badvpn.conf
 [[ "$MAXC" =~ ^[0-9]+$ ]] || MAXC=200
-[[ "$MAXCC" =~ ^[0-9]+$ ]] || MAXCC=64
+[[ "$MAXCC" =~ ^[0-9]+$ ]] || MAXCC=16
 
 cat > /etc/systemd/system/udpgw-7300.service <<'U2'
 [Unit]
@@ -862,9 +862,15 @@ After=network.target
 [Service]
 # --loglevel none: sin esto el badvpn escribe una línea por conexión y hace que
 #   systemd-journal coma mucho CPU con muchos clientes.
-# --max-connections-for-client 64: tope por cliente (alcanza para juegos) para que
-#   no se infle tanto en CPU/RAM. Subilo a 128 si algún cliente nota cortes.
-ExecStart=/opt/badvpn/badvpn-udpgw --listen-addr 0.0.0.0:7300 --loglevel none --max-clients 200 --max-connections-for-client 64
+# --max-connections-for-client 16: tope de conexiones UDP por cliente. Cada conexión UDP
+#   abierta guarda unos 250 KB y BadVPN no las cierra solo hasta llegar al tope, así que la
+#   memoria máxima es clientes x tope x 250 KB (con 64 o 128 y muchos clientes llegaba a
+#   superar 1 GB). Juegos y llamadas usan pocas. Si un cliente nota cortes, subilo a 24 o 32.
+# MemoryMax/MemoryHigh: seguro por si algo más lo llena; systemd lo reinicia en vez de
+#   dejar que el servidor se quede sin memoria.
+ExecStart=/opt/badvpn/badvpn-udpgw --listen-addr 0.0.0.0:7300 --loglevel none --max-clients 200 --max-connections-for-client 16
+MemoryHigh=900M
+MemoryMax=1G
 SuccessExitStatus=1
 Restart=always
 RestartSec=2
