@@ -240,7 +240,7 @@ unset ZUMO_NETDEV
 
 echo "7) Usuarios HWID en línea y límite 2"
 chequear "Ver usuarios lee nombres largos (HWID de 32) sin recortar" "si" "$(grep -q 'ps -eo user:32=,comm=,etimes=' "$AQUI/panel.sh" && echo si || echo no)"
-chequear "HWID nuevo: límite por defecto 2" "si" "$(sed -n '/Pegá el HWID del cliente/,/zumo_db_add "\$hwid" "\$lim"/p' "$AQUI/panel.sh" | grep -q 'lim=\${lim:-2}' && echo si || echo no)"
+chequear "HWID nuevo: límite por defecto 2" "si" "$(sed -n '/Pegá el token del celular del cliente/,/zumo_db_add "\$hwid" "\$lim"/p' "$AQUI/panel.sh" | grep -q 'lim=\${lim:-2}' && echo si || echo no)"
 chequear "actualizar pasa HWID de límite 1 a 2 una sola vez" "si" "$(grep -q 'hwid-limite2' "$AQUI/actualizar.sh" && echo si || echo no)"
 
 echo "8) Ficha HWID sin límite a la vista"

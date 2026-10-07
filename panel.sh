@@ -175,7 +175,7 @@ mapfile -t USERS < <(db_orden | cut -d: -f1 | sed '/^$/d')
 if [ ${#USERS[@]} -eq 0 ]; then msg_err "No hay usuarios registrados"; return 1; fi
 for i in "${!USERS[@]}"; do
 local etiq="$(etiqueta_de "${USERS[$i]}")"
-if es_hwid "${USERS[$i]}"; then etiq="$etiq (HWID)"; fi
+if es_hwid "${USERS[$i]}"; then etiq="$etiq (Token)"; fi
 echo -e " \e[1;38;5;208m[$((i+1))]\e[0m \e[1;32m${etiq}\e[0m"
 done
 echo; read -rp " Número o nombre de usuario: " n
@@ -185,7 +185,7 @@ local rc h
 buscar_usuario "$n"; rc=$?
 case $rc in
 0) return 0 ;;
-2) msg_err "Hay varios clientes con el nombre \"$n\". Escribí el HWID:"
+2) msg_err "Hay varios clientes con el nombre \"$n\". Escribí el token:"
 for h in "${AMBIGUOS[@]}"; do echo -e "     \e[1;38;5;214m$h${N}"; done
 return 1 ;;
 *) msg_err "No existe: $n"; return 1 ;;
@@ -277,7 +277,7 @@ fi
 crear_usuario() {
 banner; echo -e " \e[1;38;5;141mCREAR USUARIO${N}\n"
 op 1 "●" "Normal"
-op 2 "🔑" "HWID"
+op 2 "🎟" "Token"
 op 0 "◂" "Volver"
 echo; read -rp " Modo [1]: " modo; modo=${modo:-1}
 case "$modo" in
@@ -290,22 +290,22 @@ echo
 if [ "$modo" = "2" ]; then
 read -rp " Nombre del cliente (solo para identificarlo en el panel): " etiqueta
 etiqueta=$(zumo_limpiar_etiqueta "$etiqueta")
-leer_alnum "Pegá el HWID del cliente (8 a 32 caracteres): " 32; hwid="$REPLY_ALNUM"
+leer_alnum "Pegá el token del celular del cliente (8 a 32 caracteres): " 32; hwid="$REPLY_ALNUM"
 if [ ${#hwid} -lt 8 ] || [ ${#hwid} -gt 32 ]; then
-msg_err "HWID inválido (8 a 32 caracteres alfanuméricos; quedaron ${#hwid})"; pausa; return
+msg_err "Token inválido (8 a 32 caracteres alfanuméricos; quedaron ${#hwid})"; pausa; return
 fi
-id "$hwid" &>/dev/null && { msg_err "Ese HWID ya está registrado"; pausa; return; }
+id "$hwid" &>/dev/null && { msg_err "Ese token ya está registrado"; pausa; return; }
 read -rp " Días de duración: " d
 [[ "$d" =~ ^[0-9]+$ ]] || { msg_err "Días inválidos"; pausa; return; }
 read -rp " Límite de conexiones [2]: " lim; lim=${lim:-2}
 [[ "$lim" =~ ^[0-9]+$ ]] && [ "$lim" -ge 1 ] || { msg_err "Límite inválido (mínimo 1)"; pausa; return; }
 exp=$(date -d "+$d days" +%F)
 if ! useradd --badname -M -s /bin/false -e "$(fecha_cuenta "$exp")" -c "hwid,$etiqueta" "$hwid" 2>/dev/null; then
-msg_err "No se pudo crear el usuario (probá con otro HWID)"; pausa; return
+msg_err "No se pudo crear el usuario (probá con otro token)"; pausa; return
 fi
 echo "$hwid:$hwid" | chpasswd
 zumo_db_add "$hwid" "$lim" "$exp"
-echo; msg_ok "Usuario HWID creado"
+echo; msg_ok "Usuario con token creado"
 mensaje_hwid "$hwid" "$(date -d "$exp" +%d/%m/%Y)"
 pausa
 return
@@ -362,7 +362,7 @@ systemd-run --quiet --collect --unit="zumo-temp-$u" --on-active="${min}min" \
 crear_temporal() {
 banner; echo -e " \e[1;38;5;141mUSUARIO TEMPORAL${N}\n"
 op 1 "●" "Común"
-op 2 "🔑" "HWID"
+op 2 "🎟" "Token"
 op 0 "◂" "Volver"
 echo; read -rp " Modo [1]: " modo; modo=${modo:-1}
 case "$modo" in
@@ -375,11 +375,11 @@ echo
 if [ "$modo" = "2" ]; then
 read -rp " Nombre del cliente: " etiqueta
 etiqueta=$(zumo_limpiar_etiqueta "$etiqueta")
-leer_alnum "Pegá el HWID del cliente (8 a 32 caracteres): " 32; hwid="$REPLY_ALNUM"
+leer_alnum "Pegá el token del celular del cliente (8 a 32 caracteres): " 32; hwid="$REPLY_ALNUM"
 if [ ${#hwid} -lt 8 ] || [ ${#hwid} -gt 32 ]; then
-msg_err "HWID inválido (8 a 32 caracteres alfanuméricos; quedaron ${#hwid})"; pausa; return
+msg_err "Token inválido (8 a 32 caracteres alfanuméricos; quedaron ${#hwid})"; pausa; return
 fi
-id "$hwid" &>/dev/null && { msg_err "Ese HWID ya está registrado"; pausa; return; }
+id "$hwid" &>/dev/null && { msg_err "Ese token ya está registrado"; pausa; return; }
 read -rp " Minutos de duración: " min
 [[ "$min" =~ ^[0-9]+$ ]] && [ "$min" -ge 1 ] || { msg_err "Minutos inválidos"; pausa; return; }
 exp=$(date -d "+2 days" +%F)
@@ -389,7 +389,7 @@ fi
 echo "$hwid:$hwid" | chpasswd
 zumo_db_add "$hwid" 1 "$exp"
 programar_borrado_temp "$hwid" "$min"
-echo; msg_ok "Usuario HWID temporal creado"
+echo; msg_ok "Usuario con token temporal creado"
 mensaje_hwid "$hwid" "$( [ "$min" -eq 1 ] && echo "1 minuto" || echo "$min minutos" )"
 pausa
 return
@@ -428,7 +428,7 @@ on=$(en_linea "$u")
 if [ "${on:-0}" -gt 0 ]; then col='\e[1;32m●\e[0m'; else col='\e[2m○\e[0m'; fi
 if es_hwid "$u"; then
 lab=$(etiqueta_de "$u")
-printf ' \e[1;38;5;208m[%d]\e[0m %b \e[1;38;5;214m%s\e[0m \e[2m(HWID)\e[0m\n' "$i" "$col" "$lab"
+printf ' \e[1;38;5;208m[%d]\e[0m %b \e[1;38;5;214m%s\e[0m \e[2m(Token)\e[0m\n' "$i" "$col" "$lab"
 printf '      \e[2m%s\e[0m\n' "$u"
 else
 printf ' \e[1;38;5;208m[%d]\e[0m %b \e[1;38;5;214m%s\e[0m\n' "$i" "$col" "$u"
@@ -498,7 +498,7 @@ banner; echo -e " \e[1;38;5;141mELIMINAR USUARIO${N}\n"
 if [ ! -s "$DB" ]; then msg_err "No hay usuarios registrados"; pausa; return; fi
 lista_para_borrar
 echo; echo -e " $L"
-read -rp " Número, usuario o HWID para borrar: " q
+read -rp " Número, usuario o token para borrar: " q
 q="${q#"${q%%[![:space:]]*}"}"; q="${q%"${q##*[![:space:]]}"}"
 [ -z "$q" ] && return
 buscar_usuario "$q"; rc=$?
@@ -592,7 +592,7 @@ op 1 "✎" "Cambiar contraseña"
 op 2 "⚙" "Cambiar límite de conexiones"
 op 3 "⏱" "Cambiar días (vencimiento)"
 if esta_bloqueado "$SEL"; then op 4 "🔓" "Desbloquear"; else op 4 "🔒" "Bloquear"; fi
-es_hwid "$SEL" && op 5 "🔑" "Cambiar HWID"
+es_hwid "$SEL" && op 5 "🎟" "Cambiar token"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " eo
 case $eo in
@@ -618,11 +618,11 @@ usermod -U "$SEL" 2>/dev/null; msg_ok "$SEL desbloqueado"
 else
 usermod -L "$SEL" 2>/dev/null; pkill -9 -u "$SEL" 2>/dev/null; msg_ok "$SEL bloqueado"
 fi; sleep 1 ;;
-5) es_hwid "$SEL" || { msg_err "Ese usuario no es de modo HWID"; sleep 1; continue; }
-read -rp " HWID nuevo (8 a 32 alfanuméricos): " nhraw
+5) es_hwid "$SEL" || { msg_err "Ese usuario no es de modo token"; sleep 1; continue; }
+read -rp " Token nuevo (8 a 32 alfanuméricos): " nhraw
 nh=$(echo "$nhraw" | tr -cd 'A-Za-z0-9')
-if [ ${#nh} -lt 8 ] || [ ${#nh} -gt 32 ]; then msg_err "HWID inválido"; sleep 1; continue; fi
-id "$nh" &>/dev/null && { msg_err "Ya existe un usuario con ese HWID"; sleep 1; continue; }
+if [ ${#nh} -lt 8 ] || [ ${#nh} -gt 32 ]; then msg_err "Token inválido"; sleep 1; continue; fi
+id "$nh" &>/dev/null && { msg_err "Ya existe un usuario con ese token"; sleep 1; continue; }
 pkill -9 -u "$SEL" 2>/dev/null
 if usermod --badname -l "$nh" "$SEL" 2>/dev/null; then
 echo "$nh:$nh" | chpasswd
@@ -630,9 +630,9 @@ zumo_db_rename "$SEL" "$nh"
 clave_rename "$SEL" "$nh"
 datos_rename "$SEL" "$nh"
 SEL="$nh"
-msg_ok "HWID cambiado a $nh"
+msg_ok "Token cambiado a $nh"
 else
-msg_err "No se pudo cambiar el HWID"
+msg_err "No se pudo cambiar el token"
 fi; sleep 1 ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;

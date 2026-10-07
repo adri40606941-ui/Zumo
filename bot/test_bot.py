@@ -167,12 +167,12 @@ class Pruebas(unittest.TestCase):
             cmds = self.sistema_falso(bot, tmp)
             btn("ct:h"); self.assertIn("nombre del cliente", tg.mensajes[-1])
             txt("Juan: Perez")
-            txt("abc-123"); self.assertIn("HWID inválido", tg.mensajes[-1])       # quedan 6 caracteres
+            txt("abc-123"); self.assertIn("Token inválido", tg.mensajes[-1])       # quedan 6 caracteres
             txt("AB12-cd34 EF56")                                                 # se limpia como en el panel
-            self.assertIn("HWID: AB12cd34EF56", tg.mensajes[-1]); self.assertIn("cd:30", tg.datos_botones())
+            self.assertIn("Token: AB12cd34EF56", tg.mensajes[-1]); self.assertIn("cd:30", tg.datos_botones())
             btn("cm:10"); self.assertIn("¿Qué querés hacer?", tg.mensajes[-1])     # minutos no va en un HWID por días
             btn("ct:h"); txt("Juan: Perez"); txt("AB12cd34EF56"); btn("cd:30")
-            self.assertIn("lo habitual es 2", tg.mensajes[-1])
+            self.assertIn("habitual es 2", tg.mensajes[-1])
             btn("cl:2")
             vence = bot.date.today() + bot.timedelta(days=30)
             alta = next(c[0] for c in cmds if c[0][0] == "useradd")
@@ -186,9 +186,9 @@ class Pruebas(unittest.TestCase):
             # el mismo HWID no entra dos veces
             btn("ct:h"); txt("Otro"); txt("AB12cd34EF56"); self.assertIn("ya está registrado", tg.mensajes[-1])
             # en la lista se ve el nombre del cliente; en la ficha, el HWID y no hay "Cambiar clave"
-            btn("lista:0"); self.assertIn("🔑 Juan Perez", "".join(t for fila in tg.botones[-1] for t, _ in fila))
+            btn("lista:0"); self.assertIn("🎟 Juan Perez", "".join(t for fila in tg.botones[-1] for t, _ in fila))
             btn("u:AB12cd34EF56")
-            self.assertIn("Juan Perez (HWID)", tg.mensajes[-1]); self.assertIn("HWID: AB12cd34EF56", tg.mensajes[-1])
+            self.assertIn("Juan Perez (Token)", tg.mensajes[-1]); self.assertIn("Token: AB12cd34EF56", tg.mensajes[-1])
             self.assertNotIn("k:AB12cd34EF56", tg.datos_botones()); self.assertIn("r:AB12cd34EF56", tg.datos_botones())
             btn("k:AB12cd34EF56"); self.assertNotIn(1, b.estado)                   # un botón viejo no pide clave
 

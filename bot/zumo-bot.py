@@ -485,7 +485,7 @@ MENU = [[("📱 App Android", "app")],
 CANCELAR = [[("✖ Cancelar", "menu")]]
 
 
-TIPOS = {"n": "👤 Normal", "h": "🔑 HWID", "t": "⏳ Temporal", "th": "⏳ Temporal HWID"}
+TIPOS = {"n": "👤 Normal", "h": "🎟 Token", "t": "⏳ Temporal", "th": "⏳ Token temporal"}
 VOLVER = [[("◂ Menú", "menu")]]
 
 
@@ -526,7 +526,7 @@ class Bot(centro.CentroMixin):
         self.estado.pop(chat, None)
         self.mostrar(chat, mid, "➕ Crear usuario\n¿De qué tipo?\n\n"
                                 "👤 Normal: usuario y contraseña, por días.\n"
-                                "🔑 HWID: entra con el HWID de su celular, por días.\n"
+                                "🎟 Token: el código que genera la app del cliente (su celular). Entra con eso, por días.\n"
                                 "⏳ Temporal: se borra solo cuando pasan los minutos que elijas.",
                      [[(TIPOS["n"], "ct:n"), (TIPOS["h"], "ct:h")],
                       [(TIPOS["t"], "ct:t"), (TIPOS["th"], "ct:th")],
@@ -543,7 +543,7 @@ class Bot(centro.CentroMixin):
         trozo = us[pag * POR_PAGINA:(pag + 1) * POR_PAGINA]
         botones = [[("➕ Crear usuario", "crear")]]
         for u, (_, e) in trozo:
-            nombre = f"🔑 {hw[u]}" if u in hw else u
+            nombre = f"🎟 {hw[u]}" if u in hw else u
             if u in tm:
                 botones.append([(f"⏳ {nombre} · {minutos_restantes(tm[u])} min", f"u:{u}")])
             else:
@@ -556,7 +556,7 @@ class Bot(centro.CentroMixin):
         if nav:
             botones.append(nav)
         botones.append([("◂ Menú", "menu")])
-        self.mostrar(chat, mid, f"👥 Usuarios (pág. {pag + 1}/{total})\n🟢 vigente · 🔴 vencido (mes-día en que vence) · 🔑 HWID · ⏳ temporal", botones)
+        self.mostrar(chat, mid, f"👥 Usuarios (pág. {pag + 1}/{total})\n🟢 vigente · 🔴 vencido (mes-día en que vence) · 🎟 token · ⏳ temporal", botones)
 
     def pantalla_usuario(self, chat, mid, u):
         us = usuarios()
@@ -565,7 +565,7 @@ class Bot(centro.CentroMixin):
         lim, exp = us[u]
         cliente = hwids().get(u)
         temp = temporales().get(u)
-        txt = f"👤 {cliente} (HWID)\nHWID: {u}" if cliente is not None else f"👤 {u}"
+        txt = f"🎟 {cliente} (Token)\nToken: {u}" if cliente is not None else f"👤 {u}"
         if temp:
             txt += f"\n⏳ Temporal: se borra en {texto_minutos(minutos_restantes(temp))}"
         else:
@@ -819,15 +819,15 @@ class Bot(centro.CentroMixin):
         paso = e["paso"]
         if paso == "c_etq":
             e.update(paso="c_hwid", etq=limpiar_etiqueta(t))
-            return self.tg.mensaje(chat, f"Cliente: {e['etq']}\nAhora pegá el HWID del cliente (8 a 32 letras y números):", CANCELAR)
+            return self.tg.mensaje(chat, f"Cliente: {e['etq']}\nAhora pegá el token del celular del cliente (lo copia de su app; 8 a 32 letras y números):", CANCELAR)
         if paso == "c_hwid":
             h = limpiar_hwid(t)
             if not HWID_RE.match(h):
-                return self.tg.mensaje(chat, f"⚠️ HWID inválido: tienen que quedar de 8 a 32 letras y números (quedaron {len(h)}). Pegalo de nuevo:", CANCELAR)
+                return self.tg.mensaje(chat, f"⚠️ Token inválido: tienen que quedar de 8 a 32 letras y números (quedaron {len(h)}). Pegalo de nuevo:", CANCELAR)
             if existe(h):
-                return self.tg.mensaje(chat, "⚠️ Ese HWID ya está registrado. Pegá otro:", CANCELAR)
+                return self.tg.mensaje(chat, "⚠️ Ese token ya está registrado. Pegá otro:", CANCELAR)
             e.update(hwid=h)
-            return self.pedir_duracion(chat, e, f"HWID: {h}\n")
+            return self.pedir_duracion(chat, e, f"🎟 Token: {h}\n")
         if paso == "c_user":
             if not NOMBRE_RE.match(t):
                 return self.tg.mensaje(chat, "⚠️ Nombre inválido. Probá de nuevo (empieza con letra, solo letras y números, máx. 10):", CANCELAR)
@@ -1470,7 +1470,7 @@ class Bot(centro.CentroMixin):
         e = self.estado[chat]
         e.update(paso="c_lim_btn", dias=dias, minutos=minutos)
         cuanto = texto_minutos(minutos) if minutos else f"{dias} días"
-        nota = "\n(En HWID lo habitual es 2.)" if e["tipo"] == "h" else ""
+        nota = "\n(Lo habitual es 2.)" if e["tipo"] == "h" else ""
         self.tg.mensaje(chat, f"{cuanto}. ¿Cuántas conexiones a la vez (dispositivos)?{nota}",
                         [[(str(n), f"cl:{n}") for n in (1, 2, 3, 5)], [("✖ Cancelar", "menu")]])
 
@@ -1482,7 +1482,7 @@ class Bot(centro.CentroMixin):
         if e["tipo"] in ("h", "th"):
             u = e["hwid"]
             err = crear_hwid(u, e["etq"], dias, limite, minutos)
-            quien = f"{limpiar_etiqueta(e['etq'])} (HWID {u})"
+            quien = f"{limpiar_etiqueta(e['etq'])} (Token {u})"
         else:
             u = e["u"]
             err = crear_usuario(u, e["clave"], dias, limite, minutos)
