@@ -104,6 +104,7 @@ class MainActivity : Activity() {
         cargarCuenta()
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7)
         importarDesdeIntent(intent)
+        chequearListaEnSegundoPlano()
     }
 
     override fun onNewIntent(i: Intent) {
@@ -404,7 +405,7 @@ class MainActivity : Activity() {
         val tieneCuenta = prefs.config?.valida() == true && prefs.user.isNotBlank()
         val hayLista = servidores.isNotEmpty()
         cSinCuenta.visibility = if (!hayLista && !tieneCuenta) View.VISIBLE else View.GONE
-        cCuenta.visibility = if (hayLista) View.VISIBLE else View.GONE
+        cCuenta.visibility = if (hayLista || tieneCuenta) View.VISIBLE else View.GONE
 
         val con = ZumoVpnService.conectado
         val conectando = ZumoVpnService.conectando && !con
@@ -414,7 +415,11 @@ class MainActivity : Activity() {
             val a = if (ocupado) 0.55f else 1f
             tvServidor.alpha = a; etUser.alpha = a; etPass.alpha = a
         }
-        tvEstado.text = if (conectando) "Conectando…" else ZumoVpnService.estado
+        tvEstado.text = when {
+            con -> "Conectado"
+            conectando -> if (ZumoVpnService.estado == "Reconectando…") "Reconectando…" else "Conectando…"
+            else -> ZumoVpnService.estado
+        }
         val colorEstado = when {
             con -> VERDE
             conectando -> NARANJA
@@ -423,7 +428,10 @@ class MainActivity : Activity() {
         tvEstado.setTextColor(colorEstado)
         puntoEstado.background = redondo(colorEstado, 10)
         tvError.text = when {
-            con || conectando -> ""
+            con -> ""
+            // reconectando tras una caída: se muestra el motivo; en el primer intento, el paso actual
+            conectando && ZumoVpnService.estado == "Reconectando…" && ZumoVpnService.ultimoError.isNotBlank() -> ZumoVpnService.ultimoError
+            conectando -> ZumoVpnService.etapaActual
             ZumoVpnService.estado == "Error" -> ZumoVpnService.ultimoError
             else -> ""
         }
@@ -498,7 +506,7 @@ class MainActivity : Activity() {
             AlertDialog.Builder(this, estiloDialogo)
                 .setTitle("Antes de conectar")
                 .setMessage("Para que la VPN no se corte sola, permití que quede fuera del ahorro de batería.")
-                .setPositiveButton("Permitir") { _, _ -> PowerGuide.pedirExclusion(this); aviso("Listo, ahora tocá Conectar de nuevo") }
+                .setPositiveButton("Permitir") { _, _ -> PowerGuide.pedirExclusion(this); conectarDeVerdad() }
                 .setNegativeButton("Ahora no") { _, _ -> conectarDeVerdad() }
                 .mostrar()
             return
@@ -515,7 +523,10 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
-        if (req == 1 && res == RESULT_OK) { ZumoVpnService.iniciar(this); refrescar() }
+        if (req == 1) {
+            if (res == RESULT_OK) { ZumoVpnService.iniciar(this); refrescar() }
+            else { prefs.wanted = false; aviso("Hay que permitir la VPN para conectar"); refrescar() }   // rechazó el permiso
+        }
         if (req == 2 && res == RESULT_OK) data?.data?.let { leerArchivo(it) }
     }
 
@@ -664,6 +675,23 @@ class MainActivity : Activity() {
                     Servidores.Estado.SIN_URL -> aviso("Esta app no tiene servidor de actualización")
                     Servidores.Estado.ERROR -> aviso("No se pudo actualizar: probá más tarde")
                 }
+            }
+        }.start()
+    }
+
+    /** Una vez por día, al abrir la app, busca en segundo plano si hay una lista de servidores nueva. */
+    private fun chequearListaEnSegundoPlano() {
+        if (Servidores.urlActualizar(this).isBlank()) return
+        val ahora = System.currentTimeMillis()
+        if (ahora - prefs.ultimoChequeoLista < 24L * 3600 * 1000) return
+        prefs.ultimoChequeoLista = ahora
+        Thread {
+            val r = Servidores.descargar(this)
+            if (r.estado == Servidores.Estado.OK) runOnUiThread {
+                servidores = Servidores.lista(this)
+                Servidores.refrescar(this, prefs)
+                cargarCuenta()
+                refrescar()
             }
         }.start()
     }

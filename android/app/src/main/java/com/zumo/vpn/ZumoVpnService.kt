@@ -71,7 +71,9 @@ class ZumoVpnService : VpnService() {
     private var tproxy: TProxyService? = null
     private var socks: SocksServer? = null
     @Volatile private var tunel: SshTunnel? = null
+    @Volatile private var intentoActual: SshTunnel? = null   // conexión en curso, para poder cortarla al instante
     @Volatile private var activo = false
+    @Volatile private var reintentarYa = false               // la red volvió: reintentar sin esperar
     @Volatile private var cfgActual: Config? = null
     private var hilo: Thread? = null
     private var monitor: Thread? = null
@@ -243,35 +245,62 @@ class ZumoVpnService : VpnService() {
     }
 
     /**
-     * Una sola conexión, sin reintentos: si el SSH no conecta, o se cae (red, sistema, servidor), la app
-     * pasa a "Desconectado" con el motivo. Para volver a conectar se toca el mismo botón (Conectar).
+     * Mantiene la conexión: intenta, y si se cae por la red (o se cambió de Wi-Fi a datos) reconecta
+     * solo, con esperas crecientes, mientras el usuario la quiera encendida. Solo se rinde con un
+     * error que no se arregla reintentando (usuario/clave mal o cuenta vencida).
      */
     private fun bucle(cfg: Config, user: String, pass: String) {
-        if (!hayInternet()) {
-            detenerPorError("Sin internet: encendé los datos móviles o el Wi-Fi"); return
+        var espera = 2000L
+        while (activo && Prefs(this).wanted) {
+            if (Perfil.vencida(Prefs(this).exp)) {
+                detenerPorError("Tu cuenta venció el ${Perfil.fechaLinda(Prefs(this).exp)}. Pedí la renovación."); return
+            }
+            if (!hayInternet()) {
+                estado = "Reconectando…"; conectado = false; conectando = true; actualizarNoti()
+                if (!esperarReintento(espera)) break
+                espera = (espera * 2).coerceAtMost(20000L); continue
+            }
+            val t = SshTunnel(cfg, user, pass, etapa = { etapaActual = it; Registro.add(it) }, proteger = { sock -> protect(sock) })
+            intentoActual = t
+            var cayo = false
+            try {
+                estado = "Conectando..."; conectado = false; conectando = true; actualizarNoti()
+                t.connect()
+                tunel = t
+                estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; espera = 2000L; actualizarNoti()
+                Registro.add("✔ Conectado")
+                while (activo && t.conectado) Thread.sleep(1000)
+                cayo = activo && Prefs(this).wanted      // se cortó sola, no la cortó el usuario
+            } catch (e: InterruptedException) {
+                // el usuario tocó Desconectar, o la red volvió y queremos reintentar ya
+            } catch (e: Exception) {
+                if (esFalloDeLogin(e)) { detenerPorError("Usuario o contraseña incorrectos. Pedí tu cuenta de nuevo."); return }
+                ultimoError = mensaje(e); Registro.add("✘ $ultimoError")
+                cayo = activo && Prefs(this).wanted
+            } finally {
+                conectado = false
+                if (intentoActual === t) intentoActual = null
+                try { t.close() } catch (_: Exception) {}
+                if (tunel === t) tunel = null
+            }
+            if (!activo || !Prefs(this).wanted) break
+            if (cayo) { Registro.add("Se perdió la conexión; reconectando…") }
+            estado = "Reconectando…"; conectando = true; actualizarNoti()
+            if (!esperarReintento(espera)) break
+            espera = (espera * 2).coerceAtMost(20000L)
         }
-        if (Perfil.vencida(Prefs(this).exp)) {
-            detenerPorError("Tu cuenta venció el ${Perfil.fechaLinda(Prefs(this).exp)}. Pedí la renovación."); return
+    }
+
+    /** Espera [ms] antes de reintentar, pero vuelve antes si la red reapareció. false = hay que parar. */
+    private fun esperarReintento(ms: Long): Boolean {
+        reintentarYa = false
+        val fin = System.currentTimeMillis() + ms
+        while (System.currentTimeMillis() < fin) {
+            if (!activo || !Prefs(this).wanted) return false
+            if (reintentarYa) { reintentarYa = false; return true }
+            try { Thread.sleep(200) } catch (_: InterruptedException) { if (!activo || !Prefs(this).wanted) return false }
         }
-        val t = SshTunnel(cfg, user, pass, etapa = { etapaActual = it; Registro.add(it) }, proteger = { sock -> protect(sock) })
-        try {
-            estado = "Conectando..."; conectado = false; actualizarNoti()
-            t.connect()
-            tunel = t
-            estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; actualizarNoti()
-            Registro.add("✔ Conectado")
-            while (activo && t.conectado) Thread.sleep(1000)
-            if (activo) detenerPorError("Se perdió la conexión. Tocá Conectar para volver a conectar.")
-        } catch (e: InterruptedException) {
-            // Pasa si el usuario toca Desconectar (apagarTrabajo interrumpe este hilo).
-        } catch (e: Exception) {
-            val m = if (esFalloDeLogin(e)) "Usuario o contraseña incorrectos. Pedí tu cuenta de nuevo." else mensaje(e)
-            if (activo) detenerPorError(m)
-        } finally {
-            conectado = false
-            t.close()
-            if (tunel === t) tunel = null
-        }
+        return activo && Prefs(this).wanted
     }
 
     private fun esFalloDeLogin(e: Exception): Boolean {
@@ -301,11 +330,11 @@ class ZumoVpnService : VpnService() {
             .build()
         val c = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                // Nada: antes esto forzaba reconexiones al aparecer cualquier red (y al registrarse el
-                // callback), lo que podía cortar una conexión recién hecha. Ahora la app no reconecta sola.
+                // Apareció una red (volvió el Wi-Fi/datos o se cambió de una a otra). Si estamos esperando
+                // para reintentar, que reintente ya; si estamos conectados, no se toca nada.
+                if (activo && !conectado) { reintentarYa = true; hilo?.interrupt() }
             }
             override fun onLost(network: Network) {
-                // Solo se anota: si la conexión SSH se cae por esto, la app queda Desconectada.
                 Registro.add("Se perdió la red")
             }
         }
@@ -337,6 +366,8 @@ class ZumoVpnService : VpnService() {
         try { callback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(it) } } catch (_: Exception) {}
         hilo?.interrupt(); hilo = null
         monitor?.interrupt(); monitor = null
+        try { intentoActual?.close() } catch (_: Exception) {}   // corta un connect() en curso
+        intentoActual = null
         try { tunel?.close() } catch (_: Exception) {}
         tunel = null
         try { socks?.stop() } catch (_: Exception) {}
