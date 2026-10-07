@@ -45,7 +45,7 @@ chequear() { if [ "$2" = "$3" ]; then echo "  ok   $1 ($3)"; else echo "  FALLA 
 echo "1) La lista muestra comunes y HWID juntos"
 SAL=$(lista_para_borrar | sed 's/\x1b\[[0-9;]*m//g')
 chequear "aparece zbpedro" "si" "$(grep -q 'zbpedro' <<<"$SAL" && echo si || echo no)"
-chequear "aparece cliente Carlos (HWID)" "si" "$(grep -q 'Carlos (HWID)' <<<"$SAL" && echo si || echo no)"
+chequear "aparece cliente Carlos (Token)" "si" "$(grep -q 'Carlos (Token)' <<<"$SAL" && echo si || echo no)"
 chequear "la lista está numerada [1] y [2]" "si" "$(grep -q '\[1\]' <<<"$SAL" && grep -q '\[2\]' <<<"$SAL" && echo si || echo no)"
 chequear "aparece su HWID debajo" "si" "$(grep -q 'HWIDAAAA1111' <<<"$SAL" && echo si || echo no)"
 
