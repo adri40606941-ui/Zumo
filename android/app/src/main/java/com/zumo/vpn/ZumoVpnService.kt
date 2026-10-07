@@ -17,6 +17,7 @@ import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import hev.htproxy.TProxyService
 import java.io.File
+import java.util.concurrent.Executors
 
 /**
  * Servicio de VPN en primer plano. Mantiene el TUN abierto, el túnel SSH y el proxy SOCKS.
@@ -77,11 +78,15 @@ class ZumoVpnService : VpnService() {
     private var wake: PowerManager.WakeLock? = null
     private var wifi: WifiManager.WifiLock? = null
     private var cb: ConnectivityManager.NetworkCallback? = null
+    // Un solo hilo de trabajo serializa encender y apagar: así el botón nunca bloquea la pantalla
+    // (el apagado cierra sockets y el proxy nativo, que puede tardar) y un reconectar no pisa al apagado.
+    private val trabajos = Executors.newSingleThreadExecutor()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             Prefs(this).wanted = false
-            apagar()
+            marcarApagado()                       // estado y notificación al instante (hilo principal)
+            trabajos.execute { apagarTrabajo() }  // el cierre pesado, aparte
             stopSelf()
             return START_NOT_STICKY
         }
@@ -89,43 +94,44 @@ class ZumoVpnService : VpnService() {
         val prefs = Prefs(this)
         if (intent == null && !prefs.wanted) { stopSelf(); return START_NOT_STICKY }
         prefs.wanted = true
-        if (!activo) encender()
+        // Foreground ya mismo (el sistema lo exige) y el encendido pesado en el hilo de trabajo.
+        crearCanal()
+        try { startForeground(NOTI_ID, notificacion("Conectando...")) } catch (_: Exception) {}
+        if (!activo) {
+            activo = true; corriendo = true; conectando = true
+            trabajos.execute { encenderTrabajo() }
+        }
         return START_NOT_STICKY   // si el sistema la mata, no se vuelve a encender sola
     }
 
     override fun onRevoke() {
         Prefs(this).wanted = false
-        apagar()
+        marcarApagado()
+        trabajos.execute { apagarTrabajo() }
         stopSelf()
     }
 
     override fun onDestroy() {
-        apagar()
+        marcarApagado()
+        apagarTrabajo()     // el servicio se está destruyendo: cierre directo, lo mejor posible
         super.onDestroy()
     }
 
-    private fun encender() {
+    private fun encenderTrabajo() {
+        if (!activo) return                 // lo cancelaron antes de arrancar
         val prefs = Prefs(this)
         Servidores.refrescar(this, prefs)   // servidor de la lista de la app: toma su payload actual
         val cfg = prefs.config
         val user = prefs.user
         val pass = prefs.pass
-        crearCanal()
-        startForeground(NOTI_ID, notificacion("Conectando..."))
         if (cfg == null || !cfg.valida() || user.isBlank() || pass.isBlank()) {
-            ultimoError = "Falta la cuenta: elegí un servidor y poné tu usuario y contraseña, o abrí tu archivo .zs."
-            Registro.add("✘ $ultimoError")
-            estado = "Error"; conectando = false; corriendo = false; prefs.wanted = false
-            stopSelf(); return
+            fallarEncendido("Falta la cuenta: elegí un servidor y poné tu usuario y contraseña, o abrí tu archivo .zs."); return
         }
         if (Perfil.vencida(prefs.exp)) {
-            ultimoError = "Tu cuenta venció el ${Perfil.fechaLinda(prefs.exp)}. Pedí la renovación."
-            Registro.add("✘ $ultimoError")
-            estado = "Error"; conectando = false; corriendo = false; prefs.wanted = false
-            stopSelf(); return
+            fallarEncendido("Tu cuenta venció el ${Perfil.fechaLinda(prefs.exp)}. Pedí la renovación."); return
         }
         Registro.add("Iniciando…")
-        activo = true; corriendo = true; desde = System.currentTimeMillis()
+        desde = System.currentTimeMillis()
         tomarBloqueos()
         try {
             abrirTun()
@@ -133,13 +139,21 @@ class ZumoVpnService : VpnService() {
         } catch (e: Exception) {
             ultimoError = "No se pudo iniciar la VPN: ${e.message}"
             Registro.add("✘ $ultimoError")
-            estado = "Error"; prefs.wanted = false
-            apagar(); stopSelf(); return
+            estado = "Error"
+            fallarEncendido(null); return
         }
         cfgActual = cfg
         vigilarRed()
         hilo = Thread({ bucle(cfg, user, pass) }, "zumo-ssh").also { it.start() }
         monitor = Thread({ vigilar() }, "zumo-monitor").also { it.start() }
+    }
+
+    private fun fallarEncendido(motivo: String?) {
+        if (motivo != null) { ultimoError = motivo; Registro.add("✘ $motivo"); estado = "Error" }
+        Prefs(this).wanted = false
+        conectando = false; corriendo = false; activo = false
+        apagarTrabajo()
+        stopSelf()
     }
 
     /**
@@ -166,7 +180,7 @@ class ZumoVpnService : VpnService() {
                 }
             }
         } catch (e: InterruptedException) {
-            // El hilo se interrumpe a propósito al desconectar (apagar() llama a monitor?.interrupt()).
+            // El hilo se interrumpe a propósito al desconectar (apagarTrabajo() interrumpe el monitor).
             // Si no se captura acá, la excepción sube sin control y tumba toda la app.
             return
         }
@@ -222,13 +236,10 @@ class ZumoVpnService : VpnService() {
     private fun detenerPorError(motivo: String) {
         ultimoError = motivo
         Registro.add("✘ $motivo")
-        activo = false
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            Prefs(this).wanted = false
-            apagar()
-            estado = "Error"
-            stopSelf()
-        }
+        Prefs(this).wanted = false
+        marcarApagado()
+        estado = "Error"
+        trabajos.execute { apagarTrabajo(); stopSelf() }
     }
 
     /**
@@ -252,7 +263,7 @@ class ZumoVpnService : VpnService() {
             while (activo && t.conectado) Thread.sleep(1000)
             if (activo) detenerPorError("Se perdió la conexión. Tocá Conectar para volver a conectar.")
         } catch (e: InterruptedException) {
-            // Pasa si el usuario toca Desconectar (apagar() interrumpe este hilo).
+            // Pasa si el usuario toca Desconectar (apagarTrabajo interrumpe este hilo).
         } catch (e: Exception) {
             val m = if (esFalloDeLogin(e)) "Usuario o contraseña incorrectos. Pedí tu cuenta de nuevo." else mensaje(e)
             if (activo) detenerPorError(m)
@@ -310,13 +321,22 @@ class ZumoVpnService : VpnService() {
         wifi = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "zumo:wifi").apply { setReferenceCounted(false); acquire() }
     }
 
-    private fun apagar() {
+    /** Estado y notificación al instante (no bloquea): lo pesado lo hace apagarTrabajo() aparte. */
+    private fun marcarApagado() {
         activo = false; corriendo = false; conectado = false; conectando = false; estado = "Desconectado"
-        try { (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(cb!!) } catch (_: Exception) {}
-        cb = null
+        velocidad = ""; datosUsados = ""
+        try { wake?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
+        try { wifi?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
+        try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
+    }
+
+    /** Cierre pesado (sockets, túnel, proxy nativo). Corre en el hilo de trabajo, nunca en el principal. */
+    @Synchronized
+    private fun apagarTrabajo() {
+        val callback = cb; cb = null
+        try { callback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(it) } } catch (_: Exception) {}
         hilo?.interrupt(); hilo = null
         monitor?.interrupt(); monitor = null
-        velocidad = ""; datosUsados = ""
         try { tunel?.close() } catch (_: Exception) {}
         tunel = null
         try { socks?.stop() } catch (_: Exception) {}
@@ -325,9 +345,6 @@ class ZumoVpnService : VpnService() {
         tproxy = null
         try { tun?.close() } catch (_: Exception) {}
         tun = null
-        try { wake?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
-        try { wifi?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
-        try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
     }
 
     private fun crearCanal() {
