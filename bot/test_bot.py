@@ -137,7 +137,7 @@ class Pruebas(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             bot, tg, b, txt, btn = self.armar(tmp)
             cmds = self.sistema_falso(bot, tmp)
-            btn("crear"); self.assertEqual(tg.datos_botones(), ["ct:n", "ct:h", "ct:t", "ct:th", "menu"])
+            btn("crear"); self.assertEqual(tg.datos_botones(), ["ct:n", "ct:h", "ct:k", "ct:t", "ct:th", "menu"])
             btn("ct:n")
             txt("1mal"); self.assertIn("inválido", tg.mensajes[-1])
             txt("pepe")
@@ -191,6 +191,33 @@ class Pruebas(unittest.TestCase):
             self.assertIn("Juan Perez (HWID)", tg.mensajes[-1]); self.assertIn("HWID: AB12cd34EF56", tg.mensajes[-1])
             self.assertNotIn("k:AB12cd34EF56", tg.datos_botones()); self.assertIn("r:AB12cd34EF56", tg.datos_botones())
             btn("k:AB12cd34EF56"); self.assertNotIn(1, b.estado)                   # un botón viejo no pide clave
+
+    def test_crear_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            cmds = self.sistema_falso(bot, tmp)
+            btn("ct:k"); self.assertIn("nombre del cliente", tg.mensajes[-1])
+            txt("Ana: Lopez")
+            self.assertIn("🎟 Token:", tg.mensajes[-1]); self.assertIn("cd:30", tg.datos_botones())
+            # el token generado quedó en el estado del bot
+            tok = b.estado[1]["token"]
+            self.assertRegex(tok, r"^[a-z][a-z0-9]{9}$")
+            btn("cd:30"); btn("cl:1")
+            vence = bot.date.today() + bot.timedelta(days=30)
+            alta = next(c[0] for c in cmds if c[0][0] == "useradd")
+            self.assertEqual(alta[-3:], ("-c", "token,Ana Lopez", tok))
+            self.assertIn((("chpasswd",), f"{tok}:{tok}\n"), cmds)                 # usuario y clave son el token
+            self.assertFalse(os.path.exists(f"{tmp}/claves.db"))                    # el token no se guarda aparte
+            self.assertEqual(open(f"{tmp}/usuarios.db").read(), f"{tok}:1:{vence.isoformat()}\n")
+            self.assertTrue(any("🔑 Token: " + tok in m and "Contraseña" in m for m in tg.mensajes))
+            # en la ficha se ve el token y no hay "Cambiar clave"
+            btn("u:" + tok)
+            self.assertIn("Ana Lopez (Token)", tg.mensajes[-1]); self.assertIn("Token: " + tok, tg.mensajes[-1])
+            self.assertNotIn("k:" + tok, tg.datos_botones())
+            # no se repite
+            btn("ct:k"); txt("Otro")
+            tok2 = b.estado[1]["token"]
+            self.assertNotEqual(tok, tok2)
 
     def test_crear_temporal(self):
         with tempfile.TemporaryDirectory() as tmp:

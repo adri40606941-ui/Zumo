@@ -215,6 +215,30 @@ def limpiar_hwid(t):
     return re.sub(r"[^A-Za-z0-9]", "", t)
 
 
+# Modo Token: un solo token hace de usuario y de contraseña (user == pass en Linux). El cliente lo
+# pega en la app (como usuario; la contraseña puede ir vacía). El nombre del cliente va en el GECOS
+# "token,<nombre>". Si el token no está en la VPS, no conecta (lo valida el propio SSH).
+import secrets as _secrets
+TOKEN_ALFABETO = "abcdefghjkmnpqrstuvwxyz23456789"   # sin letras/números que se confunden (0 o 1 l i)
+
+
+def generar_token(n=10):
+    return _secrets.choice("abcdefghjkmnpqrstuvwxyz") + "".join(_secrets.choice(TOKEN_ALFABETO) for _ in range(n - 1))
+
+
+def tokens():
+    """{token: nombre del cliente} de los usuarios creados en modo Token."""
+    out = {}
+    try:
+        for linea in open(PASSWD, encoding="utf-8", errors="replace"):
+            p = linea.rstrip("\n").split(":")
+            if len(p) >= 5 and p[4].startswith("token,"):
+                out[p[0]] = p[4][6:]
+    except FileNotFoundError:
+        pass
+    return out
+
+
 def limpiar_etiqueta(t):
     """El nombre del cliente va en el GECOS: sin ':' ni caracteres de control, máx. 48."""
     return re.sub(r"[\x00-\x1f\x7f:]", "", t).strip()[:48] or "cliente"
@@ -331,6 +355,13 @@ def crear_hwid(hwid, etiqueta, dias, limite, minutos=None):
     return _alta(hwid, hwid, limite, dias, minutos, gecos="hwid," + limpiar_etiqueta(etiqueta))
 
 
+def crear_token(token, etiqueta, dias, limite, minutos=None):
+    """Usuario en modo Token: el token es el usuario y la contraseña. Con minutos es temporal."""
+    if existe(token):
+        return "Ese token ya existe."
+    return _alta(token, token, limite, dias, minutos, gecos="token," + limpiar_etiqueta(etiqueta))
+
+
 def banner_pdirect():
     """El banner del 101 (PDirect): es la "máquina" que ve el cliente."""
     try:
@@ -357,6 +388,13 @@ def mensaje_cliente(u):
     lim, exp = us[u]
     temp = temporales().get(u)
     cliente = hwids().get(u)
+    tok_cliente = tokens().get(u)
+    if tok_cliente is not None:
+        vence = texto_minutos(minutos_restantes(temp)) if temp else fecha_larga(exp, corta=True)
+        n = int(lim) if str(lim).isdigit() else 1
+        return (f"🎟 {tok_cliente}\n🔑 Token: {u}\n📅 {vence}\n"
+                f"🔌 {'1 dispositivo' if n == 1 else f'{n} dispositivos'}\n📄 {banner_pdirect()}\n"
+                "En la app: pegá el token en «Usuario» y dejá «Contraseña» vacía.")
     if cliente is not None:
         vence = texto_minutos(minutos_restantes(temp)) if temp else fecha_larga(exp)
         return ("🔐 DATOS DE ACCESO\n├ ☁️ Plan: Privado\n"
@@ -485,7 +523,7 @@ MENU = [[("📱 App Android", "app")],
 CANCELAR = [[("✖ Cancelar", "menu")]]
 
 
-TIPOS = {"n": "👤 Normal", "h": "🔑 HWID", "t": "⏳ Temporal", "th": "⏳ Temporal HWID"}
+TIPOS = {"n": "👤 Normal", "h": "🔑 HWID", "k": "🎟 Token", "t": "⏳ Temporal", "th": "⏳ Temporal HWID"}
 VOLVER = [[("◂ Menú", "menu")]]
 
 
@@ -527,8 +565,10 @@ class Bot(centro.CentroMixin):
         self.mostrar(chat, mid, "➕ Crear usuario\n¿De qué tipo?\n\n"
                                 "👤 Normal: usuario y contraseña, por días.\n"
                                 "🔑 HWID: entra con el HWID de su celular, por días.\n"
+                                "🎟 Token: un solo código hace de usuario y contraseña; el cliente lo pega en la app.\n"
                                 "⏳ Temporal: se borra solo cuando pasan los minutos que elijas.",
                      [[(TIPOS["n"], "ct:n"), (TIPOS["h"], "ct:h")],
+                      [(TIPOS["k"], "ct:k")],
                       [(TIPOS["t"], "ct:t"), (TIPOS["th"], "ct:th")],
                       [("◂ Menú", "menu")]])
 
@@ -564,8 +604,14 @@ class Bot(centro.CentroMixin):
             return self.menu(chat, mid, "Ese usuario ya no existe.")
         lim, exp = us[u]
         cliente = hwids().get(u)
+        tok_cliente = tokens().get(u)
         temp = temporales().get(u)
-        txt = f"👤 {cliente} (HWID)\nHWID: {u}" if cliente is not None else f"👤 {u}"
+        if tok_cliente is not None:
+            txt = f"🎟 {tok_cliente} (Token)\nToken: {u}"
+        elif cliente is not None:
+            txt = f"👤 {cliente} (HWID)\nHWID: {u}"
+        else:
+            txt = f"👤 {u}"
         if temp:
             txt += f"\n⏳ Temporal: se borra en {texto_minutos(minutos_restantes(temp))}"
         else:
@@ -573,8 +619,8 @@ class Bot(centro.CentroMixin):
         txt += f"\nLímite de conexiones: {lim}"
         botones = [[("📋 Datos para el cliente", f"d:{u}")]]
         fila = [] if temp else [("🔄 Renovar", f"r:{u}")]          # un temporal no se renueva: se borra solo
-        if cliente is None:
-            fila.append(("🔑 Cambiar clave", f"k:{u}"))          # la clave de un HWID es el mismo HWID
+        if cliente is None and tok_cliente is None:
+            fila.append(("🔑 Cambiar clave", f"k:{u}"))          # la clave de un HWID/Token es el mismo código
         if fila:
             botones.append(fila)
         botones.append([("🔢 Límite", f"l:{u}"), ("🗑 Borrar", f"b:{u}")])
@@ -679,7 +725,7 @@ class Bot(centro.CentroMixin):
         if acc == "ct":      # tipo de usuario elegido
             if arg not in TIPOS:
                 return self.pantalla_crear(chat, mid)
-            if arg in ("h", "th"):
+            if arg in ("h", "th", "k"):
                 return self.pedir(chat, f"➕ Nuevo usuario · {TIPOS[arg]}\n\nEscribí el nombre del cliente (solo para identificarlo, no es lo que usa para entrar):", "c_etq", tipo=arg)
             return self.pedir(chat, f"➕ Nuevo usuario · {TIPOS[arg]}\n\nEscribí el nombre de usuario (empieza con letra, solo letras y números, máx. 10):", "c_user", tipo=arg)
         if acc in ("cd", "cm", "cl"):      # días, minutos o límite elegidos al crear
@@ -818,7 +864,14 @@ class Bot(centro.CentroMixin):
         e = self.estado[chat]
         paso = e["paso"]
         if paso == "c_etq":
-            e.update(paso="c_hwid", etq=limpiar_etiqueta(t))
+            e["etq"] = limpiar_etiqueta(t)
+            if e.get("tipo") == "k":
+                tok = generar_token()
+                while existe(tok):
+                    tok = generar_token()
+                e.update(token=tok)
+                return self.pedir_duracion(chat, e, f"Cliente: {e['etq']}\n🎟 Token: {tok}\n")
+            e.update(paso="c_hwid")
             return self.tg.mensaje(chat, f"Cliente: {e['etq']}\nAhora pegá el HWID del cliente (8 a 32 letras y números):", CANCELAR)
         if paso == "c_hwid":
             h = limpiar_hwid(t)
@@ -1483,6 +1536,10 @@ class Bot(centro.CentroMixin):
             u = e["hwid"]
             err = crear_hwid(u, e["etq"], dias, limite, minutos)
             quien = f"{limpiar_etiqueta(e['etq'])} (HWID {u})"
+        elif e["tipo"] == "k":
+            u = e["token"]
+            err = crear_token(u, e["etq"], dias, limite, minutos)
+            quien = f"{limpiar_etiqueta(e['etq'])} (token {u})"
         else:
             u = e["u"]
             err = crear_usuario(u, e["clave"], dias, limite, minutos)

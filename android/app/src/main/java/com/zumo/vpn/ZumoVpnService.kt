@@ -125,8 +125,9 @@ class ZumoVpnService : VpnService() {
         Servidores.refrescar(this, prefs)   // servidor de la lista de la app: toma su payload actual
         val cfg = prefs.config
         val user = prefs.user
-        val pass = prefs.pass
-        if (cfg == null || !cfg.valida() || user.isBlank() || pass.isBlank()) {
+        // Si la contraseña va vacía, se usa el usuario como contraseña (cuentas por Token: user == pass).
+        val pass = prefs.pass.ifBlank { user }
+        if (cfg == null || !cfg.valida() || user.isBlank()) {
             fallarEncendido("Falta la cuenta: elegí un servidor y poné tu usuario y contraseña, o abrí tu archivo .zs."); return
         }
         if (Perfil.vencida(prefs.exp)) {

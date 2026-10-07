@@ -277,9 +277,9 @@ class MainActivity : Activity() {
         }
         cCuenta.addView(tvCuentaZs)
         cajaLogin = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        etUser = campo("Usuario", clave = false)
+        etUser = campo("Usuario o token", clave = false)
         cajaLogin.addView(etUser)
-        etPass = campo("Contraseña", clave = true).apply {
+        etPass = campo("Contraseña (vacío si usás token)", clave = true).apply {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val btnVer = TextView(this).apply {
@@ -485,12 +485,12 @@ class MainActivity : Activity() {
         ocultarTeclado()
         Servidores.refrescar(this, prefs)
         val c = prefs.config
-        if (c == null || !c.valida() || prefs.user.isBlank() || prefs.pass.isBlank()) {
+        // La contraseña puede ir vacía (cuentas por Token: el token va en Usuario y hace de las dos).
+        if (c == null || !c.valida() || prefs.user.isBlank()) {
             aviso(when {
-                servidores.isEmpty() -> "Primero importá el archivo .zs de tu cuenta"
+                servidores.isEmpty() -> "Primero elegí un servidor"
                 c == null || !c.valida() -> "Primero elegí un servidor"
-                prefs.user.isBlank() -> "Poné tu usuario"
-                else -> "Poné tu contraseña"
+                else -> "Poné tu usuario (o tu token)"
             })
             return
         }
