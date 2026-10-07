@@ -138,5 +138,12 @@ timeout 20 "$T/zumo-limit" --once 2>/dev/null
 chequear "se manda a borrar" "ztest5" "$(sort -u "$T/borrados.txt" 2>/dev/null)"
 chequear "y no queda bloqueado" "P" "$(est ztest5)"
 
+echo "10) un temporal vencido cuyo borrado falla no se reintenta para siempre"
+printf 'zorfano:%s\nztest4:%s\n' "$(date -d yesterday +%s)" "$(( $(date +%s) + 86400 ))" > "$T/temporales.db"
+: > "$T/usuarios.db"; rm -f "$T/borrados.txt"; : > "$T/limit.conf"
+timeout 20 "$T/zumo-limit" --once 2>/dev/null
+chequear "se intentó borrar al vencido" "zorfano" "$(sort -u "$T/borrados.txt" 2>/dev/null)"
+chequear "la fila huérfana se saca sola y la del que no venció queda" "ztest4" "$(cut -d: -f1 "$T/temporales.db" | tr '\n' ' ' | sed 's/ $//')"
+
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi

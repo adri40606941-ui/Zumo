@@ -431,6 +431,40 @@ static int valid_login(const char *s) {
     return 1;
 }
 
+/* Saca la fila "usuario:..." de temporales.db. Red de seguridad: si el borrador del panel
+ * falla y la fila queda (usuario que ya no existe, archivo huérfano), sin esto se reintentaría
+ * el borrado en cada vuelta para siempre. */
+static void temp_row_remove(const char *user) {
+    char tmp[] = TEMP_DB_PATH ".tmp";
+    FILE *in = fopen(TEMP_DB_PATH, "r");
+    if (!in) return;
+    FILE *out = fopen(tmp, "w");
+    if (!out) { fclose(in); return; }
+    char line[128];
+    size_t n = strlen(user);
+    int err = 0;
+    while (fgets(line, sizeof(line), in)) {
+        if (strncmp(line, user, n) == 0 && line[n] == ':') continue;
+        if (fputs(line, out) == EOF) err = 1;
+    }
+    fclose(in);
+    if (fclose(out) != 0) err = 1;
+    if (err || rename(tmp, TEMP_DB_PATH) != 0) unlink(tmp);
+}
+
+/* ¿Sigue la fila de este usuario en temporales.db? */
+static int temp_row_exists(const char *user) {
+    FILE *f = fopen(TEMP_DB_PATH, "r");
+    if (!f) return 0;
+    char line[128];
+    size_t n = strlen(user);
+    int found = 0;
+    while (!found && fgets(line, sizeof(line), f))
+        if (strncmp(line, user, n) == 0 && line[n] == ':') found = 1;
+    fclose(f);
+    return found;
+}
+
 /* Si pasó el tiempo de un temporal (usuario:epoch), llama al borrador del panel. */
 static void cleanup_temps(time_t now) {
     if (access(TEMP_SCRIPT, X_OK) != 0) return;
@@ -462,6 +496,8 @@ static void cleanup_temps(time_t now) {
             int st;
             waitpid(p, &st, 0);
         }
+        /* Si el borrador no sacó la fila, se saca acá: no se reintenta cada 3 segundos. */
+        if (temp_row_exists(victims[i])) temp_row_remove(victims[i]);
     }
 }
 
