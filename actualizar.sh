@@ -62,6 +62,27 @@ done < /etc/zumo/usuarios.db ) 2>/dev/null
 touch /etc/zumo/.hwid-limite2
 fi
 
+# SSH: aceptar muchas conexiones nuevas a la vez (si no, tras reiniciar PDirect sshd rechaza
+# a los clientes que reconectan juntos). Recargar sshd no corta las sesiones abiertas.
+MS_CONF=/etc/ssh/sshd_config.d/zumo-maxstartups.conf
+if [ -f /etc/ssh/sshd_config ] && ! sshd -T 2>/dev/null | grep -qx 'maxstartups 500:30:1000'; then
+	if grep -qE '^Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+		mkdir -p /etc/ssh/sshd_config.d
+		echo "MaxStartups 500:30:1000" > "$MS_CONF"
+		sshd -t 2>/dev/null || rm -f "$MS_CONF"
+	else
+		_t=$(mktemp); cp /etc/ssh/sshd_config "$_t"; sed -i '/^MaxStartups/d' "$_t"; echo "MaxStartups 500:30:1000" >> "$_t"
+		sshd -t -f "$_t" 2>/dev/null && cp "$_t" /etc/ssh/sshd_config
+		rm -f "$_t"
+	fi
+	if sshd -T 2>/dev/null | grep -qx 'maxstartups 500:30:1000'; then
+		systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null
+		ok "sshd acepta más conexiones a la vez (MaxStartups)"
+	else
+		err "no se pudo ajustar MaxStartups de sshd"
+	fi
+fi
+
 # 2) Panel de terminal ---------------------------------------------------------
 echo -e "${V}[2/4] Panel de terminal (zumo)...${N}"
 TMP=$(mktemp)
@@ -148,6 +169,7 @@ echo -e "   ${R}✘${N} $1 (no se pudo extraer/validar, se dejó el actual)"
 fi
 rm -f "$tmp"
 }
+PD_ANTES=$(sha256sum /etc/zumo/activar-pdirect.sh 2>/dev/null | cut -d' ' -f1)
 refrescar activar-pdirect.sh   ZUMOPDIRECTACT
 refrescar desactivar-pdirect.sh DESPDEOF
 refrescar activar-bhttp.sh     ZUMOBHTTPACT
@@ -159,11 +181,19 @@ refrescar desactivar-hcr.sh    DESHCREOF
 refrescar activar-badvpn.sh    ZUMOBADVPNACT
 refrescar desactivar-badvpn.sh DESBVEOF
 refrescar borrar-temporal.sh   BORRARTEMP
-# PDirect: si está activo se recompila y reinicia solo (conserva banner/color/modo).
+# PDirect: se recompila y reinicia SOLO si cambió su código. Reiniciarlo corta a todos los
+# clientes conectados, así que si no hay cambios no se toca (conserva banner/color/modo).
+PD_AHORA=$(sha256sum /etc/zumo/activar-pdirect.sh 2>/dev/null | cut -d' ' -f1)
+PD_BASE=$(cat /etc/zumo/.pdirect.sha 2>/dev/null); PD_BASE=${PD_BASE:-$PD_ANTES}
 if systemctl is-active --quiet pdirect-80 2>/dev/null; then
-	echo -e "${V}Recompilando PDirect...${N}"
-	if bash /etc/zumo/activar-pdirect.sh >/dev/null 2>&1 && systemctl is-active --quiet pdirect-80; then ok "PDirect recompilado y reiniciado"
-	else err "PDirect no quedó activo: reactivalo desde el panel (o bash /etc/zumo/activar-pdirect.sh)"; fi
+	if [ -n "$PD_AHORA" ] && [ "$PD_AHORA" = "$PD_BASE" ]; then
+		ok "PDirect sin cambios: no se reinicia (los clientes siguen conectados)"
+		[ -f /etc/zumo/.pdirect.sha ] || echo "$PD_AHORA" > /etc/zumo/.pdirect.sha
+	else
+		echo -e "${V}Recompilando PDirect (cambió su código; se corta a los conectados un momento)...${N}"
+		if bash /etc/zumo/activar-pdirect.sh >/dev/null 2>&1 && systemctl is-active --quiet pdirect-80; then ok "PDirect recompilado y reiniciado"
+		else err "PDirect no quedó activo: reactivalo desde el panel (o bash /etc/zumo/activar-pdirect.sh)"; fi
+	fi
 fi
 echo -e " \e[2mLos demás protocolos (BHTTP, HCR, etc.) se reactivan desde el panel si querés actualizarlos.${N}"
 else
