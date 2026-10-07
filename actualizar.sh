@@ -147,6 +147,30 @@ echo -e " ${R}✘ no se pudo bajar zumo-datos.sh${N}"
 fi
 rm -f /tmp/zumo-datos.sh
 
+# BadVPN (si está instalado): tope de memoria y de conexiones UDP por cliente. Cada conexión UDP
+# abierta guarda ~250 KB y no se cierra sola hasta llegar al tope, así que con muchos clientes y un
+# tope alto (64/128) la memoria de BadVPN pasaba de 1 GB. Se respeta lo que hayas elegido desde el
+# panel (/etc/zumo/badvpn.conf); solo se cambia el valor viejo por defecto (64) si nunca lo tocaste.
+BVU=/etc/systemd/system/udpgw-7300.service
+if [ -f "$BVU" ]; then
+	BV_CAMBIO=0
+	if [ "$(systemctl show udpgw-7300 -p MemoryMax --value 2>/dev/null)" = "infinity" ]; then
+		mkdir -p /etc/systemd/system/udpgw-7300.service.d
+		printf '[Service]\nMemoryHigh=900M\nMemoryMax=1G\n' > /etc/systemd/system/udpgw-7300.service.d/zumo-memoria.conf
+		BV_CAMBIO=1
+	fi
+	BV_CC=$(sed -n 's/.*--max-connections-for-client \([0-9]\+\).*/\1/p' "$BVU" | head -n1)
+	if [ ! -f /etc/zumo/badvpn.conf ] && [ "$BV_CC" = "64" ]; then
+		sed -i 's/--max-connections-for-client [0-9]*/--max-connections-for-client 16/' "$BVU"
+		BV_CAMBIO=1
+	fi
+	if [ "$BV_CAMBIO" = 1 ]; then
+		systemctl daemon-reload 2>/dev/null
+		systemctl is-active --quiet udpgw-7300 && systemctl restart udpgw-7300
+		ok "BadVPN: tope de memoria y conexiones por cliente al día (los clientes reconectan solos)"
+	fi
+fi
+
 # install.sh se baja aparte: el paso 5 extrae de ahí los activadores de protocolos.
 curl -fsSL "$BASE/install.sh$NC" -o "$TMP/install.sh" 2>/dev/null || rm -f "$TMP/install.sh"
 

@@ -871,10 +871,11 @@ echo -e "   Cuántos celulares (clientes) puede atender BadVPN a la vez."
 echo -e "   \e[2mEjemplo: con 200, el cliente 201 no puede usar BadVPN hasta que otro se desconecte.${N}\n"
 echo -e " \e[1;38;5;214mMax conexiones por cliente${N} (ahora: ${mcc:-?})"
 echo -e "   Cuántas conexiones UDP simultáneas puede abrir cada celular (juegos, llamadas, DNS)."
-echo -e "   \e[2mEjemplo: con 64, un celular que abra la conexión 65 la ve cortada. Si un cliente"
-echo -e "   nota cortes en juegos o llamadas, subilo a 128; más alto = más CPU/RAM.${N}\n"
+echo -e "   \e[2mEjemplo: con 16, un celular que abra la conexión 17 hace que se cierre su conexión menos usada."
+echo -e "   Si un cliente nota cortes en juegos o llamadas, subilo a 24 o 32. Cada conexión usa ~250 KB"
+echo -e "   de RAM, así que el máximo es clientes x conexiones x 250 KB.${N}\n"
 read -rp " Nuevo Max clients [${mc:-200}] (Enter = dejar igual): " nmc; nmc=${nmc:-${mc:-200}}
-read -rp " Nuevo Max conexiones por cliente [${mcc:-64}] (Enter = dejar igual): " nmcc; nmcc=${nmcc:-${mcc:-64}}
+read -rp " Nuevo Max conexiones por cliente [${mcc:-16}] (Enter = dejar igual): " nmcc; nmcc=${nmcc:-${mcc:-16}}
 if ! [[ "$nmc" =~ ^[0-9]+$ ]] || [ "$nmc" -lt 1 ] || [ "$nmc" -gt 10000 ] || ! [[ "$nmcc" =~ ^[0-9]+$ ]] || [ "$nmcc" -lt 1 ] || [ "$nmcc" -gt 1000 ]; then
 msg_err "Valores inválidos (clientes 1-10000, conexiones por cliente 1-1000)"; pausa; return
 fi
