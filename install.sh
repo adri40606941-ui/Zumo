@@ -81,6 +81,22 @@ sed 's/^/   /' /tmp/zumo-sshd-check.log
 fi
 rm -f "$_sshd_t1"
 
+# Paso 1b: muchas conexiones nuevas a la vez. Cuando PDirect se reinicia, todos los clientes
+# reconectan juntos y con el MaxStartups por defecto (10:30:100) sshd rechaza las que sobran
+# ("drop connection ... past MaxStartups"), así que muchos no pueden volver a entrar.
+if grep -qE '^Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+mkdir -p /etc/ssh/sshd_config.d
+echo "MaxStartups 500:30:1000" > /etc/ssh/sshd_config.d/zumo-maxstartups.conf
+sshd -t 2>/dev/null || rm -f /etc/ssh/sshd_config.d/zumo-maxstartups.conf
+else
+_sshd_t1b=$(mktemp)
+cp /etc/ssh/sshd_config "$_sshd_t1b"
+sed -i '/^MaxStartups/d' "$_sshd_t1b"
+echo "MaxStartups 500:30:1000" >> "$_sshd_t1b"
+sshd -t -f "$_sshd_t1b" 2>/dev/null && cp "$_sshd_t1b" /etc/ssh/sshd_config
+rm -f "$_sshd_t1b"
+fi
+
 # Paso 2: compatibilidad con algoritmos SSH viejos (puede fallar en OpenSSH
 # nuevos; si falla, no afecta al timeout ya aplicado arriba).
 _sshd_t2=$(mktemp)
@@ -757,7 +773,13 @@ systemctl daemon-reload
 systemctl enable --now pdirect-80
 rm -rf "$WORK"
 sleep 1
-systemctl is-active --quiet pdirect-80
+# Guarda con qué versión del activador quedó compilado (zumo-actualizar lo compara para
+# no reiniciar PDirect, y cortar a todos los clientes, cuando no cambió nada).
+if systemctl is-active --quiet pdirect-80; then
+sha256sum "$0" 2>/dev/null | cut -d' ' -f1 > /etc/zumo/.pdirect.sha
+exit 0
+fi
+exit 1
 ZUMOPDIRECTACT
 
 chmod +x /etc/zumo/activar-pdirect.sh
