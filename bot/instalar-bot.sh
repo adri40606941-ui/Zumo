@@ -22,7 +22,7 @@ for p in fonts-noto-color-emoji fonts-dejavu-extra; do
 	apt-get install -y --no-install-recommends "$p" >/dev/null 2>&1 || echo "Aviso: no se pudo instalar $p (la vista previa lo aproxima)."
 done
 
-ARCHIVOS="servidores.py compilar.py tema.py vista.py marca.py respaldo.py centro.py zumo-bot.py"
+ARCHIVOS="servidores.py compilar.py tema.py vista.py marca.py respaldo.py centro.py maquinas.py maquinas_bot.py zumo-bot.py"
 for f in $ARCHIVOS; do
 	curl -fsSL "$BASE/$f$NC" -o "/opt/zumo-bot/$f" || { echo "✘ No se pudo bajar $f"; exit 1; }
 done
