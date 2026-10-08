@@ -24,7 +24,7 @@ ARCHIVO = "servidores.bin"
 REPO = "/opt/zumo-repo"
 # Archivos del repo que bajan los instaladores (install.sh, actualizar.sh, panel.sh…). Nada más.
 REPO_EXACTOS = {"install.sh", "actualizar.sh", "actualizar-panel.sh", "panel.sh", "zumo-lib.sh",
-                "fuentes/zumo-limit.c", "config/limit.conf"}
+                "fuentes/zumo-limit.c", "fuentes/badvpn.tar.gz", "config/limit.conf"}
 REPO_PATRONES = (
     re.compile(r"^binarios/[A-Za-z0-9._-]+$"),
     re.compile(r"^scripts/[A-Za-z0-9._-]+\.sh$"),
