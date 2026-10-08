@@ -85,7 +85,7 @@ class ZumoVpnService : VpnService() {
     private var tun: ParcelFileDescriptor? = null
     private var tproxy: TProxyService? = null
     private var socks: SocksServer? = null
-    private var wifi: HttpProxyServer? = null
+    private var proxyWifi: HttpProxyServer? = null
     @Volatile private var tunel: SshTunnel? = null
     @Volatile private var intentoActual: SshTunnel? = null   // conexión en curso, para poder cortarla al instante
     @Volatile private var activo = false
@@ -107,12 +107,12 @@ class ZumoVpnService : VpnService() {
 
     @Synchronized
     private fun encenderWifi(): Boolean {
-        if (wifi != null) return true
+        if (proxyWifi != null) return true
         for (p in WIFI_PUERTO until WIFI_PUERTO + 10) {      // si el puerto está ocupado, prueba el siguiente
             val srv = HttpProxyServer(p) { host, port -> abrirPorTunel(host, port) }
             try {
                 srv.start()
-                wifi = srv; wifiPuerto = p; wifiActivo = true; wifiError = ""
+                proxyWifi = srv; wifiPuerto = p; wifiActivo = true; wifiError = ""
                 Registro.add("WiFi compartido: proxy en el puerto $p")
                 return true
             } catch (e: Exception) {
@@ -125,9 +125,9 @@ class ZumoVpnService : VpnService() {
 
     @Synchronized
     private fun apagarWifi() {
-        try { wifi?.stop() } catch (_: Exception) {}
-        if (wifi != null) Registro.add("WiFi compartido apagado")
-        wifi = null
+        try { proxyWifi?.stop() } catch (_: Exception) {}
+        if (proxyWifi != null) Registro.add("WiFi compartido apagado")
+        proxyWifi = null
         wifiActivo = false
     }
 
