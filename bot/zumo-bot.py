@@ -26,6 +26,7 @@ from datetime import date, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import centro  # noqa: E402
 import compilar  # noqa: E402
+import compilar_vps  # noqa: E402
 import maquinas_bot  # noqa: E402
 import marca  # noqa: E402
 import servidores as srv  # noqa: E402
@@ -125,11 +126,17 @@ def borrar_imagen_marca(nombre):
         pass
 
 
-def secretos_marca():
-    """{secreto: valor} con la apariencia para subir al repo, o None si nunca se personalizó."""
+def paquete_marca():
+    """Zip con la apariencia (tema, ícono y fondo), o None si nunca se personalizó."""
     if not tema_guardado():
         return None
-    return marca.secretos(marca.empaquetar(T.a_json(cargar_tema()), imagen_marca("icono.png"), imagen_marca("fondo.jpg")))
+    return marca.empaquetar(T.a_json(cargar_tema()), imagen_marca("icono.png"), imagen_marca("fondo.jpg"))
+
+
+def secretos_marca():
+    """{secreto: valor} con la apariencia para subir al repo, o None si nunca se personalizó."""
+    paquete = paquete_marca()
+    return marca.secretos(paquete) if paquete else None
 
 
 # --------------------------------------------------------------------- usuarios
@@ -595,6 +602,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin):
                     [("📡 Actualizar servidores en la app (↻)", "apub")],
                     [("🎨 Apariencia de la app", "t")],
                     [(self.etiqueta_compilar(), "acomp")],
+                    [("🖥 Compilar en la VPS y enviarme el APK", "acompv")],
                     [("🔑 Asegurar clave de firma", "aclave")],
                     [("◂ Menú", "menu")]]
         self.mostrar(chat, mid, txt, botones)
@@ -730,7 +738,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin):
             return self.pantalla_lista(chat, mid, 0)
         if acc == "t":
             return self.boton_tema(chat, mid, arg)
-        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "apub", "apub_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs", "asp", "aqp"):
+        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "acompv", "acompv_si", "asinc", "apub", "apub_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs", "asp", "aqp"):
             return self.boton_app(chat, mid, acc, arg)
         return self.menu(chat, mid)      # botón de una versión anterior del bot
 
@@ -763,6 +771,12 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin):
                                 [[("✅ Compilar en GitHub", "acomp_si"), ("✖ No", "app")]])
         if acc == "acomp_si":
             return self.compilar_app(chat)
+        if acc == "acompv":
+            return self.pantalla_compilar_vps(chat, mid)
+        if acc == "acompv_si":
+            return self.compilar_vps_app(chat)
+        if acc == "asinc":
+            return self.sincronizar_ahora(chat, mid)
         if acc == "apub":
             if not self.gh_pub:
                 return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "app")]])
@@ -948,6 +962,95 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin):
         if not self.compilando.acquire(blocking=False):
             return self.tg.mensaje(chat, "⏳ Ya hay una compilación en curso. Esperá a que termine.")
         threading.Thread(target=self._compilar, args=(chat, asegurar), daemon=True).start()
+
+    # -- compilar en la VPS (sin GitHub)
+    def _config_github(self):
+        """(token, rama, repo, env) de bot.env: sirven para bajar los cambios del repo a la copia de la VPS."""
+        env = leer_env()
+        return (env.get("GITHUB_TOKEN", ""), env.get("GITHUB_REF") or "main",
+                env.get("GITHUB_REPO") or "adri40606941-ui/Zumo", env)
+
+    def url_actualizar_app(self):
+        """De dónde baja la lista el botón ↻ de la app compilada en la VPS. Por defecto, la misma que usan los
+        APK compilados en GitHub (rama apk); se cambia con ZUMO_URL_ACTUALIZAR en bot.env."""
+        _, _, repo, env = self._config_github()
+        return env.get("ZUMO_URL_ACTUALIZAR") or f"https://raw.githubusercontent.com/{repo}/apk/servidores.bin"
+
+    def pantalla_compilar_vps(self, chat, mid, aviso=""):
+        falta = compilar_vps.faltantes()
+        txt = (aviso + "\n\n" if aviso else "") + "🖥 Compilar la app en la VPS\n\n"
+        if falta:
+            return self.mostrar(chat, mid, txt + "Todavía no está listo en esta VPS. Falta: " + ", ".join(falta) + ".\n"
+                                f"Se instala una sola vez, por SSH:\nbash {compilar_vps.INSTALADOR}",
+                                [[("🔄 Revisar de nuevo", "acompv")], [("◂ App Android", "app")]])
+        n = len(cargar_app())
+        txt += (f"Copia del repo: {compilar_vps.commit_info()}\n"
+                f"Servidores: {n} de la lista del bot{'' if n else ' (lista vacía: usa la del repo)'}\n"
+                f"Apariencia: {'la que armaste en el bot' if tema_guardado() else 'la del repo'}\n")
+        if not centro.respaldo.clave_firma():
+            return self.mostrar(chat, mid, txt + "\n⚠️ Falta la clave de firma en esta VPS. Sin ella el APK saldría con otra firma "
+                                "y los clientes no podrían instalarlo encima del anterior. Traela de GitHub (una sola vez).",
+                                [[("☁️ Traer la clave de GitHub", "ktraer")], [("◂ App Android", "app")]])
+        self.mostrar(chat, mid, txt + "Firma: la clave de este servidor.\n\n"
+                     "Antes de compilar baja los cambios de GitHub; si GitHub no responde, usa la copia de la VPS. "
+                     "La primera vez tarda más (baja las dependencias). ¿Compilo?",
+                     [[("✅ Compilar en la VPS", "acompv_si")], [("🔄 Sincronizar con GitHub", "asinc"), ("✖ No", "app")]])
+
+    def sincronizar_ahora(self, chat, mid):
+        def trabajo():
+            token, rama, _, _ = self._config_github()
+            ok, msg = compilar_vps.sincronizar(token, rama)
+            self.pantalla_compilar_vps(chat, mid, ("✅ " if ok else "⚠️ ") + msg)
+        threading.Thread(target=trabajo, daemon=True).start()
+
+    def compilar_vps_app(self, chat):
+        if not self.compilando.acquire(blocking=False):
+            return self.tg.mensaje(chat, "⏳ Ya hay una compilación en curso. Esperá a que termine.")
+        threading.Thread(target=self._compilar_vps, args=(chat,), daemon=True).start()
+
+    def _compilar_vps(self, chat):
+        try:
+            lista = cargar_app()
+            mid = self.tg.mensaje(chat, "🖥 Arrancando en la VPS…")
+            ultimo = [""]
+
+            def progreso(texto):
+                if texto != ultimo[0]:
+                    ultimo[0] = texto
+                    self.tg.editar(chat, mid, texto)
+
+            token, rama, _, _ = self._config_github()
+            r = compilar_vps.compilar(srv.a_texto(lista) if lista else "", paquete_marca(), centro.respaldo.clave_firma(),
+                                      self.url_actualizar_app(), progreso, token, rama)
+            self.tg.documento(chat, "zumo-vpn.apk", r["apk"], f"✅ Compilada en la VPS · versión {r['codigo']} · {len(lista)} servidor(es)")
+            ok, msg = r["sync"]
+            self.tg.mensaje(chat, "✅ Listo. Instalá el APK encima de la versión anterior: se actualiza sin perder nada.\n\n"
+                            f"{'🔄' if ok else '⚠️'} {msg}", [[("📱 App Android", "app")], [("◂ Menú", "menu")]])
+        except compilar_vps.ErrorVps as ex:
+            self.tg.mensaje(chat, f"❌ {ex}", [[("📱 App Android", "app")]])
+        except Exception as ex:  # que el bot nunca se caiga por esto
+            self.tg.mensaje(chat, f"⚠️ Error inesperado al compilar en la VPS: {ex}", [[("📱 App Android", "app")]])
+        finally:
+            self.compilando.release()
+
+    def sincronizar_una_vez(self):
+        """Baja los cambios de GitHub a la copia de la VPS, si el compilador está instalado y no se está compilando."""
+        if not os.path.isdir(os.path.join(compilar_vps.REPO, ".git")) or not self.compilando.acquire(blocking=False):
+            return None
+        try:
+            token, rama, _, _ = self._config_github()
+            return compilar_vps.sincronizar(token, rama)
+        finally:
+            self.compilando.release()
+
+    def sincronizar_diario(self):
+        time.sleep(600)
+        while True:
+            try:
+                self.sincronizar_una_vez()
+            except Exception as e:  # el hilo no se puede caer
+                print("zumo-bot: no pude sincronizar la copia del repo:", e, flush=True)
+            time.sleep(24 * 3600)
 
     def publicar_servidores(self, chat):
         """Dispara el workflow liviano que publica la lista cifrada en la rama apk (botón ↻ de la app)."""
@@ -1531,6 +1634,7 @@ def main():
         bot.gh_pub = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
                                      workflow="publicar-servidores.yml", rama=env.get("GITHUB_REF") or "main")
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()
+    threading.Thread(target=bot.sincronizar_diario, daemon=True).start()
     print("zumo-bot: listo, admins:", sorted(admins) or "ninguno (mandá /id al bot)", flush=True)
     offset = 0
     while True:
