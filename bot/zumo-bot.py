@@ -24,7 +24,9 @@ import uuid
 from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import accesos  # noqa: E402
 import centro  # noqa: E402
+import codigos_bot  # noqa: E402
 import compilar  # noqa: E402
 import compilar_vps  # noqa: E402
 import maquinas_bot  # noqa: E402
@@ -490,6 +492,7 @@ class Telegram:
 POR_PAGINA = 20
 MENU = [[("➕ Crear usuario", "crear"), ("👥 Usuarios", "lista:0")],
         [("📱 App Android", "app"), ("🖥 Máquinas", "maq")],
+        [("🔑 Instalar en VPS nueva", "inst")],
         [("🔗 Enlazar GitHub", "ghenl")],
         [("💾 Respaldo", "resp")],
         [("🪪 Mi ID", "id")]]
@@ -514,12 +517,13 @@ def teclado_dias(prefijo):
             [("✖ Cancelar", "menu")]]
 
 
-class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin):
+class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMixin):
     def __init__(self, tg, admins, gh=None):
         self.tg, self.admins, self.gh = tg, admins, gh
         self.gh_pub = None    # workflow liviano para publicar la lista de servidores (botón ↻ de la app)
         self.estado = {}      # chat -> {"paso": ..., datos}
         self.compilando = threading.Lock()
+        self.accesos = accesos.Accesos()   # códigos de un solo uso para instalar en VPS nuevas
 
     # -- pantallas
     def mostrar(self, chat, mid, texto, botones):
@@ -682,6 +686,8 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin):
         if self.boton_resp(chat, mid, acc):
             return
         if self.boton_maquinas(chat, mid, acc, arg):
+            return
+        if self.boton_codigos(chat, mid, acc, arg):
             return
         if acc == "lista":
             self.estado.pop(chat, None)
@@ -1667,7 +1673,7 @@ def main():
         bot.gh_pub = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
                                      workflow="publicar-servidores.yml", rama=env.get("GITHUB_REF") or "main")
     if bot.dominio_lista():
-        publico.iniciar()
+        publico.iniciar(accesos=bot.accesos, dominio=bot.dominio_lista())
         if not publico.hay_lista():
             bot.publicar_en_vps(cargar_app())
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()

@@ -12,18 +12,22 @@ En una VPS Debian/Ubuntu, como root:
 curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/install.sh | bash
 ```
 
-**Instalar desde tu dominio, sin GitHub.** Si el centro (la VPS del bot) tiene `ZUMO_DOMINIO` y la copia del repo en
-`/opt/zumo-repo`, reparte los mismos archivos del instalador (solo los del panel, `binarios/`, `scripts/` y `bot/`;
-nada más). En la VPS nueva:
+**Instalar desde tu dominio, sin GitHub, con un código de un solo uso.** Requiere que el centro (la VPS del bot) tenga
+`ZUMO_DOMINIO` en `/etc/zumo/bot.env` y la copia del repo en `/opt/zumo-repo`. En el bot: **🔑 Instalar en VPS nueva** →
+«Código para el panel» (o «para el bot»). Te da un código que sirve una vez y vence en 15 minutos. En la VPS nueva, como root:
 
 ```bash
-export ZUMO_BASE=https://bot.zumoserver.com
-curl -fsSL "$ZUMO_BASE/install.sh" | bash
+curl -fsSL https://bot.zumoserver.com/i | bash
 ```
 
-`ZUMO_BASE` queda guardado: las actualizaciones del panel también salen de ese dominio. Los archivos son los de la
-copia del centro (la que sincroniza con GitHub una vez por día o con «🔄 Sincronizar»). Una excepción: el limitador
-de conexiones baja BadVPN directo de GitHub (`ambrop72/badvpn`).
+Pide el código, lo cambia por un pase propio de esa VPS e instala todo desde tu dominio. Ese pase queda en la dirección
+guardada (`/etc/zumo/base.url`), así las actualizaciones del panel también salen del dominio sin pedir nada.
+
+- Sin código ni pase, el dominio no entrega ningún archivo del instalador (solo el cargador `/i` y la lista de servidores de la app).
+- «📋 VPS instaladas» muestra cada VPS (fecha e IP) y deja **anular** el acceso de una: ya no baja más del dominio.
+- Quien prueba códigos al azar se frena (10 fallos por minuto bloquean los canjes 2 minutos).
+- En el disco del centro solo se guarda el hash de códigos y pases (`/etc/zumo/accesos.json`, 0600).
+- Una excepción: el limitador de conexiones baja BadVPN directo de GitHub (`ambrop72/badvpn`).
 
 Después, abrí el panel con:
 
@@ -203,7 +207,7 @@ instalado, volvé a correr `bot/instalar-bot.sh`.
 | `fuentes/bhttp-shim/main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
 | `android/` | App Android (Zumo VPN). `android/servidores.txt` es la lista de servidores que trae la app. |
 | `bot/respaldo.py` / `bot/centro.py` | Respaldo cifrado, clave de firma y sus botones del bot. |
-| `bot/publico.py` | Servidor web mínimo del bot: reparte `servidores.bin` (la lista de la app) desde la VPS. |
+| `bot/publico.py` / `bot/accesos.py` / `bot/codigos_bot.py` | Servidor web mínimo del bot (lista de la app e instaladores desde el dominio) y los códigos de un solo uso para instalar en VPS nuevas. |
 | `bot/compilar_vps.py` / `bot/instalar-compilador.sh` | Compilar la app en la VPS del bot (sin GitHub) y el instalador de lo que hace falta. |
 | `bot/maquinas.py` / `bot/maquinas_bot.py` | Sección 🖥 Máquinas: las VPS que el bot maneja por SSH (recursos y protocolos). |
 | `scripts/diagnostico.sh` | Chequeos de estado. |

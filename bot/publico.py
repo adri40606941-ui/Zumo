@@ -1,17 +1,19 @@
-"""Servidor web mínimo del bot: reparte desde la VPS la lista de servidores de la app (servidores.bin) y los
-instaladores del panel (los mismos archivos del repo, de la copia /opt/zumo-repo), para instalar con
-`ZUMO_BASE=https://dominio` sin pasar por GitHub.
+"""Servidor web mínimo del bot, para dos cosas:
 
-Solo sirve rutas de una lista fija: /servidores.bin y, de la copia del repo, los scripts del panel, sus
-fuentes/configuración, binarios/, scripts/ y bot/. Cualquier otra ruta da 404 (no se listan carpetas, no se
-sigue ningún enlace que salga de la copia). La lista va cifrada (ZL1/AES-GCM), así que no hay nada legible. Escucha en el puerto 80 (Cloudflare "Flexible") y,
-si existe un certificado en /etc/zumo/web/, también en el 443 (Cloudflare "Full"). Si un puerto no se
-puede abrir (ocupado, sin permiso) el bot sigue andando: la app cae a GitHub."""
+1. Repartir la lista de servidores de la app (/servidores.bin, cifrada, pública).
+2. Instalar el panel (o el bot) en una VPS nueva desde tu dominio, sin GitHub y con un código de un solo uso
+   que da el bot (ver accesos.py): `/i` es el cargador, `/canje` cambia el código por un pase y
+   `/s/<pase>/<archivo>` sirve los archivos del instalador, de la copia del repo en /opt/zumo-repo.
+
+Todo sale de una lista fija de rutas; lo demás da 404 (no se listan carpetas ni se sigue ningún enlace que
+salga de la copia). Escucha en el puerto 80 (Cloudflare "Flexible") y, si hay certificado en /etc/zumo/web/,
+también en el 443 (Cloudflare "Full"). Si un puerto no se puede abrir el bot sigue andando."""
 import os
 import re
 import shutil
 import ssl
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 DIR = "/opt/zumo-bot/publico"
@@ -57,7 +59,23 @@ def hay_lista(directorio=None):
     return os.path.isfile(os.path.join(directorio or DIR, ARCHIVO))
 
 
-def _handler(directorio, repo=None):
+CARGADOR = r"""#!/bin/bash
+# Instalador Zumo: pide el código de un solo uso que te da el bot.
+D="%(dominio)s"
+[ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+C="${ZUMO_CODIGO:-}"
+[ -n "$C" ] || read -rp "Código de instalación: " C </dev/tty
+R=$(curl -fsS --get --data-urlencode "c=$C" "https://$D/canje") || { echo "✘ Código inválido o vencido."; exit 1; }
+P=$(printf '%%s\n' "$R" | sed -n 1p); K=$(printf '%%s\n' "$R" | sed -n 2p)
+case "$P" in ""|*[!0-9a-f]*) echo "✘ Respuesta inesperada."; exit 1;; esac
+[ "${#P}" -eq 32 ] || { echo "✘ Respuesta inesperada."; exit 1; }
+case "$K" in panel) S=install.sh;; bot) S=bot/instalar-bot.sh;; *) echo "✘ Respuesta inesperada."; exit 1;; esac
+export ZUMO_BASE="https://$D/s/$P"
+curl -fsSL "$ZUMO_BASE/$S" | bash
+"""
+
+
+def _handler(directorio, repo=None, accesos=None, dominio=""):
     class H(BaseHTTPRequestHandler):
         server_version = "zumo"
         sys_version = ""
@@ -65,29 +83,44 @@ def _handler(directorio, repo=None):
         def log_message(self, *a):
             pass
 
+        def _texto(self, codigo, cuerpo=b"", tipo="text/plain; charset=utf-8", con_cuerpo=True):
+            self.send_response(codigo)
+            if cuerpo:
+                self.send_header("Content-Type", tipo)
+            self.send_header("Content-Length", str(len(cuerpo)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if cuerpo and con_cuerpo:
+                self.wfile.write(cuerpo)
+
+        def _ip(self):
+            return self.headers.get("CF-Connecting-IP") or self.client_address[0]
+
         def _responder(self, con_cuerpo):
-            ruta = self.path.split("?", 1)[0]
-            archivo = None
+            ruta, _, consulta = self.path.partition("?")
+            archivo, tipo = None, "application/octet-stream"
             if ruta in PERMITIDOS:
-                archivo = os.path.join(directorio, ARCHIVO)
-                tipo = PERMITIDOS[ruta]
-                if not os.path.isfile(archivo):
-                    archivo = None
-            else:
-                archivo = ruta_repo(ruta, repo)
-                tipo = "text/plain; charset=utf-8" if archivo and archivo.endswith((".sh", ".py", ".c", ".conf")) else "application/octet-stream"
-            if archivo is None:
-                self.send_response(404)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
+                archivo, tipo = os.path.join(directorio, ARCHIVO), PERMITIDOS[ruta]
+            elif ruta == "/i" and dominio and accesos:
+                return self._texto(200, (CARGADOR % {"dominio": dominio}).encode(), con_cuerpo=con_cuerpo)
+            elif ruta == "/canje" and accesos:
+                q = urllib.parse.parse_qs(consulta).get("c", [""])[0]
+                pase, kind = accesos.canjear(q, self._ip())
+                if not pase:
+                    return self._texto(403)
+                return self._texto(200, f"{pase}\n{kind}\n".encode(), con_cuerpo=con_cuerpo)
+            elif ruta.startswith("/s/") and accesos:
+                pase, _, resto = ruta[3:].partition("/")
+                if accesos.valido(pase):
+                    archivo = ruta_repo(resto, repo)
+                    if archivo and archivo.endswith((".sh", ".py", ".c", ".conf")):
+                        tipo = "text/plain; charset=utf-8"
+            if archivo is None or not os.path.isfile(archivo):
+                return self._texto(404)
             try:
                 f = open(archivo, "rb")
             except OSError:
-                self.send_response(404)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
-                return
+                return self._texto(404)
             with f:
                 self.send_response(200)
                 self.send_header("Content-Type", tipo)
@@ -112,10 +145,10 @@ def _handler(directorio, repo=None):
     return H
 
 
-def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=None):
+def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=None, accesos=None, dominio=""):
     """Abre un puerto en un hilo. Devuelve el servidor, o None si no se pudo abrir (nunca lanza)."""
     try:
-        s = ThreadingHTTPServer((host, puerto), _handler(directorio or DIR, repo))
+        s = ThreadingHTTPServer((host, puerto), _handler(directorio or DIR, repo, accesos, dominio))
         s.daemon_threads = True
         if cert:
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -128,9 +161,10 @@ def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=
         return None
 
 
-def iniciar(directorio=None, http=80, https=443):
+def iniciar(directorio=None, http=80, https=443, accesos=None, dominio=""):
     """Arranca los puertos que se puedan. Devuelve la lista de servidores abiertos."""
-    abiertos = [servir(http, directorio)]
+    extra = dict(accesos=accesos, dominio=dominio)
+    abiertos = [servir(http, directorio, **extra)]
     if os.path.isfile(CERT) and os.path.isfile(CLAVE):
-        abiertos.append(servir(https, directorio, CERT, CLAVE))
+        abiertos.append(servir(https, directorio, CERT, CLAVE, **extra))
     return [s for s in abiertos if s]
