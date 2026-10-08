@@ -190,11 +190,32 @@ instalado, volvé a correr `bot/instalar-bot.sh`.
 | `fuentes/bhttp-shim/main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
 | `android/` | App Android (Zumo VPN). `android/servidores.txt` es la lista de servidores que trae la app. |
 | `bot/respaldo.py` / `bot/centro.py` | Respaldo cifrado, clave de firma y sus botones del bot. |
+| `bot/compilar_vps.py` / `bot/instalar-compilador.sh` | Compilar la app en la VPS del bot (sin GitHub) y el instalador de lo que hace falta. |
+| `bot/maquinas.py` / `bot/maquinas_bot.py` | Sección 🖥 Máquinas: las VPS que el bot maneja por SSH (recursos y protocolos). |
 | `scripts/diagnostico.sh` | Chequeos de estado. |
 
-## Compilar la app (solo GitHub)
+## Compilar la app (en GitHub o en la VPS del bot)
 
-La app se compila siempre en GitHub (Actions) desde el botón "📱 App Android → 🔨 Compilar en GitHub" del bot.
+Desde **📱 App Android** del bot hay dos opciones: **🔨 Compilar en GitHub** y **🖥 Compilar en la VPS**. Las dos usan
+la misma lista de servidores, la misma apariencia y la misma clave de firma, y el bot te manda el APK por Telegram.
+Como las dos numeran la versión igual (minutos desde 2025-01-01), un APK de GitHub y otro de la VPS se instalan
+siempre uno encima del otro.
+
+**Compilar en la VPS (sirve si GitHub se cae).** Se prepara una sola vez, por SSH en el centro:
+`bash /opt/zumo-bot/instalar-compilador.sh`. Instala Java 17, Gradle, el Android SDK/NDK (unos 8 GB), 4 GB de swap si hace
+falta y una copia del repo en `/opt/zumo-repo`. Después:
+
+- El bot baja los cambios de GitHub a esa copia una vez por día y antes de cada compilación (**🔄 Sincronizar con GitHub**
+  lo hace a mano). Si GitHub no responde, o la copia tiene cambios propios que no se unen solos, compila con la copia de la VPS.
+- La copia se puede editar por SSH en `/opt/zumo-repo` (es un repo git común). Los cambios de lista y apariencia que
+  arma el bot se aplican solo durante la compilación y no ensucian la copia.
+- Hace falta la clave de firma en el centro (💾 Respaldo → ☁️ Traer la clave de GitHub, una sola vez). Sin ella el APK
+  saldría con otra firma y los clientes no podrían instalarlo encima del anterior.
+- El botón ↻ de la app baja la lista de `https://raw.githubusercontent.com/<repo>/apk/servidores.bin`. Para otra dirección,
+  poné `ZUMO_URL_ACTUALIZAR=...` en `/etc/zumo/bot.env`.
+- La primera compilación baja las dependencias de Gradle y tarda más (puede pasar de 20 minutos); las siguientes, menos.
+
+**Compilar en GitHub.** Desde el botón "📱 App Android → 🔨 Compilar en GitHub" del bot.
 Hace falta el token de GitHub en `/etc/zumo/bot.env` (el instalador del bot lo pide). La clave de firma queda
 fija en el repo con "🔑 Asegurar clave de firma", así la app siempre se actualiza encima de la anterior.
 "💾 Respaldo" manda a Telegram un archivo cifrado con `/etc/zumo` (se envía solo una vez por día si pusiste contraseña).

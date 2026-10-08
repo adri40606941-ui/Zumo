@@ -150,11 +150,13 @@ jobs:
       - name: Compilar
         id: compilar
         continue-on-error: true
-        env:
-          ZUMO_VERSION_CODE: ${{ github.run_number }}
         run: |
           mkdir -p out
           set -o pipefail
+          # versionCode = minutos desde 2025-01-01 (UTC). Es la misma cuenta que usa el bot al compilar en la VPS
+          # (bot/compilar_vps.py), así un APK de GitHub y otro de la VPS siempre se instalan uno encima del otro.
+          export ZUMO_VERSION_CODE=$(( ($(date +%s) - 1735689600) / 60 ))
+          echo "versionCode $ZUMO_VERSION_CODE"
           gradle -p android assembleRelease --no-daemon --stacktrace 2>&1 | tee out/compilacion-completa.log | grep -E "^e: |FAILED|BUILD|error:|Exception" | head -n 150 | tee out/compilacion.log
 
       # Celulares con páginas de 16 KB (Android 15+): la parte nativa tiene que ir alineada. Solo avisa.

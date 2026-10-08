@@ -22,10 +22,13 @@ for p in fonts-noto-color-emoji fonts-dejavu-extra; do
 	apt-get install -y --no-install-recommends "$p" >/dev/null 2>&1 || echo "Aviso: no se pudo instalar $p (la vista previa lo aproxima)."
 done
 
-ARCHIVOS="servidores.py compilar.py tema.py vista.py marca.py respaldo.py centro.py maquinas.py maquinas_bot.py zumo-bot.py"
+ARCHIVOS="servidores.py compilar.py compilar_vps.py tema.py vista.py marca.py respaldo.py centro.py maquinas.py maquinas_bot.py zumo-bot.py"
 for f in $ARCHIVOS; do
 	curl -fsSL "$BASE/$f$NC" -o "/opt/zumo-bot/$f" || { echo "✘ No se pudo bajar $f"; exit 1; }
 done
+# Para compilar la app en esta VPS (sin GitHub): se corre una sola vez, a mano (ver README).
+curl -fsSL "$BASE/instalar-compilador.sh$NC" -o /opt/zumo-bot/instalar-compilador.sh || { echo "✘ No se pudo bajar instalar-compilador.sh"; exit 1; }
+chmod 755 /opt/zumo-bot/instalar-compilador.sh
 rm -f /opt/zumo-bot/zs.py   # el bot ya no arma archivos .zs
 ( cd /opt/zumo-bot && python3 -m py_compile $ARCHIVOS ) || { echo "✘ El bot bajado tiene errores"; exit 1; }
 chmod 755 /opt/zumo-bot/zumo-bot.py
