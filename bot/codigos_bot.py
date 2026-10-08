@@ -38,14 +38,17 @@ class CodigosMixin:
                      "te pide el código y se instala todo desde tu dominio, sin GitHub.\n\n"
                      f"VPS instaladas con este sistema: {n}",
                      [[("🆕 Código para el panel", "inst_n:panel")], [("🆕 Código para el bot", "inst_n:bot")],
+                      [("🔄 Pasar una VPS que ya tiene el panel", "inst_n:actualizar")],
                       [("📋 VPS instaladas", "inst_l")], [("◂ Menú", "menu")]])
 
     def nuevo_codigo(self, chat, mid, tipo):
         if tipo not in ac.TIPOS or not self.dominio_lista():
             return self.pantalla_instalar(chat, mid)
         codigo = self.accesos.crear_codigo(tipo)
-        self.tg.mensaje(chat, f"🔑 Código para instalar: {ac.TIPOS[tipo].lower()}\n\n`{codigo}`\n\n"
-                              "Sirve una sola vez y vence en 15 minutos. En la VPS nueva, como root:\n\n"
+        donde = "En la VPS que ya tiene el panel" if tipo == "actualizar" else "En la VPS nueva"
+        que = "para pasar una VPS al dominio" if tipo == "actualizar" else f"para instalar: {ac.TIPOS[tipo].lower()}"
+        self.tg.mensaje(chat, f"🔑 Código {que}\n\n`{codigo}`\n\n"
+                              f"Sirve una sola vez y vence en 15 minutos. {donde}, como root:\n\n"
                               f"`curl -fsSL https://{self.dominio_lista()}/i | bash`\n\n"
                               "Cuando lo pida, pegá el código.", [[("◂ Instalar en VPS nueva", "inst")]], md=True)
 

@@ -1,6 +1,7 @@
 """Servidor web mínimo del bot, para dos cosas:
 
-1. Repartir la lista de servidores de la app (/servidores.bin, cifrada, pública).
+1. Repartir lo que bajan tus clientes: la lista de servidores de la app (/servidores.bin, cifrada) y el APK
+   (/zumo-vpn.apk). Son públicos, sin código.
 2. Instalar el panel (o el bot) en una VPS nueva desde tu dominio, sin GitHub y con un código de un solo uso
    que da el bot (ver accesos.py): `/i` es el cargador, `/canje` cambia el código por un pase y
    `/s/<pase>/<archivo>` sirve los archivos del instalador, de la copia del repo en /opt/zumo-repo.
@@ -19,7 +20,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 DIR = "/opt/zumo-bot/publico"
 CERT = "/etc/zumo/web/cert.pem"
 CLAVE = "/etc/zumo/web/key.pem"
-PERMITIDOS = {"/servidores.bin": "application/octet-stream"}
+# Públicos (sin código): la lista de la app y el APK, que bajan tus clientes.
+PERMITIDOS = {"/servidores.bin": ("servidores.bin", "application/octet-stream"),
+              "/zumo-vpn.apk": ("zumo-vpn.apk", "application/vnd.android.package-archive")}
 ARCHIVO = "servidores.bin"
 REPO = "/opt/zumo-repo"
 # Archivos del repo que bajan los instaladores (install.sh, actualizar.sh, panel.sh…). Nada más.
@@ -44,15 +47,15 @@ def ruta_repo(ruta, repo=None):
     return real
 
 
-def publicar(datos, directorio=None):
-    """Guarda la lista (bytes) de una vez: o queda entera o queda la anterior, nunca a medias."""
+def publicar(datos, directorio=None, nombre=ARCHIVO):
+    """Guarda un archivo público (bytes) de una vez: o queda entero o queda el anterior, nunca a medias."""
     d = directorio or DIR
     os.makedirs(d, exist_ok=True)
-    tmp = os.path.join(d, ".servidores.tmp")
+    tmp = os.path.join(d, ".publicando.tmp")
     with open(tmp, "wb") as f:
         f.write(datos)
-    os.replace(tmp, os.path.join(d, ARCHIVO))
-    return os.path.join(d, ARCHIVO)
+    os.replace(tmp, os.path.join(d, nombre))
+    return os.path.join(d, nombre)
 
 
 def hay_lista(directorio=None):
@@ -69,7 +72,7 @@ R=$(curl -fsS --get --data-urlencode "c=$C" "https://$D/canje") || { echo "✘ C
 P=$(printf '%%s\n' "$R" | sed -n 1p); K=$(printf '%%s\n' "$R" | sed -n 2p)
 case "$P" in ""|*[!0-9a-f]*) echo "✘ Respuesta inesperada."; exit 1;; esac
 [ "${#P}" -eq 32 ] || { echo "✘ Respuesta inesperada."; exit 1; }
-case "$K" in panel) S=install.sh;; bot) S=bot/instalar-bot.sh;; *) echo "✘ Respuesta inesperada."; exit 1;; esac
+case "$K" in panel) S=install.sh;; bot) S=bot/instalar-bot.sh;; actualizar) S=actualizar.sh;; *) echo "✘ Respuesta inesperada."; exit 1;; esac
 export ZUMO_BASE="https://$D/s/$P"
 curl -fsSL "$ZUMO_BASE/$S" | bash
 """
@@ -98,9 +101,12 @@ def _handler(directorio, repo=None, accesos=None, dominio=""):
 
         def _responder(self, con_cuerpo):
             ruta, _, consulta = self.path.partition("?")
-            archivo, tipo = None, "application/octet-stream"
+            archivo, tipo, adjunto = None, "application/octet-stream", ""
             if ruta in PERMITIDOS:
-                archivo, tipo = os.path.join(directorio, ARCHIVO), PERMITIDOS[ruta]
+                nombre, tipo = PERMITIDOS[ruta]
+                archivo = os.path.join(directorio, nombre)
+                if nombre.endswith(".apk"):
+                    adjunto = f'attachment; filename="{nombre}"'
             elif ruta == "/i" and dominio and accesos:
                 return self._texto(200, (CARGADOR % {"dominio": dominio}).encode(), con_cuerpo=con_cuerpo)
             elif ruta == "/canje" and accesos:
@@ -126,6 +132,8 @@ def _handler(directorio, repo=None, accesos=None, dominio=""):
                 self.send_header("Content-Type", tipo)
                 self.send_header("Content-Length", str(os.fstat(f.fileno()).st_size))
                 self.send_header("Cache-Control", "no-cache")
+                if adjunto:
+                    self.send_header("Content-Disposition", adjunto)
                 self.end_headers()
                 if con_cuerpo:
                     shutil.copyfileobj(f, self.wfile)

@@ -746,7 +746,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
             return self.pantalla_lista(chat, mid, 0)
         if acc == "t":
             return self.boton_tema(chat, mid, arg)
-        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "acompv", "acompv_si", "asinc", "apub", "apub_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs", "asp", "aqp"):
+        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "acompv", "acompv_si", "asinc", "asubir", "apub", "apub_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs", "asp", "aqp"):
             return self.boton_app(chat, mid, acc, arg)
         return self.menu(chat, mid)      # botón de una versión anterior del bot
 
@@ -785,6 +785,8 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
             return self.compilar_vps_app(chat)
         if acc == "asinc":
             return self.sincronizar_ahora(chat, mid)
+        if acc == "asubir":
+            return self.subir_ahora(chat, mid)
         if acc == "apub":
             if not self.gh_pub:
                 return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "app")]])
@@ -978,21 +980,46 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
         return (env.get("GITHUB_TOKEN", ""), env.get("GITHUB_REF") or "main",
                 env.get("GITHUB_REPO") or "adri40606941-ui/Zumo", env)
 
+    def repo_privado(self):
+        """ZUMO_REPO_PRIVADO=1 en bot.env: el repo de GitHub es privado, así que la app no debe intentar bajar de ahí."""
+        return (self._config_github()[3].get("ZUMO_REPO_PRIVADO") or "").strip() in ("1", "si", "sí", "true")
+
     def url_actualizar_app(self):
-        """De dónde baja la lista el botón ↻ de la app compilada en la VPS. Por defecto, la misma que usan los
-        APK compilados en GitHub (rama apk); se cambia con ZUMO_URL_ACTUALIZAR en bot.env."""
+        """De dónde baja la lista el botón ↻ de la app. Con dominio propio: la VPS primero y GitHub de respaldo
+        (o solo la VPS si el repo es privado). Se cambia a mano con ZUMO_URL_ACTUALIZAR en bot.env."""
         _, _, repo, env = self._config_github()
         github = f"https://raw.githubusercontent.com/{repo}/apk/servidores.bin"
         if env.get("ZUMO_URL_ACTUALIZAR"):
             return env["ZUMO_URL_ACTUALIZAR"]
         dominio = self.dominio_lista()
-        # Con dominio propio: primero la VPS (rápida) y, si no responde, GitHub. La app prueba en orden.
-        return f"https://{dominio}/servidores.bin|{github}" if dominio else github
+        if not dominio:
+            return github
+        propia = f"https://{dominio}/servidores.bin"
+        return propia if self.repo_privado() else f"{propia}|{github}"
 
     def dominio_lista(self):
         """Dominio de la VPS que reparte la lista de servidores (ZUMO_DOMINIO en bot.env), o ''."""
         d = (self._config_github()[3].get("ZUMO_DOMINIO") or "").strip().lower()
         return d if re.fullmatch(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?", d) else ""
+
+    def url_apk(self):
+        d = self.dominio_lista()
+        return f"https://{d}/zumo-vpn.apk" if d else ""
+
+    def publicar_apk_en_vps(self, apk):
+        """Deja el APK para que tus clientes lo bajen de tu dominio. Devuelve el enlace, o '' si no se pudo."""
+        if not self.dominio_lista():
+            return ""
+        try:
+            publico.publicar(apk, nombre="zumo-vpn.apk")
+            return self.url_apk()
+        except Exception as e:
+            print("zumo-bot: no pude publicar el APK en la VPS:", e, flush=True)
+            return ""
+
+    def aviso_enlace(self, apk):
+        enlace = self.publicar_apk_en_vps(apk)
+        return f"\n\n🔗 Para tus clientes: {enlace}" if enlace else ""
 
     def publicar_en_vps(self, lista):
         """Deja la lista cifrada lista para que la app la baje de la VPS, al instante. True si quedó."""
@@ -1023,12 +1050,20 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
         self.mostrar(chat, mid, txt + "Firma: la clave de este servidor.\n\n"
                      "Antes de compilar baja los cambios de GitHub; si GitHub no responde, usa la copia de la VPS. "
                      "La primera vez tarda más (baja las dependencias). ¿Compilo?",
-                     [[("✅ Compilar en la VPS", "acompv_si")], [("🔄 Sincronizar con GitHub", "asinc"), ("✖ No", "app")]])
+                     [[("✅ Compilar en la VPS", "acompv_si")], [("🔄 Sincronizar con GitHub", "asinc"), ("⬆️ Subir cambios a GitHub", "asubir")],
+                      [("✖ No", "app")]])
 
     def sincronizar_ahora(self, chat, mid):
         def trabajo():
             token, rama, _, _ = self._config_github()
             ok, msg = compilar_vps.sincronizar(token, rama)
+            self.pantalla_compilar_vps(chat, mid, ("✅ " if ok else "⚠️ ") + msg)
+        threading.Thread(target=trabajo, daemon=True).start()
+
+    def subir_ahora(self, chat, mid):
+        def trabajo():
+            token, rama, _, _ = self._config_github()
+            ok, msg = compilar_vps.subir(token, rama)
             self.pantalla_compilar_vps(chat, mid, ("✅ " if ok else "⚠️ ") + msg)
         threading.Thread(target=trabajo, daemon=True).start()
 
@@ -1054,8 +1089,8 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
                                       self.url_actualizar_app(), progreso, token, rama)
             self.tg.documento(chat, "zumo-vpn.apk", r["apk"], f"✅ Compilada en la VPS · versión {r['codigo']} · {len(lista)} servidor(es)")
             ok, msg = r["sync"]
-            self.tg.mensaje(chat, "✅ Listo. Instalá el APK encima de la versión anterior: se actualiza sin perder nada.\n\n"
-                            f"{'🔄' if ok else '⚠️'} {msg}", [[("📱 App Android", "app")], [("◂ Menú", "menu")]])
+            self.tg.mensaje(chat, "✅ Listo. Instalá el APK encima de la versión anterior: se actualiza sin perder nada."
+                            + self.aviso_enlace(r["apk"]) + f"\n\n{'🔄' if ok else '⚠️'} {msg}", [[("📱 App Android", "app")], [("◂ Menú", "menu")]])
         except compilar_vps.ErrorVps as ex:
             self.tg.mensaje(chat, f"❌ {ex}", [[("📱 App Android", "app")]])
         except Exception as ex:  # que el bot nunca se caiga por esto
@@ -1204,7 +1239,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
                 gh.subir_secreto("ZUMO_SERVIDORES", srv.a_texto(lista))
                 self.tg.mensaje(chat, f"🔐 Lista de {len(lista)} servidor(es) subida al repo (cifrada).")
             if self.dominio_lista():   # el workflow la antepone a la de GitHub (la app prueba en orden)
-                gh.subir_secreto("ZUMO_URL_ACTUALIZAR", f"https://{self.dominio_lista()}/servidores.bin")
+                gh.subir_secreto("ZUMO_URL_ACTUALIZAR", self.url_actualizar_app())
             apariencia = secretos_marca()
             if apariencia:
                 for nombre, valor in apariencia.items():
@@ -1215,8 +1250,8 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
                 apk = gh.archivo_de_rama("zumo-vpn.apk")
                 n = r.get("run_number", "?")
                 self.tg.documento(chat, "zumo-vpn.apk", apk, f"✅ Compilación {n} en GitHub · {len(lista)} servidor(es)")
-                self.tg.mensaje(chat, "✅ Listo. Instalá el APK encima de la versión anterior: se actualiza sin perder nada.",
-                                [[("📱 App Android", "app")], [("◂ Menú", "menu")]])
+                self.tg.mensaje(chat, "✅ Listo. Instalá el APK encima de la versión anterior: se actualiza sin perder nada."
+                                + self.aviso_enlace(apk), [[("📱 App Android", "app")], [("◂ Menú", "menu")]])
             else:
                 cola = ""
                 try:

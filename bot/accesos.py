@@ -16,7 +16,7 @@ import time
 ARCHIVO = "/etc/zumo/accesos.json"
 ALFABETO = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"     # sin 0/O/1/I para dictarlo o copiarlo sin errores
 VIDA_CODIGO = 15 * 60
-TIPOS = {"panel": "Panel de usuarios", "bot": "Bot de Telegram"}
+TIPOS = {"panel": "Panel de usuarios", "bot": "Bot de Telegram", "actualizar": "Pasar una VPS con panel a este dominio"}
 MAX_FALLOS, VENTANA, BLOQUEO = 10, 60, 120
 
 

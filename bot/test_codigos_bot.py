@@ -105,7 +105,7 @@ class Pantallas(unittest.TestCase):
     def test_con_dominio_ofrece_codigos(self):
         self.armar("ZUMO_DOMINIO=bot.zumoserver.com\n")
         self.btn("inst")
-        self.assertEqual(self.tg.datos_botones(), ["inst_n:panel", "inst_n:bot", "inst_l", "menu"])
+        self.assertEqual(self.tg.datos_botones(), ["inst_n:panel", "inst_n:bot", "inst_n:actualizar", "inst_l", "menu"])
 
     def test_el_codigo_sale_con_el_comando_corto(self):
         self.armar("ZUMO_DOMINIO=bot.zumoserver.com\n")
@@ -115,6 +115,13 @@ class Pantallas(unittest.TestCase):
         codigo = [t for t in msg.split("`") if len(t) == 9 and t[4] == "-"][0]
         self.assertEqual(self.b.accesos.codigos_vigentes(), 1)
         self.assertIsNotNone(self.b.accesos.canjear(codigo)[0])
+
+    def test_codigo_para_pasar_una_vps_vieja_al_dominio(self):
+        self.armar("ZUMO_DOMINIO=bot.zumoserver.com\n")
+        self.btn("inst_n:actualizar")
+        self.assertIn("ya tiene el panel", self.tg.mensajes[-1])
+        codigo = [t for t in self.tg.mensajes[-1].split("`") if len(t) == 9 and t[4] == "-"][0]
+        self.assertEqual(self.b.accesos.canjear(codigo)[1], "actualizar")
 
     def test_tipo_raro_no_crea_nada(self):
         self.armar("ZUMO_DOMINIO=bot.zumoserver.com\n")

@@ -24,6 +24,8 @@ class Base(unittest.TestCase):
         self.b = self.bot.Bot(self.tg, {7}, None)
         cv, centro = self.bot.compilar_vps, self.bot.centro
         viejos = (cv.faltantes, cv.commit_info, cv.compilar, cv.sincronizar, cv.REPO, centro.respaldo.clave_firma)
+        self.addCleanup(setattr, cv, "subir", cv.subir)
+        self.addCleanup(setattr, self.bot.publico, "DIR", self.bot.publico.DIR)
         self.addCleanup(lambda: (setattr(cv, "faltantes", viejos[0]), setattr(cv, "commit_info", viejos[1]),
                                  setattr(cv, "compilar", viejos[2]), setattr(cv, "sincronizar", viejos[3]),
                                  setattr(cv, "REPO", viejos[4]), setattr(centro.respaldo, "clave_firma", viejos[5])))
@@ -135,6 +137,43 @@ class Compilacion(Base):
     def test_url_por_defecto_sin_config(self):
         self.armar()
         self.assertEqual(self.b.url_actualizar_app(), "https://raw.githubusercontent.com/adri40606941-ui/Zumo/apk/servidores.bin")
+
+    def test_repo_privado_la_app_no_usa_github(self):
+        self.armar(env="ZUMO_DOMINIO=bot.zumoserver.com\nZUMO_REPO_PRIVADO=1\n")
+        self.assertEqual(self.b.url_actualizar_app(), "https://bot.zumoserver.com/servidores.bin")
+
+    def test_el_apk_queda_en_el_dominio_para_los_clientes(self):
+        self.armar(env="ZUMO_DOMINIO=bot.zumoserver.com\n")
+        d = tempfile.mkdtemp()
+        self.bot.publico.DIR = d
+        self.falsa()
+        self.btn("acompv_si")
+        self.esperar()
+        with open(os.path.join(d, "zumo-vpn.apk"), "rb") as f:
+            self.assertEqual(f.read(), b"APK-VPS")
+        self.assertIn("https://bot.zumoserver.com/zumo-vpn.apk", self.tg.mensajes[-1])
+
+    def test_sin_dominio_no_publica_el_apk(self):
+        self.armar()
+        d = tempfile.mkdtemp()
+        self.bot.publico.DIR = d
+        self.falsa()
+        self.btn("acompv_si")
+        self.esperar()
+        self.assertEqual(os.listdir(d), [])
+        self.assertNotIn("Para tus clientes", self.tg.mensajes[-1])
+
+    def test_subir_cambios_a_github(self):
+        self.armar(env="GITHUB_TOKEN=tok\nGITHUB_REF=main\n")
+        visto = []
+        self.bot.compilar_vps.subir = lambda token, rama: visto.append((token, rama)) or (True, "Subí 1 cambio(s)")
+        self.btn("asubir")
+        for _ in range(100):
+            if any("Subí 1 cambio" in m for m in self.tg.mensajes):
+                break
+            time.sleep(0.05)
+        self.assertEqual(visto, [("tok", "main")])
+        self.assertTrue(any("✅ Subí 1 cambio" in m for m in self.tg.mensajes))
 
     def test_si_falla_lo_cuenta_y_libera_el_candado(self):
         self.armar()
