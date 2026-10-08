@@ -12,8 +12,9 @@ En una VPS Debian/Ubuntu, como root:
 curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/install.sh | bash
 ```
 
-**Instalar desde tu dominio, sin GitHub, con un código de un solo uso.** Requiere que el centro (la VPS del bot) tenga
-`ZUMO_DOMINIO` en `/etc/zumo/bot.env` y la copia del repo en `/opt/zumo-repo`. En el bot: **🔑 Instalar en VPS nueva** →
+**Instalar desde tu dominio, sin GitHub, con un código de un solo uso.** El instalador del bot ya deja todo listo en el centro (pide el
+dominio —Enter = `bot.zumoserver.com`—, copia el repo a `/opt/zumo-repo` y abre los puertos 80 y 443 si hay ufw), y si GitHub no responde
+reinstala el bot desde esa copia. En el bot: **🔑 Instalar en VPS nueva** →
 «Código para el panel» (o «para el bot»). Te da un código que sirve una vez y vence en 15 minutos. En la VPS nueva, como root:
 
 ```bash
@@ -27,7 +28,7 @@ guardada (`/etc/zumo/base.url`), así las actualizaciones del panel también sal
 - «📋 VPS instaladas» muestra cada VPS (fecha e IP) y deja **anular** el acceso de una: ya no baja más del dominio.
 - Quien prueba códigos al azar se frena (10 fallos por minuto bloquean los canjes 2 minutos).
 - En el disco del centro solo se guarda el hash de códigos y pases (`/etc/zumo/accesos.json`, 0600).
-- Una excepción: el limitador de conexiones baja BadVPN directo de GitHub (`ambrop72/badvpn`).
+- BadVPN (v1.999.130) ya no se baja de un repo de terceros: su código está en `fuentes/badvpn.tar.gz` y el instalador lo compara con una suma de control fija antes de compilarlo.
 
 Después, abrí el panel con:
 

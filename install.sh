@@ -833,11 +833,17 @@ rm -f "$log"
 return $rc
 }
 
-_deps_badvpn() { apt-get update && apt-get install -y --no-install-recommends ca-certificates git cmake make gcc libc6-dev; }
+_deps_badvpn() { apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tar cmake make gcc libc6-dev; }
 __oculto "[1/3] Dependencias" _deps_badvpn || exit 1
 
+# El código de BadVPN (v1.999.130, ambrop72/badvpn) viene del mismo lugar que el panel (fuentes/badvpn.tar.gz,
+# tu dominio o tu repo), no de GitHub de terceros. La suma de control está fija acá: si el archivo cambió, no se usa.
+BADVPN_SHA256="1b58098ae295b0c5707bd31528018997b50edb4c24eadc748bb3c094afa8dff6"
 _badvpn_build() {
-git clone --depth 1 https://github.com/ambrop72/badvpn.git "$WORK/badvpn" &&
+local base="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
+curl -fsSL "$base/fuentes/badvpn.tar.gz" -o "$WORK/badvpn.tar.gz" || { echo "No se pudo bajar fuentes/badvpn.tar.gz de $base"; return 1; }
+[ "$(sha256sum "$WORK/badvpn.tar.gz" | cut -d' ' -f1)" = "$BADVPN_SHA256" ] || { echo "El código de BadVPN bajado no coincide con la suma esperada; no se usa."; return 1; }
+tar -xzf "$WORK/badvpn.tar.gz" -C "$WORK" || return 1
 cmake -S "$WORK/badvpn" -B "$WORK/badvpn/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 &&
 cmake --build "$WORK/badvpn/build" --parallel 2
 }

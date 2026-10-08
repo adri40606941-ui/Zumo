@@ -87,6 +87,9 @@ if [ ! -d "$REPO_DIR/.git" ]; then
 		|| fallo "No pude bajar el submódulo hev-socks5-tunnel"
 else
 	echo "La copia del repo ya está en $REPO_DIR."
+	# (si la copió el instalador del bot, puede faltar el submódulo del túnel)
+	( cd "$REPO_DIR" && { gitc submodule update --init --recursive --quiet 2>/dev/null || { GH_TOKEN=""; gitc submodule update --init --recursive --quiet; }; } ) \
+		|| fallo "No pude bajar el submódulo hev-socks5-tunnel"
 fi
 
 echo "Comprobando..."
