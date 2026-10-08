@@ -10,6 +10,7 @@ import unittest
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, AQUI)
+import accesos  # noqa: E402
 import publico  # noqa: E402
 import zs  # noqa: E402
 from test_bot import FalsaTelegram, cargar_bot  # noqa: E402
@@ -108,56 +109,157 @@ class Https(unittest.TestCase):
 
 
 class Instaladores(unittest.TestCase):
-    """Los instaladores del panel salen de la copia del repo en la VPS (ZUMO_BASE=https://dominio)."""
+    """Instalar desde el dominio: código de un solo uso -> pase -> archivos del repo."""
+
+    ARCHIVOS = {"install.sh": "#!/bin/bash\necho INSTALADO-PANEL \"$ZUMO_BASE\" > \"$SALIDA\"\n", "panel.sh": "p",
+                "zumo-lib.sh": "l", "actualizar.sh": "a", "fuentes/zumo-limit.c": "int x;", "config/limit.conf": "c",
+                "binarios/hcr-server": "BIN", "scripts/zumo-datos.sh": "d",
+                "bot/instalar-bot.sh": "#!/bin/bash\necho INSTALADO-BOT > \"$SALIDA\"\n",
+                "bot/zumo-bot.py": "bot", "bot/test_bot.py": "t", "README.md": "r", ".git/config": "[remote]",
+                "android/app/x.kt": "k"}
 
     def setUp(self):
         t = tempfile.TemporaryDirectory()
         self.addCleanup(t.cleanup)
+        self.tmp = t.name
         self.repo = os.path.join(t.name, "repo")
         pub = os.path.join(t.name, "pub")
         os.makedirs(pub)
-        for rel, txt in {"install.sh": "#!/bin/bash\necho panel\n", "panel.sh": "p", "zumo-lib.sh": "l",
-                         "actualizar.sh": "a", "fuentes/zumo-limit.c": "int x;", "config/limit.conf": "c",
-                         "binarios/hcr-server": "BIN", "scripts/zumo-datos.sh": "d", "bot/instalar-bot.sh": "b",
-                         "bot/zumo-bot.py": "bot", "bot/test_bot.py": "t", "README.md": "r",
-                         ".git/config": "[remote]", "android/app/x.kt": "k"}.items():
+        for rel, txt in self.ARCHIVOS.items():
             os.makedirs(os.path.dirname(os.path.join(self.repo, rel)), exist_ok=True)
             with open(os.path.join(self.repo, rel), "w") as f:
                 f.write(txt)
         with open(os.path.join(t.name, "secreto"), "w") as f:
             f.write("NO")
         os.symlink(os.path.join(t.name, "secreto"), os.path.join(self.repo, "scripts", "enlace.sh"))
+        self.ahora = [1000.0]
+        self.ac = accesos.Accesos(os.path.join(t.name, "accesos.json"), reloj=lambda: self.ahora[0])
         self.puerto = puerto_libre()
-        self.s = publico.servir(self.puerto, pub, host="127.0.0.1", repo=self.repo)
+        self.s = publico.servir(self.puerto, pub, host="127.0.0.1", repo=self.repo, accesos=self.ac, dominio="bot.test")
         self.addCleanup(lambda: (self.s.shutdown(), self.s.server_close()))
 
-    def pedir(self, ruta, metodo="GET"):
+    def pedir(self, ruta, metodo="GET", cabeceras=None):
         c = http.client.HTTPConnection("127.0.0.1", self.puerto, timeout=5)
-        c.request(metodo, ruta)
+        c.request(metodo, ruta, headers=cabeceras or {})
         r = c.getresponse()
         return r.status, r.read()
 
-    def test_sirve_lo_que_bajan_los_instaladores(self):
-        for ruta, txt in (("/install.sh", "#!/bin/bash\necho panel\n"), ("/panel.sh", "p"), ("/zumo-lib.sh", "l"),
-                          ("/actualizar.sh?nocache=1", "a"), ("/fuentes/zumo-limit.c", "int x;"),
-                          ("/config/limit.conf", "c"), ("/binarios/hcr-server", "BIN"),
-                          ("/scripts/zumo-datos.sh", "d"), ("/bot/instalar-bot.sh", "b"), ("/bot/zumo-bot.py", "bot")):
-            self.assertEqual(self.pedir(ruta), (200, txt.encode()), ruta)
+    def pase(self, tipo="panel"):
+        st, cuerpo = self.pedir("/canje?c=" + self.ac.crear_codigo(tipo))
+        self.assertEqual(st, 200)
+        return cuerpo.decode().split()
 
-    def test_no_sirve_nada_mas(self):
-        for ruta in ("/README.md", "/.git/config", "/android/app/x.kt", "/bot/test_bot.py", "/scripts/enlace.sh",
-                     "/binarios/", "/binarios", "/scripts/../README.md", "/%2e%2e/etc/passwd", "/bot/../README.md",
-                     "/fuentes/otro.c", "/etc/passwd"):
+    def test_sin_pase_no_sirve_ningun_archivo_del_repo(self):
+        for ruta in ("/install.sh", "/panel.sh", "/bot/zumo-bot.py", "/binarios/hcr-server", "/s/install.sh",
+                     "/s/" + "0" * 32 + "/install.sh", "/s//install.sh"):
             self.assertEqual(self.pedir(ruta)[0], 404, ruta)
+
+    def test_con_pase_sirve_lo_que_bajan_los_instaladores(self):
+        p, tipo = self.pase()
+        self.assertEqual((len(p), tipo), (32, "panel"))
+        for rel in ("install.sh", "panel.sh", "zumo-lib.sh", "actualizar.sh?nocache=1", "fuentes/zumo-limit.c",
+                    "config/limit.conf", "binarios/hcr-server", "scripts/zumo-datos.sh", "bot/instalar-bot.sh", "bot/zumo-bot.py"):
+            self.assertEqual(self.pedir(f"/s/{p}/{rel}")[0], 200, rel)
+        self.assertEqual(self.pedir(f"/s/{p}/binarios/hcr-server"), (200, b"BIN"))
+
+    def test_con_pase_tampoco_sirve_nada_mas(self):
+        p, _ = self.pase()
+        for rel in ("README.md", ".git/config", "android/app/x.kt", "bot/test_bot.py", "scripts/enlace.sh", "binarios/",
+                    "binarios", "scripts/../README.md", "%2e%2e/etc/passwd", "bot/../README.md", "fuentes/otro.c", "etc/passwd"):
+            self.assertEqual(self.pedir(f"/s/{p}/{rel}")[0], 404, rel)
+
+    def test_el_codigo_sirve_una_sola_vez(self):
+        c = self.ac.crear_codigo("panel")
+        self.assertEqual(self.pedir("/canje?c=" + c)[0], 200)
+        self.assertEqual(self.pedir("/canje?c=" + c)[0], 403)
+
+    def test_codigo_vencido_o_inventado(self):
+        c = self.ac.crear_codigo("panel")
+        self.ahora[0] += accesos.VIDA_CODIGO + 1
+        self.assertEqual(self.pedir("/canje?c=" + c)[0], 403)
+        for q in ("", "?c=", "?c=AAAA-AAAA", "?c=../../x", "?otro=1"):
+            self.assertEqual(self.pedir("/canje" + q)[0], 403, q)
+
+    def test_anular_corta_el_acceso(self):
+        p, _ = self.pase()
+        self.assertEqual(self.pedir(f"/s/{p}/install.sh")[0], 200)
+        self.ac.revocar(self.ac.listar()[0]["id"])
+        self.assertEqual(self.pedir(f"/s/{p}/install.sh")[0], 404)
+
+    def test_el_cargador_lleva_el_dominio_y_no_lleva_secretos(self):
+        st, cuerpo = self.pedir("/i")
+        self.assertEqual(st, 200)
+        self.assertIn(b'D="bot.test"', cuerpo)
+        self.assertNotIn(b"%(", cuerpo)
+
+    def test_el_cargador_usa_el_dominio_configurado_y_no_el_de_la_peticion(self):
+        st, cuerpo = self.pedir("/i", cabeceras={"Host": "malo.com"})
+        self.assertIn(b'D="bot.test"', cuerpo)
+        self.assertNotIn(b"malo.com", cuerpo)
+
+    def test_head_y_escrituras(self):
+        p, _ = self.pase()
+        self.assertEqual(self.pedir(f"/s/{p}/install.sh", "HEAD"), (200, b""))
+        self.assertEqual(self.pedir(f"/s/{p}/install.sh", "POST")[0], 405)
 
     def test_sin_copia_del_repo_da_404(self):
         import shutil
+        p, _ = self.pase()
         shutil.rmtree(self.repo)
-        self.assertEqual(self.pedir("/install.sh")[0], 404)
+        self.assertEqual(self.pedir(f"/s/{p}/install.sh")[0], 404)
 
-    def test_head_y_escrituras(self):
-        self.assertEqual(self.pedir("/install.sh", "HEAD"), (200, b""))
-        self.assertEqual(self.pedir("/install.sh", "POST")[0], 405)
+    def correr_cargador(self, codigo, tipo_esperado):
+        """Ejecuta el cargador real (bash) contra este servidor: curl se redirige al puerto local."""
+        cuerpo = self.pedir("/i")[1].decode()
+        bin_ = os.path.join(self.tmp, "bin")
+        os.makedirs(bin_, exist_ok=True)
+        real = subprocess.run(["which", "curl"], capture_output=True, text=True).stdout.strip()
+        if not real:
+            self.skipTest("sin curl")
+        stub = os.path.join(bin_, "curl")
+        with open(stub, "w") as f:
+            f.write('#!/bin/bash\nargs=()\nfor a in "$@"; do args+=("${a//https:\\/\\/bot.test/http:\\/\\/127.0.0.1:%d}"); done\nexec %s "${args[@]}"\n' % (self.puerto, real))
+        os.chmod(stub, 0o755)
+        salida = os.path.join(self.tmp, "salida")
+        env = dict(os.environ, PATH=bin_ + os.pathsep + os.environ["PATH"], ZUMO_CODIGO=codigo, SALIDA=salida)
+        # el cargador exige root; en las pruebas se salta esa línea
+        cuerpo = cuerpo.replace('[ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }\n', "")
+        r = subprocess.run(["bash", "-c", cuerpo], env=env, capture_output=True, text=True, timeout=30)
+        return r, salida
+
+    def test_el_cargador_instala_de_punta_a_punta(self):
+        r, salida = self.correr_cargador(self.ac.crear_codigo("panel"), "panel")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(salida) as f:
+            txt = f.read()
+        self.assertIn("INSTALADO-PANEL https://bot.test/s/", txt)
+        self.assertEqual(len(txt.strip().rsplit("/", 1)[1]), 32)
+        self.assertEqual(len(self.ac.listar()), 1)
+
+    def test_el_cargador_de_bot_baja_el_instalador_del_bot(self):
+        r, salida = self.correr_cargador(self.ac.crear_codigo("bot"), "bot")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("INSTALADO-BOT", open(salida).read())
+
+    def test_el_cargador_con_codigo_malo_no_instala_nada(self):
+        r, salida = self.correr_cargador("ZZZZ-ZZZZ", "panel")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Código inválido", r.stdout)
+        self.assertFalse(os.path.exists(salida))
+
+
+class Fuerza(unittest.TestCase):
+    def test_frena_a_quien_prueba_codigos(self):
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        ahora = [0.0]
+        ac = accesos.Accesos(os.path.join(t.name, "a.json"), reloj=lambda: ahora[0])
+        bueno = ac.crear_codigo("panel")
+        for _ in range(accesos.MAX_FALLOS):
+            self.assertEqual(ac.canjear("AAAA-AAAA"), (None, None))
+        self.assertEqual(ac.canjear(bueno), (None, None), "bloqueado: ni el bueno pasa")
+        ahora[0] += accesos.BLOQUEO + 1
+        self.assertIsNotNone(ac.canjear(bueno)[0])
 
 
 class BotPublica(unittest.TestCase):
