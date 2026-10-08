@@ -18,6 +18,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** El proxy del botón "WiFi": entiende pedidos de proxy y los saca por el túnel (aquí, un servidor local falso). */
 class HttpProxyServerTest {
     private lateinit var origen: ServerSocket
+    private lateinit var eco: ServerSocket
     private lateinit var proxy: HttpProxyServer
     private var puertoProxy = 0
     private val recibido = CopyOnWriteArrayList<String>()
@@ -38,14 +39,27 @@ class HttpProxyServerTest {
                             val sb = StringBuilder()
                             // lee la cabecera
                             while (!sb.endsWith("\r\n\r\n")) { val b = i.read(); if (b < 0) break; sb.append(b.toChar()) }
-                            if (sb.startsWith("GET") || sb.startsWith("POST")) {
-                                recibido.add(sb.toString())
-                                o.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".toByteArray())
-                                o.flush()
-                            } else {              // el resto (CONNECT): eco
-                                val b = ByteArray(1024)
-                                while (true) { val n = i.read(b); if (n < 0) break; o.write(b, 0, n); o.flush() }
-                            }
+                            val largo = Regex("(?i)content-length: *(\\d+)").find(sb)?.groupValues?.get(1)?.toInt() ?: 0
+                            repeat(largo) { i.read() }          // el cuerpo, para cerrar sin dejar datos sin leer
+                            recibido.add(sb.toString())
+                            o.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".toByteArray())
+                            o.flush()
+                        } catch (_: Exception) {
+                        } finally { try { c.close() } catch (_: Exception) {} }
+                    }.start()
+                } catch (_: Exception) { break }
+            }
+        }.start()
+        eco = ServerSocket(0, 10, InetAddress.getByName("127.0.0.1"))
+        Thread {
+            while (!eco.isClosed) {
+                try {
+                    val c = eco.accept()
+                    Thread {
+                        try {
+                            val i = c.getInputStream(); val o = c.getOutputStream()
+                            val b = ByteArray(1024)
+                            while (true) { val n = i.read(b); if (n < 0) break; o.write(b, 0, n); o.flush() }
                         } catch (_: Exception) {
                         } finally { try { c.close() } catch (_: Exception) {} }
                     }.start()
@@ -57,7 +71,7 @@ class HttpProxyServerTest {
             pedidos.add(Pair(host, port))
             if (host == "no.existe") null
             else {
-                val s = Socket("127.0.0.1", origen.localPort)       // "el túnel": siempre llega al servidor falso
+                val s = Socket("127.0.0.1", if (port == 443) eco.localPort else origen.localPort)   // "el túnel": llega a un servidor falso
                 object : HttpProxyServer.Salida {
                     override val entrada: InputStream = s.getInputStream()
                     override val salida: OutputStream = s.getOutputStream()
@@ -72,6 +86,7 @@ class HttpProxyServerTest {
     fun cerrar() {
         proxy.stop()
         origen.close()
+        eco.close()
     }
 
     private fun leerTodo(s: Socket): String = s.getInputStream().readBytes().toString(Charsets.ISO_8859_1)
