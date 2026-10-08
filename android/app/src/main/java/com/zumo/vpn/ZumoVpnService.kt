@@ -401,7 +401,9 @@ class ZumoVpnService : VpnService() {
             this, 1, Intent(this, ZumoVpnService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE
         )
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL) else @Suppress("DEPRECATION") Notification.Builder(this)
-        val cuerpo = if (conectado && velocidad.isNotBlank()) "$txt  ·  $velocidad" else txt
+        val cuerpo = if (conectado && velocidad.isNotBlank()) {
+            "$txt  ·  ${duracionDesde()}  ·  $velocidad  ·  Total ${datosUsados}"
+        } else txt
         b.setContentTitle(Tema.actual(this).nombre).setContentText(cuerpo)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentIntent(abrir).setOngoing(true).setOnlyAlertOnce(true)
@@ -409,6 +411,14 @@ class ZumoVpnService : VpnService() {
             .addAction(Notification.Action.Builder(null, "Desconectar", parar).build())
         if (Build.VERSION.SDK_INT < 26) @Suppress("DEPRECATION") b.setPriority(Notification.PRIORITY_HIGH)
         return b.build()
+    }
+
+    /** Tiempo transcurrido desde que se conectó, en mm:ss (o h:mm:ss si pasa de una hora). */
+    private fun duracionDesde(): String {
+        if (desde <= 0L) return "--:--"
+        val s = (System.currentTimeMillis() - desde) / 1000
+        val hh = s / 3600; val mm = (s % 3600) / 60; val ss = s % 60
+        return if (hh > 0) "%d:%02d:%02d".format(hh, mm, ss) else "%02d:%02d".format(mm, ss)
     }
 
     private fun actualizarNoti() {
