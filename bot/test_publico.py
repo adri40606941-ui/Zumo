@@ -107,6 +107,59 @@ class Https(unittest.TestCase):
         self.assertEqual((resp.status, resp.read()), (200, datos))
 
 
+class Instaladores(unittest.TestCase):
+    """Los instaladores del panel salen de la copia del repo en la VPS (ZUMO_BASE=https://dominio)."""
+
+    def setUp(self):
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        self.repo = os.path.join(t.name, "repo")
+        pub = os.path.join(t.name, "pub")
+        os.makedirs(pub)
+        for rel, txt in {"install.sh": "#!/bin/bash\necho panel\n", "panel.sh": "p", "zumo-lib.sh": "l",
+                         "actualizar.sh": "a", "fuentes/zumo-limit.c": "int x;", "config/limit.conf": "c",
+                         "binarios/hcr-server": "BIN", "scripts/zumo-datos.sh": "d", "bot/instalar-bot.sh": "b",
+                         "bot/zumo-bot.py": "bot", "bot/test_bot.py": "t", "README.md": "r",
+                         ".git/config": "[remote]", "android/app/x.kt": "k"}.items():
+            os.makedirs(os.path.dirname(os.path.join(self.repo, rel)), exist_ok=True)
+            with open(os.path.join(self.repo, rel), "w") as f:
+                f.write(txt)
+        with open(os.path.join(t.name, "secreto"), "w") as f:
+            f.write("NO")
+        os.symlink(os.path.join(t.name, "secreto"), os.path.join(self.repo, "scripts", "enlace.sh"))
+        self.puerto = puerto_libre()
+        self.s = publico.servir(self.puerto, pub, host="127.0.0.1", repo=self.repo)
+        self.addCleanup(lambda: (self.s.shutdown(), self.s.server_close()))
+
+    def pedir(self, ruta, metodo="GET"):
+        c = http.client.HTTPConnection("127.0.0.1", self.puerto, timeout=5)
+        c.request(metodo, ruta)
+        r = c.getresponse()
+        return r.status, r.read()
+
+    def test_sirve_lo_que_bajan_los_instaladores(self):
+        for ruta, txt in (("/install.sh", "#!/bin/bash\necho panel\n"), ("/panel.sh", "p"), ("/zumo-lib.sh", "l"),
+                          ("/actualizar.sh?nocache=1", "a"), ("/fuentes/zumo-limit.c", "int x;"),
+                          ("/config/limit.conf", "c"), ("/binarios/hcr-server", "BIN"),
+                          ("/scripts/zumo-datos.sh", "d"), ("/bot/instalar-bot.sh", "b"), ("/bot/zumo-bot.py", "bot")):
+            self.assertEqual(self.pedir(ruta), (200, txt.encode()), ruta)
+
+    def test_no_sirve_nada_mas(self):
+        for ruta in ("/README.md", "/.git/config", "/android/app/x.kt", "/bot/test_bot.py", "/scripts/enlace.sh",
+                     "/binarios/", "/binarios", "/scripts/../README.md", "/%2e%2e/etc/passwd", "/bot/../README.md",
+                     "/fuentes/otro.c", "/etc/passwd"):
+            self.assertEqual(self.pedir(ruta)[0], 404, ruta)
+
+    def test_sin_copia_del_repo_da_404(self):
+        import shutil
+        shutil.rmtree(self.repo)
+        self.assertEqual(self.pedir("/install.sh")[0], 404)
+
+    def test_head_y_escrituras(self):
+        self.assertEqual(self.pedir("/install.sh", "HEAD"), (200, b""))
+        self.assertEqual(self.pedir("/install.sh", "POST")[0], 405)
+
+
 class BotPublica(unittest.TestCase):
     def armar(self, env):
         tmp = tempfile.TemporaryDirectory()
