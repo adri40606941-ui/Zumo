@@ -241,6 +241,27 @@ falta y una copia del repo en `/opt/zumo-repo`. Después:
   la dirección con la que se compilaron hasta que se instale un APK nuevo.
 - La primera compilación baja las dependencias de Gradle y tarda más (puede pasar de 20 minutos); las siguientes, menos.
 
+**Todo desde la VPS, GitHub solo de respaldo.**
+- **APK para tus clientes**: cada vez que compilás (en la VPS o en GitHub) el bot deja el APK en `https://<dominio>/zumo-vpn.apk` y te
+  pasa el enlace. Ese enlace es el que les das a los clientes.
+- **Pasar una VPS que ya tiene el panel al dominio**: en el bot, 🔑 Instalar en VPS nueva → «🔄 Pasar una VPS que ya tiene el panel».
+  En esa VPS corrés el mismo comando corto con el código; no reinstala nada, solo cambia de dónde baja las actualizaciones.
+- **Editar en la VPS**: editá en `/opt/zumo-repo` (por SSH) y compilá desde ahí. «⬆️ Subir cambios a GitHub» (en 🖥 Compilar en la VPS)
+  guarda tus cambios en un commit y los sube a GitHub como respaldo. Nunca fuerza: si GitHub tiene cambios que la VPS no tiene,
+  primero «🔄 Sincronizar». El token necesita **Contents: Read and write**.
+
+**Pasar el repo de GitHub a privado** (Settings → General → Danger Zone → Change visibility). Antes:
+1. En `/etc/zumo/bot.env` poné `ZUMO_REPO_PRIVADO=1` (y reiniciá: `systemctl restart zumo-bot`). Así las apps nuevas bajan la lista
+   solo de tu dominio y no intentan GitHub.
+2. Compilá una app nueva y dales a los clientes el enlace `https://<dominio>/zumo-vpn.apk`. Las apps viejas siguen andando; para
+   actualizar la lista tienen que instalar ese APK.
+3. Pasá cada VPS con panel al dominio (código «Pasar una VPS…»). Después de hacerse privado, `raw.githubusercontent.com` ya no
+   responde sin token, así que las VPS que no pasaste dejarían de poder actualizar.
+4. El token del bot ya tiene que ser de ese repo (Contents, Actions y Secrets). Con repo privado, GitHub Actions consume los minutos
+   gratis de la cuenta (unos 10 por compilación).
+5. Una VPS del bot nueva, estando privado: con otro bot ya andando, usá «Código para el bot»; si no, bajá el instalador con el token:
+   `curl -fsSL -H "Authorization: token TU_TOKEN" https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/bot/instalar-bot.sh | bash`.
+
 **Compilar en GitHub.** Desde el botón "📱 App Android → 🔨 Compilar en GitHub" del bot.
 Hace falta el token de GitHub en `/etc/zumo/bot.env` (el instalador del bot lo pide). La clave de firma queda
 fija en el repo con "🔑 Asegurar clave de firma", así la app siempre se actualiza encima de la anterior.

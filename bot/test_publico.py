@@ -53,6 +53,15 @@ class Servidor(unittest.TestCase):
         self.assertEqual(zs.descifrar_lista(cuerpo), TEXTO)
         self.assertEqual(r.getheader("Cache-Control"), "no-cache")
 
+    def test_el_apk_es_publico_y_se_baja_como_archivo(self):
+        self.assertEqual(self.pedir("GET", "/zumo-vpn.apk")[0], 404, "todavía no se publicó")
+        publico.publicar(b"PK-apk", self.dir, "zumo-vpn.apk")
+        st, cuerpo, r = self.pedir("GET", "/zumo-vpn.apk")
+        self.assertEqual((st, cuerpo), (200, b"PK-apk"))
+        self.assertEqual(r.getheader("Content-Type"), "application/vnd.android.package-archive")
+        self.assertIn("zumo-vpn.apk", r.getheader("Content-Disposition"))
+        self.assertEqual(self.pedir("GET", "/servidores.bin")[1], self.datos, "la lista no se pisa")
+
     def test_head_no_manda_cuerpo(self):
         st, cuerpo, r = self.pedir("HEAD", "/servidores.bin")
         self.assertEqual((st, cuerpo), (200, b""))
@@ -112,7 +121,7 @@ class Instaladores(unittest.TestCase):
     """Instalar desde el dominio: código de un solo uso -> pase -> archivos del repo."""
 
     ARCHIVOS = {"install.sh": "#!/bin/bash\necho INSTALADO-PANEL \"$ZUMO_BASE\" > \"$SALIDA\"\n", "panel.sh": "p",
-                "zumo-lib.sh": "l", "actualizar.sh": "a", "fuentes/zumo-limit.c": "int x;", "config/limit.conf": "c",
+                "zumo-lib.sh": "l", "actualizar.sh": "#!/bin/bash\necho ACTUALIZADO \"$ZUMO_BASE\" > \"$SALIDA\"\n", "fuentes/zumo-limit.c": "int x;", "config/limit.conf": "c",
                 "binarios/hcr-server": "BIN", "scripts/zumo-datos.sh": "d",
                 "bot/instalar-bot.sh": "#!/bin/bash\necho INSTALADO-BOT > \"$SALIDA\"\n",
                 "bot/zumo-bot.py": "bot", "bot/test_bot.py": "t", "README.md": "r", ".git/config": "[remote]",
@@ -240,6 +249,11 @@ class Instaladores(unittest.TestCase):
         r, salida = self.correr_cargador(self.ac.crear_codigo("bot"), "bot")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("INSTALADO-BOT", open(salida).read())
+
+    def test_el_cargador_de_actualizar_pasa_una_vps_vieja_al_dominio(self):
+        r, salida = self.correr_cargador(self.ac.crear_codigo("actualizar"), "actualizar")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("ACTUALIZADO https://bot.test/s/", open(salida).read())
 
     def test_el_cargador_con_codigo_malo_no_instala_nada(self):
         r, salida = self.correr_cargador("ZZZZ-ZZZZ", "panel")

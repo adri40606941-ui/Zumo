@@ -130,6 +130,66 @@ class Sincronizar(Base):
         self.assertFalse(cv.sincronizar()[0])
 
 
+class Subir(Base):
+    def propio(self, archivo="vps.txt", texto="desde la vps"):
+        with open(os.path.join(cv.REPO, archivo), "w") as f:
+            f.write(texto)
+
+    def test_sube_los_cambios_hechos_en_la_vps(self):
+        self.propio()
+        ok, msg = cv.subir("tok")
+        self.assertTrue(ok, msg)
+        self.assertIn("1 cambio", msg)
+        git(self.trabajo, "pull", "-q", "origin", "main")
+        self.assertTrue(os.path.exists(os.path.join(self.trabajo, "vps.txt")))
+
+    def test_sin_cambios_no_sube_nada(self):
+        ok, msg = cv.subir("tok")
+        self.assertTrue(ok)
+        self.assertIn("nada nuevo", msg)
+
+    def test_si_github_tiene_cambios_nuevos_no_pisa(self):
+        self.propio()
+        self.subir_cambio()
+        ok, msg = cv.subir("tok")
+        self.assertFalse(ok)
+        self.assertIn("Sincronizar", msg)
+        self.assertEqual(git(self.origen, "log", "--format=%s", "-1", "main"), "cambio nuevo.txt", "no se forzó nada")
+
+    def test_cambios_propios_ya_guardados_tambien_suben(self):
+        self.propio()
+        git(cv.REPO, "add", "-A")
+        git(cv.REPO, "commit", "-q", "-m", "mío")
+        ok, msg = cv.subir("tok")
+        self.assertTrue(ok, msg)
+        self.assertEqual(git(self.origen, "log", "--format=%s", "-1", "main"), "mío")
+
+    def test_sin_token_o_sin_copia_o_otra_rama(self):
+        self.assertIn("GITHUB_TOKEN", cv.subir("")[1])
+        git(cv.REPO, "checkout", "-q", "-b", "otra")
+        self.assertFalse(cv.subir("tok")[0])
+        cv.REPO = os.path.join(self.d, "no-existe")
+        self.assertFalse(cv.subir("tok")[0])
+
+    def test_si_github_no_responde_deja_los_cambios_guardados(self):
+        self.propio()
+        os.rename(self.origen, self.origen + ".caido")
+        ok, msg = cv.subir("tok")
+        self.assertFalse(ok)
+        self.assertIn("quedan guardados", msg)
+        self.assertIn("Cambios hechos en la VPS", git(cv.REPO, "log", "--format=%s", "-1"))
+
+    def test_token_de_solo_lectura(self):
+        self.propio()
+        hook = os.path.join(self.origen, "hooks", "pre-receive")
+        with open(hook, "w") as f:
+            f.write("#!/bin/sh\necho 'remote: Permission denied (403)' >&2\nexit 1\n")
+        os.chmod(hook, 0o755)
+        ok, msg = cv.subir("tok")
+        self.assertFalse(ok)
+        self.assertIn("Contents", msg)
+
+
 class Preservar(Base):
     def test_restaura_incluso_los_cambios_sin_guardar(self):
         sv = os.path.join(cv.REPO, "android", "servidores.txt")

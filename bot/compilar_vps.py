@@ -110,6 +110,41 @@ def sincronizar(token="", rama="main"):
     return True, f"Copia al día con GitHub: {commit_info()}"
 
 
+def subir(token="", rama="main"):
+    """Sube a GitHub los cambios hechos en la copia de la VPS (los guarda en un commit si hace falta).
+    Nunca fuerza: si GitHub tiene cambios que la copia no tiene, no sube nada. Devuelve (ok, mensaje)."""
+    if not os.path.isdir(os.path.join(REPO, ".git")):
+        return False, "La copia del repo no está instalada en la VPS."
+    if not token:
+        return False, "Falta GITHUB_TOKEN en /etc/zumo/bot.env (con permiso de escritura: Contents → Read and write)."
+    actual = _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if actual != rama:
+        return False, f"La copia de la VPS está en la rama «{actual}», no en «{rama}»: no subo nada."
+    guardado = False
+    if _git("status", "--porcelain").stdout.strip():
+        _git("add", "-A")
+        c = _git("-c", "user.name=Zumo VPS", "-c", "user.email=vps@zumo.local", "commit", "-q", "-m", "Cambios hechos en la VPS")
+        if c.returncode != 0:
+            return False, "No pude guardar los cambios: " + (c.stderr or c.stdout).strip()[-300:]
+        guardado = True
+    f = _git("fetch", "--quiet", "origin", rama, token=token, timeout=180)
+    if f.returncode != 0:
+        return False, "No pude hablar con GitHub (¿está caído, o el token venció?). Los cambios quedan guardados en la VPS."
+    if _git("merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD").returncode != 0:
+        return False, ("GitHub tiene cambios que esta copia no tiene. Primero 🔄 Sincronizar con GitHub "
+                       "(si no se unen solos, hay que resolverlo por SSH en /opt/zumo-repo).")
+    n = _git("rev-list", "--count", "FETCH_HEAD..HEAD").stdout.strip()
+    if n in ("", "0"):
+        return True, "No hay nada nuevo para subir: GitHub ya tiene todo."
+    p = _git("push", "--quiet", "origin", f"HEAD:refs/heads/{rama}", token=token, timeout=300)
+    if p.returncode != 0:
+        err = (p.stderr or p.stdout).strip()
+        if "403" in err or "denied" in err.lower() or "Permission" in err:
+            return False, "GitHub no deja subir: el token solo puede leer. Creá uno con Contents → Read and write."
+        return False, "No pude subir a GitHub: " + err[-300:]
+    return True, f"Subí {n} cambio(s) a GitHub ({rama}): {commit_info()}" + (" (se guardaron en un commit nuevo)" if guardado else "")
+
+
 # ------------------------------------------------------------------ compilar
 @contextmanager
 def _preservar(rutas):
