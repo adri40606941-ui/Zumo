@@ -26,7 +26,7 @@ data class Enlace(val texto: String, val url: String)
 data class Tema(
     val nombre: String = "Zumo VPN",
     val lema: String = "Conexión privada y estable",
-    val logo: String = "🛡",
+    val logo: String = "🚀",
     val logoImagen: Boolean = false,
     val tituloMayus: Boolean = true,
     val fondo: Int = 0xFF14102B.toInt(),

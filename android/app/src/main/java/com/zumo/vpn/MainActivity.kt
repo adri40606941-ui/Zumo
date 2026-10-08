@@ -231,7 +231,7 @@ class MainActivity : Activity() {
         } else if (tema.logo.isNotBlank()) {
             cab.addView(texto(tema.logo, 34f).apply { gravity = Gravity.CENTER })
         }
-        cab.addView(texto(tema.titulo, 25f, TEXTO, true).apply { gravity = Gravity.CENTER; letterSpacing = 0.03f })
+        cab.addView(texto(tema.titulo, 36f, TEXTO, true).apply { gravity = Gravity.CENTER; letterSpacing = 0.08f; setShadowLayer(dp(12).toFloat(), 0f, dp(3).toFloat(), ACENTO) })
         if (tema.lema.isNotBlank()) cab.addView(texto(tema.lema, 13f, TEXTO_SUAVE).apply {
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
@@ -263,8 +263,6 @@ class MainActivity : Activity() {
 
         // cuenta: se elige un servidor de la lista de la app y se pone usuario y contraseña
         cCuenta = tarjeta()
-        seccion(cCuenta, "🔑", "Tu cuenta")
-        cCuenta.addView(texto("Servidor", 12f, TEXTO_SUAVE))
         tvServidor = texto("", 15.5f, TEXTO, true).apply {
             background = redondo(conOpacidad(CAMPO), radio(0.6f), trazo = 1)
             setPadding(dp(14), dp(13), dp(14), dp(13))
