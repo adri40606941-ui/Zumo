@@ -43,6 +43,21 @@ class ZumoVpnService : VpnService() {
         @Volatile var velocidad: String = ""
         @Volatile var datosUsados: String = ""
 
+        // Compartir por WiFi (hotspot): proxy HTTP que sale por el túnel. Lo prende y apaga el botón "WiFi".
+        const val WIFI_PUERTO = 8118
+        @Volatile var wifiActivo: Boolean = false
+        @Volatile var wifiPuerto: Int = WIFI_PUERTO
+        @Volatile var wifiError: String = ""
+        @Volatile private var instancia: ZumoVpnService? = null
+
+        /** Prende o apaga el proxy del hotspot. Devuelve false si no se pudo (VPN apagada o puerto ocupado). */
+        fun compartirWifi(prender: Boolean): Boolean {
+            val svc = instancia
+            if (!prender) { svc?.apagarWifi(); wifiActivo = false; return true }
+            if (svc == null || !conectado) { wifiError = "Primero conectá la VPN."; return false }
+            return svc.encenderWifi()
+        }
+
         /** Da formato legible (B/KB/MB/GB) a una cantidad de bytes. */
         fun formatoDatos(bytes: Long): String {
             if (bytes < 1024) return "$bytes B"
@@ -70,6 +85,7 @@ class ZumoVpnService : VpnService() {
     private var tun: ParcelFileDescriptor? = null
     private var tproxy: TProxyService? = null
     private var socks: SocksServer? = null
+    private var wifi: HttpProxyServer? = null
     @Volatile private var tunel: SshTunnel? = null
     @Volatile private var intentoActual: SshTunnel? = null   // conexión en curso, para poder cortarla al instante
     @Volatile private var activo = false
@@ -83,6 +99,55 @@ class ZumoVpnService : VpnService() {
     // Un solo hilo de trabajo serializa encender y apagar: así el botón nunca bloquea la pantalla
     // (el apagado cierra sockets y el proxy nativo, que puede tardar) y un reconectar no pisa al apagado.
     private val trabajos = Executors.newSingleThreadExecutor()
+
+    override fun onCreate() {
+        super.onCreate()
+        instancia = this
+    }
+
+    @Synchronized
+    private fun encenderWifi(): Boolean {
+        if (wifi != null) return true
+        for (p in WIFI_PUERTO until WIFI_PUERTO + 10) {      // si el puerto está ocupado, prueba el siguiente
+            val srv = HttpProxyServer(p) { host, port -> abrirPorTunel(host, port) }
+            try {
+                srv.start()
+                wifi = srv; wifiPuerto = p; wifiActivo = true; wifiError = ""
+                Registro.add("WiFi compartido: proxy en el puerto $p")
+                return true
+            } catch (e: Exception) {
+                try { srv.stop() } catch (_: Exception) {}
+            }
+        }
+        wifiError = "No se pudo abrir el puerto $WIFI_PUERTO (está ocupado)."
+        return false
+    }
+
+    @Synchronized
+    private fun apagarWifi() {
+        try { wifi?.stop() } catch (_: Exception) {}
+        if (wifi != null) Registro.add("WiFi compartido apagado")
+        wifi = null
+        wifiActivo = false
+    }
+
+    /** Un canal del túnel SSH hacia host:port, para el proxy del hotspot. null si el túnel no está listo. */
+    private fun abrirPorTunel(host: String, port: Int): HttpProxyServer.Salida? {
+        val canal = tunel?.abrirCanal(host, port) ?: return null
+        val ri = canal.inputStream
+        val ro = canal.outputStream
+        try {
+            canal.connect(12000)
+        } catch (e: Exception) {
+            try { canal.disconnect() } catch (_: Exception) {}
+            return null
+        }
+        return object : HttpProxyServer.Salida {
+            override val entrada = ri
+            override val salida = ro
+            override fun cerrar() { try { canal.disconnect() } catch (_: Exception) {} }
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
@@ -116,6 +181,7 @@ class ZumoVpnService : VpnService() {
     override fun onDestroy() {
         marcarApagado()
         apagarTrabajo()     // el servicio se está destruyendo: cierre directo, lo mejor posible
+        if (instancia === this) instancia = null
         super.onDestroy()
     }
 
@@ -371,6 +437,7 @@ class ZumoVpnService : VpnService() {
         intentoActual = null
         try { tunel?.close() } catch (_: Exception) {}
         tunel = null
+        apagarWifi()
         try { socks?.stop() } catch (_: Exception) {}
         socks = null
         try { tproxy?.TProxyStopService() } catch (_: Throwable) {}

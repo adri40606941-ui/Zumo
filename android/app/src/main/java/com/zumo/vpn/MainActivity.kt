@@ -364,6 +364,7 @@ class MainActivity : Activity() {
             PowerGuide.pedirExclusion(this)
             aviso(if (PowerGuide.sinOptimizar(this)) "La app ya está sin límite de batería" else "Permití \"Sin restricciones\" para esta app")
         })
+        cTel.addView(botonPrimario("📶  WiFi", VERDE) { abrirWifi() })
         if (tema.verTelefono) col.addView(cTel)
 
         setContentView(root)
@@ -565,6 +566,32 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             aviso("No hay una app instalada para abrir ese enlace")
         }
+    }
+
+    /** Botón "WiFi": comparte la VPN por el hotspot con un proxy y muestra qué poner en el otro celular. */
+    private fun abrirWifi() {
+        if (!ZumoVpnService.conectado) { aviso("Primero conectá la VPN"); return }
+        if (!ZumoVpnService.wifiActivo && !ZumoVpnService.compartirWifi(true)) {
+            aviso(ZumoVpnService.wifiError.ifBlank { "No se pudo compartir el WiFi" }); return
+        }
+        val puerto = ZumoVpnService.wifiPuerto
+        val ips = HttpProxyServer.direccionesDelTelefono()
+        val donde = if (ips.isEmpty())
+            "Todavía no veo la zona WiFi de este teléfono. Activala (Compartir internet / Zona WiFi) y tocá WiFi otra vez para ver la dirección."
+        else "Servidor: ${ips.joinToString("  o  ")}\nPuerto: $puerto"
+        val vista = texto(
+            "WiFi compartido activo ✔\n\n$donde\n\n" +
+                "En el otro celular: Ajustes → WiFi → tu red → Modificar → Proxy: Manual → poné ese servidor y puerto → Guardar. " +
+                "Todo lo que navegue sale por tu VPN.\n\n" +
+                "Se apaga solo al desconectar la VPN.", 14.5f
+        ).apply { setPadding(dp(20), dp(8), dp(20), dp(8)) }
+        dialogo("WiFi", vista)
+            .setPositiveButton("Listo", null)
+            .setNeutralButton("Zona WiFi") { _, _ ->
+                try { startActivity(Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS)) } catch (_: Exception) {}
+            }
+            .setNegativeButton("Apagar") { _, _ -> ZumoVpnService.compartirWifi(false); aviso("WiFi compartido apagado") }
+            .mostrar()
     }
 
     private fun aviso(t: String) = Toast.makeText(this, t, Toast.LENGTH_LONG).show()
