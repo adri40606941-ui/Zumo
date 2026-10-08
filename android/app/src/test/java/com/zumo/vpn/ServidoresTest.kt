@@ -68,4 +68,13 @@ class ServidoresTest {
         assertTrue(Servidores.parsear("# solo comentarios\n#  [APP 02]\n#  host = x.com\n").isEmpty())
         assertTrue("sin [Nombre] no es un servidor", Servidores.parsear("host = x.com\npayload = y").isEmpty())
     }
+
+    @Test
+    fun separa_las_direcciones_de_descarga() {
+        assertEquals(listOf("https://bot.zumoserver.com/servidores.bin", "https://raw.githubusercontent.com/o/r/apk/servidores.bin"),
+            Servidores.separarUrls("https://bot.zumoserver.com/servidores.bin|https://raw.githubusercontent.com/o/r/apk/servidores.bin\n"))
+        assertEquals(listOf("https://a.com/x"), Servidores.separarUrls("  https://a.com/x  "))
+        assertTrue(Servidores.separarUrls("").isEmpty())
+        assertTrue("solo http(s)", Servidores.separarUrls("file:///etc/passwd|ftp://x").isEmpty())
+    }
 }

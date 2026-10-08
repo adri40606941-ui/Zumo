@@ -12,7 +12,7 @@ mkdir -p /etc/zumo /opt/zumo-bot
 echo "Instalando dependencias..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update >/dev/null 2>&1
-apt-get install -y --no-install-recommends python3 python3-nacl python3-paramiko openssl curl ca-certificates >/dev/null 2>&1 || { echo "✘ No se pudieron instalar las dependencias"; exit 1; }
+apt-get install -y --no-install-recommends python3 python3-nacl python3-paramiko python3-cryptography openssl curl ca-certificates >/dev/null 2>&1 || { echo "✘ No se pudieron instalar las dependencias"; exit 1; }
 # Para las vistas previas de la apariencia de la app y para achicar el ícono y el fondo. Si no se
 # pueden instalar, el bot anda igual (sin vistas previas).
 apt-get install -y --no-install-recommends python3-pil fonts-dejavu-core >/dev/null 2>&1 || echo "Aviso: sin python3-pil el bot no manda vistas previas de la app (lo demás funciona)."
@@ -22,14 +22,13 @@ for p in fonts-noto-color-emoji fonts-dejavu-extra; do
 	apt-get install -y --no-install-recommends "$p" >/dev/null 2>&1 || echo "Aviso: no se pudo instalar $p (la vista previa lo aproxima)."
 done
 
-ARCHIVOS="servidores.py compilar.py compilar_vps.py tema.py vista.py marca.py respaldo.py centro.py maquinas.py maquinas_bot.py zumo-bot.py"
+ARCHIVOS="zs.py publico.py servidores.py compilar.py compilar_vps.py tema.py vista.py marca.py respaldo.py centro.py maquinas.py maquinas_bot.py zumo-bot.py"
 for f in $ARCHIVOS; do
 	curl -fsSL "$BASE/$f$NC" -o "/opt/zumo-bot/$f" || { echo "✘ No se pudo bajar $f"; exit 1; }
 done
 # Para compilar la app en esta VPS (sin GitHub): se corre una sola vez, a mano (ver README).
 curl -fsSL "$BASE/instalar-compilador.sh$NC" -o /opt/zumo-bot/instalar-compilador.sh || { echo "✘ No se pudo bajar instalar-compilador.sh"; exit 1; }
 chmod 755 /opt/zumo-bot/instalar-compilador.sh
-rm -f /opt/zumo-bot/zs.py   # el bot ya no arma archivos .zs
 ( cd /opt/zumo-bot && python3 -m py_compile $ARCHIVOS ) || { echo "✘ El bot bajado tiene errores"; exit 1; }
 chmod 755 /opt/zumo-bot/zumo-bot.py
 
@@ -56,6 +55,17 @@ if ! grep -q '^GITHUB_TOKEN=.\+' /etc/zumo/bot.env; then
 		sed -i '/^GITHUB_TOKEN=/d;/^GITHUB_REPO=/d' /etc/zumo/bot.env
 		( umask 077; { echo "GITHUB_TOKEN=$GHT"; echo "GITHUB_REPO=adri40606941-ui/Zumo"; } >> /etc/zumo/bot.env )
 		chmod 600 /etc/zumo/bot.env
+	fi
+fi
+
+# Lista de servidores de la app desde esta VPS (rápido, sin GitHub): se activa con ZUMO_DOMINIO en bot.env.
+# Si existe el dominio, el bot abre el puerto 80 y el 443 (certificado propio, para Cloudflare en modo "Full").
+if grep -q '^ZUMO_DOMINIO=.\+' /etc/zumo/bot.env; then
+	mkdir -p /etc/zumo/web
+	if [ ! -s /etc/zumo/web/cert.pem ] || [ ! -s /etc/zumo/web/key.pem ]; then
+		DOM=$(grep -m1 '^ZUMO_DOMINIO=' /etc/zumo/bot.env | cut -d= -f2-)
+		( umask 077; openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=$DOM" \
+			-keyout /etc/zumo/web/key.pem -out /etc/zumo/web/cert.pem >/dev/null 2>&1 ) || echo "Aviso: no pude crear el certificado (solo funcionará el puerto 80)."
 	fi
 fi
 
