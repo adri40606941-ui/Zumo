@@ -12,7 +12,7 @@ mkdir -p /etc/zumo /opt/zumo-bot
 echo "Instalando dependencias..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update >/dev/null 2>&1
-apt-get install -y --no-install-recommends python3 python3-nacl curl ca-certificates >/dev/null 2>&1 || { echo "✘ No se pudieron instalar las dependencias"; exit 1; }
+apt-get install -y --no-install-recommends python3 python3-nacl python3-paramiko openssl curl ca-certificates >/dev/null 2>&1 || { echo "✘ No se pudieron instalar las dependencias"; exit 1; }
 # Para las vistas previas de la apariencia de la app y para achicar el ícono y el fondo. Si no se
 # pueden instalar, el bot anda igual (sin vistas previas).
 apt-get install -y --no-install-recommends python3-pil fonts-dejavu-core >/dev/null 2>&1 || echo "Aviso: sin python3-pil el bot no manda vistas previas de la app (lo demás funciona)."

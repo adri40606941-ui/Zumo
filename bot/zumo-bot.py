@@ -26,6 +26,7 @@ from datetime import date, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import centro  # noqa: E402
 import compilar  # noqa: E402
+import maquinas_bot  # noqa: E402
 import marca  # noqa: E402
 import servidores as srv  # noqa: E402
 import tema as T  # noqa: E402
@@ -479,7 +480,7 @@ class Telegram:
 # ------------------------------------------------------------------------ menús
 POR_PAGINA = 20
 MENU = [[("➕ Crear usuario", "crear"), ("👥 Usuarios", "lista:0")],
-        [("📱 App Android", "app")],
+        [("📱 App Android", "app"), ("🖥 Máquinas", "maq")],
         [("🔗 Enlazar GitHub", "ghenl")],
         [("💾 Respaldo", "resp")],
         [("🪪 Mi ID", "id")]]
@@ -504,7 +505,7 @@ def teclado_dias(prefijo):
             [("✖ Cancelar", "menu")]]
 
 
-class Bot(centro.CentroMixin):
+class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin):
     def __init__(self, tg, admins, gh=None):
         self.tg, self.admins, self.gh = tg, admins, gh
         self.gh_pub = None    # workflow liviano para publicar la lista de servidores (botón ↻ de la app)
@@ -669,6 +670,8 @@ class Bot(centro.CentroMixin):
         if acc == "menu":
             return self.menu(chat, mid)
         if self.boton_resp(chat, mid, acc):
+            return
+        if self.boton_maquinas(chat, mid, acc, arg):
             return
         if acc == "lista":
             self.estado.pop(chat, None)
@@ -864,6 +867,8 @@ class Bot(centro.CentroMixin):
             self.enviar_datos(chat, u)
             return self.tg.mensaje(chat, "¿Algo más?", [[("👤 " + u, f"u:{u}")], [("◂ Menú", "menu")]])
         if self.texto_resp(chat, e, paso, t):
+            return
+        if self.texto_maquinas(chat, e, paso, t):
             return
         if paso.startswith("a_"):
             return self.texto_app(chat, e, paso, t)
