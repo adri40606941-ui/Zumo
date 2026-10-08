@@ -239,5 +239,12 @@ if [ -f /etc/systemd/system/zumo-id.service ] || [ -x /usr/local/bin/zumoid ]; t
 	ok "control de Android ID quitado"
 fi
 
+# Baneo automático de IP que fallan la contraseña en el puerto 22 (PDirect/loopback nunca se banea).
+_bn=$(mktemp)
+if curl -fsSL "$BASE/scripts/zumo-baneo.sh$NC" -o "$_bn" && bash -n "$_bn" 2>/dev/null; then
+	if _r=$(bash "$_bn" 2>&1); then ok "$_r"; else err "baneo automático: $_r"; fi
+fi
+rm -f "$_bn"
+
 echo
 ok "Actualización terminada. Abrí el panel con: zumo"

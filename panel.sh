@@ -1746,6 +1746,7 @@ cat > "$F2B_JAIL" <<EOF
 [sshd]
 enabled  = true
 backend  = systemd
+port     = 22
 maxretry = 5
 findtime = 10m
 bantime  = ${1:-1h}

@@ -274,3 +274,7 @@ Las versiones anteriores traían un panel web opcional. Si lo tenías instalado:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/scripts/quitar-panelweb.sh | bash
 ```
+
+## Baneo automático de IP que fallan el puerto 22
+
+`install.sh` y `actualizar.sh` activan fail2ban solos (`scripts/zumo-baneo.sh`): una IP que falla la contraseña 5 veces en 10 min queda baneada del puerto SSH 22 (1 h por defecto; se cambia en el panel → Herramientas → Fail2ban). Los fallos que llegan por PDirect (puerto 80), WebSocket o BHTTP entran al sshd como 127.0.0.1, que está en `ignoreip`, así que **nunca banean a nadie**; el baneo no afecta a los puertos 80/443 ni al limitador. Si ya tenías un `jail.local`, no se pisa.
