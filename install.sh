@@ -1354,6 +1354,12 @@ fi
 bash "$T"; r=$?; rm -f "$T"; exit $r
 ZACT
 chmod 755 /usr/local/bin/zumo-actualizar
+paso "Baneo automático de IP que fallan el puerto 22"
+_bn=$(mktemp)
+if curl -fsSL "$ZUMO_RAW/scripts/zumo-baneo.sh" -o "$_bn" && bash -n "$_bn" 2>/dev/null; then
+bash "$_bn" || echo -e " \e[1;33m! no se pudo activar el baneo automático (se puede activar luego desde el panel)\e[0m"
+fi
+rm -f "$_bn"
 paso "Finalizando"
 echo
 

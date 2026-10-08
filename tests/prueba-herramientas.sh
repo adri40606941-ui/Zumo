@@ -264,6 +264,7 @@ f2b_escribir_jail "12h"
 chequear "escribe el tiempo de baneo elegido" "12h" "$(f2b_bantime)"
 chequear "ignora 127.0.0.1 (clientes por payload)" "si" "$(grep -q '^ignoreip = 127.0.0.1/8' "$F2B_JAIL" && echo si || echo no)"
 chequear "banea tras 5 intentos" "si" "$(grep -q '^maxretry = 5' "$F2B_JAIL" && echo si || echo no)"
+chequear "el baneo es solo del puerto 22" "si" "$(grep -q '^port     = 22' "$F2B_JAIL" && echo si || echo no)"
 f2b_escribir_jail
 chequear "sin argumento, el baneo por defecto es 1h" "1h" "$(f2b_bantime)"
 # fail2ban-client de mentira para probar el parseo de la lista
@@ -271,6 +272,13 @@ fail2ban-client() { echo "Status for the jail: sshd"; echo "|- Banned IP list:	1
 chequear "lee las IP baneadas del estado" "1.2.3.4 5.6.7.8" "$(f2b_baneadas)"
 chequear "cuenta cuántas hay baneadas" "2" "$(echo $(f2b_baneadas) | wc -w)"
 unset -f fail2ban-client
+
+# Script de baneo automático: no pisa un jail existente y nunca banea loopback
+J2="$T/auto.local"; ZUMO_F2B_JAIL="$J2" bash "$(dirname "$0")/../scripts/zumo-baneo.sh" >/dev/null
+chequear "baneo auto: ignora loopback (PDirect 80)" "si" "$(grep -q '^ignoreip = 127.0.0.1/8 ::1' "$J2" && echo si || echo no)"
+chequear "baneo auto: puerto 22" "si" "$(grep -q '^port     = ' "$J2" && echo si || echo no)"
+echo "mio" > "$J2"; ZUMO_F2B_JAIL="$J2" bash "$(dirname "$0")/../scripts/zumo-baneo.sh" >/dev/null
+chequear "baneo auto: no pisa un jail existente" "mio" "$(cat "$J2")"
 
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi
