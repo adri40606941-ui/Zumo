@@ -92,11 +92,25 @@ object Servidores {
      * Nunca rompe la lista que ya hay: si lo que baja no sirve, se deja la anterior.
      */
     fun descargar(ctx: Context): Resultado {
-        val url = urlActualizar(ctx)
-        if (url.isBlank()) return Resultado(Estado.SIN_URL)
+        val urls = separarUrls(urlActualizar(ctx))
+        if (urls.isEmpty()) return Resultado(Estado.SIN_URL)
+        // Se prueban en orden (la VPS primero, GitHub de respaldo); la primera que sirva, gana.
+        var ultimo = Resultado(Estado.SIN_INTERNET)
+        for (u in urls) {
+            ultimo = descargarDe(ctx, u, if (urls.size > 1) 6000 else 10000)
+            if (ultimo.estado == Estado.OK) return ultimo
+        }
+        return ultimo
+    }
+
+    /** Las direcciones que horneó el centro: separadas por "|", espacios o saltos de línea. Solo http(s). */
+    internal fun separarUrls(texto: String): List<String> =
+        texto.split('|', '\n', '\r', ' ', '\t').map { it.trim() }.filter { it.startsWith("http://") || it.startsWith("https://") }
+
+    private fun descargarDe(ctx: Context, url: String, timeoutMs: Int): Resultado {
         val datos = try {
             val c = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 10000; readTimeout = 10000; useCaches = false
+                connectTimeout = timeoutMs; readTimeout = timeoutMs; useCaches = false
                 setRequestProperty("User-Agent", "ZumoVPN")
             }
             try {

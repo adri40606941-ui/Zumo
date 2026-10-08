@@ -190,6 +190,7 @@ instalado, volvé a correr `bot/instalar-bot.sh`.
 | `fuentes/bhttp-shim/main.go` | Fuente del adaptador BHTTP (`bhttp-shim`). |
 | `android/` | App Android (Zumo VPN). `android/servidores.txt` es la lista de servidores que trae la app. |
 | `bot/respaldo.py` / `bot/centro.py` | Respaldo cifrado, clave de firma y sus botones del bot. |
+| `bot/publico.py` | Servidor web mínimo del bot: reparte `servidores.bin` (la lista de la app) desde la VPS. |
 | `bot/compilar_vps.py` / `bot/instalar-compilador.sh` | Compilar la app en la VPS del bot (sin GitHub) y el instalador de lo que hace falta. |
 | `bot/maquinas.py` / `bot/maquinas_bot.py` | Sección 🖥 Máquinas: las VPS que el bot maneja por SSH (recursos y protocolos). |
 | `scripts/diagnostico.sh` | Chequeos de estado. |
@@ -213,6 +214,13 @@ falta y una copia del repo en `/opt/zumo-repo`. Después:
   saldría con otra firma y los clientes no podrían instalarlo encima del anterior.
 - El botón ↻ de la app baja la lista de `https://raw.githubusercontent.com/<repo>/apk/servidores.bin`. Para otra dirección,
   poné `ZUMO_URL_ACTUALIZAR=...` en `/etc/zumo/bot.env`.
+- **Lista desde la VPS (rápido, sin depender de GitHub).** Con `ZUMO_DOMINIO=bot.zumoserver.com` en `/etc/zumo/bot.env`,
+  el bot reparte la lista cifrada él mismo (`bot/publico.py`, puertos 80 y 443; solo sirve `/servidores.bin`) y
+  «📡 Actualizar servidores» la publica al instante. Las apps que se compilen desde entonces prueban primero la VPS
+  y, si no responde, GitHub (la dirección horneada es `https://dominio/servidores.bin|https://raw.githubusercontent.com/...`).
+  En Cloudflare: registro A `bot` → IP de la VPS (con la nube naranja) y SSL en **Flexible** o **Full** (no «Full strict»:
+  el certificado del 443 es propio). Abrí los puertos 80 y 443 en el firewall. Las apps ya instaladas siguen usando
+  la dirección con la que se compilaron hasta que se instale un APK nuevo.
 - La primera compilación baja las dependencias de Gradle y tarda más (puede pasar de 20 minutos); las siguientes, menos.
 
 **Compilar en GitHub.** Desde el botón "📱 App Android → 🔨 Compilar en GitHub" del bot.

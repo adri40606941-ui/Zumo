@@ -88,6 +88,7 @@ jobs:
       - name: Servidores de la app (secreto opcional)
         env:
           ZUMO_SERVIDORES: ${{ secrets.ZUMO_SERVIDORES }}
+          ZUMO_URL_VPS: ${{ secrets.ZUMO_URL_ACTUALIZAR }}
         run: |
           if [ -n "$ZUMO_SERVIDORES" ]; then
             printf '%s\n' "$ZUMO_SERVIDORES" > android/servidores.txt
@@ -99,7 +100,11 @@ jobs:
           # Botón ↻ de la app: se hornea la URL de donde baja la lista (la rama donde se publica este build)
           # y se deja servidores.bin listo para subir a esa rama (así una app recién compilada ya puede actualizar).
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then RAMA=apk; else RAMA=apk-prueba; fi
-          echo "ZUMO_ACTUALIZAR_URL=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${RAMA}/servidores.bin" >> "$GITHUB_ENV"
+          # Si el bot tiene dominio propio (secreto ZUMO_URL_ACTUALIZAR), la app prueba primero la VPS y, si no
+          # responde, GitHub: las direcciones van separadas por "|".
+          URL_GH="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${RAMA}/servidores.bin"
+          if [ -n "$ZUMO_URL_VPS" ]; then URL_GH="${ZUMO_URL_VPS}|${URL_GH}"; fi
+          echo "ZUMO_ACTUALIZAR_URL=${URL_GH}" >> "$GITHUB_ENV"
           pip install --quiet cryptography
           mkdir -p out
           python3 - <<'PY'

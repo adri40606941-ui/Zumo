@@ -29,8 +29,10 @@ import compilar  # noqa: E402
 import compilar_vps  # noqa: E402
 import maquinas_bot  # noqa: E402
 import marca  # noqa: E402
+import publico  # noqa: E402
 import servidores as srv  # noqa: E402
 import tema as T  # noqa: E402
+import zs  # noqa: E402
 import vista  # noqa: E402
 
 ENV = os.environ.get("ZUMO_BOT_ENV", "/etc/zumo/bot.env")
@@ -974,7 +976,28 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin):
         """De dónde baja la lista el botón ↻ de la app compilada en la VPS. Por defecto, la misma que usan los
         APK compilados en GitHub (rama apk); se cambia con ZUMO_URL_ACTUALIZAR en bot.env."""
         _, _, repo, env = self._config_github()
-        return env.get("ZUMO_URL_ACTUALIZAR") or f"https://raw.githubusercontent.com/{repo}/apk/servidores.bin"
+        github = f"https://raw.githubusercontent.com/{repo}/apk/servidores.bin"
+        if env.get("ZUMO_URL_ACTUALIZAR"):
+            return env["ZUMO_URL_ACTUALIZAR"]
+        dominio = self.dominio_lista()
+        # Con dominio propio: primero la VPS (rápida) y, si no responde, GitHub. La app prueba en orden.
+        return f"https://{dominio}/servidores.bin|{github}" if dominio else github
+
+    def dominio_lista(self):
+        """Dominio de la VPS que reparte la lista de servidores (ZUMO_DOMINIO en bot.env), o ''."""
+        d = (self._config_github()[3].get("ZUMO_DOMINIO") or "").strip().lower()
+        return d if re.fullmatch(r"[a-z0-9]([a-z0-9.-]*[a-z0-9])?", d) else ""
+
+    def publicar_en_vps(self, lista):
+        """Deja la lista cifrada lista para que la app la baje de la VPS, al instante. True si quedó."""
+        if not self.dominio_lista():
+            return False
+        try:
+            publico.publicar(zs.cifrar_lista(srv.a_texto(lista)))
+            return True
+        except Exception as e:
+            print("zumo-bot: no pude publicar la lista en la VPS:", e, flush=True)
+            return False
 
     def pantalla_compilar_vps(self, chat, mid, aviso=""):
         falta = compilar_vps.faltantes()
@@ -1011,6 +1034,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin):
     def _compilar_vps(self, chat):
         try:
             lista = cargar_app()
+            self.publicar_en_vps(lista)
             mid = self.tg.mensaje(chat, "🖥 Arrancando en la VPS…")
             ultimo = [""]
 
@@ -1053,7 +1077,13 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin):
             time.sleep(24 * 3600)
 
     def publicar_servidores(self, chat):
-        """Dispara el workflow liviano que publica la lista cifrada en la rama apk (botón ↻ de la app)."""
+        """Publica la lista para el botón ↻ de la app: al instante desde la VPS (si hay dominio) y, como
+        respaldo, con el workflow liviano que la deja cifrada en la rama apk de GitHub."""
+        if self.publicar_en_vps(cargar_app()):
+            self.tg.mensaje(chat, f"✅ Lista publicada en {self.dominio_lista()} ({len(cargar_app())} servidor/es). "
+                                  "En la app, tocá el botón ↻ para bajar los cambios.")
+            if not self.gh_pub:
+                return self.tg.mensaje(chat, "Listo.", [[("📱 App Android", "app")], [("◂ Menú", "menu")]])
         if not self.gh_pub:
             return self.tg.mensaje(chat, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "app")]])
         if not self.compilando.acquire(blocking=False):
@@ -1162,10 +1192,13 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin):
             if asegurar:
                 return self._asegurar_clave(chat, solo_traer=(asegurar == "traer"))
             lista = cargar_app()
+            self.publicar_en_vps(lista)
             self.tg.mensaje(chat, "🔨 Arrancando…")
             if lista:
                 gh.subir_secreto("ZUMO_SERVIDORES", srv.a_texto(lista))
                 self.tg.mensaje(chat, f"🔐 Lista de {len(lista)} servidor(es) subida al repo (cifrada).")
+            if self.dominio_lista():   # el workflow la antepone a la de GitHub (la app prueba en orden)
+                gh.subir_secreto("ZUMO_URL_ACTUALIZAR", f"https://{self.dominio_lista()}/servidores.bin")
             apariencia = secretos_marca()
             if apariencia:
                 for nombre, valor in apariencia.items():
@@ -1633,6 +1666,10 @@ def main():
     if gh:
         bot.gh_pub = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
                                      workflow="publicar-servidores.yml", rama=env.get("GITHUB_REF") or "main")
+    if bot.dominio_lista():
+        publico.iniciar()
+        if not publico.hay_lista():
+            bot.publicar_en_vps(cargar_app())
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()
     threading.Thread(target=bot.sincronizar_diario, daemon=True).start()
     print("zumo-bot: listo, admins:", sorted(admins) or "ninguno (mandá /id al bot)", flush=True)
