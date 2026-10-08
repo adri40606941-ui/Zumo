@@ -24,6 +24,11 @@ class Prefs(ctx: Context) {
         get() = sp.getString("servidor", "") ?: ""
         set(v) { sp.edit().putString("servidor", v).apply() }
 
+    /** Nombre del último servidor de la lista donde entró el token (se prueba primero; el cliente no lo ve). */
+    var ultimoServidor: String
+        get() = sp.getString("ultimo_servidor", "") ?: ""
+        set(v) { sp.edit().putString("ultimo_servidor", v).apply() }
+
     /** Vencimiento de la cuenta (AAAA-MM-DD), o vacío. */
     var exp: String
         get() = sp.getString("exp", "") ?: ""

@@ -75,6 +75,17 @@ object Servidores {
         ""
     }
 
+    /**
+     * Servidores que se prueban con el token, en orden: el último donde se entró primero y el resto como vienen
+     * en la lista. Si la app no trae lista, queda solo la cuenta guardada (si sirve).
+     */
+    fun candidatos(lista: List<Config>, ultimo: String, guardada: Config?): List<Config> {
+        if (lista.isEmpty()) return listOfNotNull(guardada?.takeIf { it.valida() })
+        val validos = lista.filter { it.valida() }
+        val primero = validos.firstOrNull { it.name == ultimo } ?: return validos
+        return listOf(primero) + validos.filter { it !== primero }
+    }
+
     fun buscar(ctx: Context, nombre: String): Config? =
         if (nombre.isBlank()) null else lista(ctx).firstOrNull { it.name == nombre }
 

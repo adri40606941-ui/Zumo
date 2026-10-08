@@ -398,6 +398,8 @@ class MainActivity : Activity() {
         val hayLista = servidores.isNotEmpty()
         cSinCuenta.visibility = if (!hayLista && !tieneCuenta) View.VISIBLE else View.GONE
         cCuenta.visibility = if (hayLista || tieneCuenta) View.VISIBLE else View.GONE
+        // Con lista de servidores la app busca sola dónde está el token (Busqueda): el cliente no elige ni ve servidores.
+        tvServidor.visibility = if (hayLista) View.GONE else View.VISIBLE
 
         val con = ZumoVpnService.conectado
         val conectando = ZumoVpnService.conectando && !con
@@ -435,7 +437,7 @@ class MainActivity : Activity() {
         btn.background = redondo(when { con -> ROJO; conectando -> NARANJA; else -> VERDE }, radio(0.8f))
 
         // vencimiento: lo trae el .zs; entrando con usuario y contraseña la app no lo conoce
-        cVence.visibility = if (prefs.servidor.isNotBlank()) View.GONE else View.VISIBLE
+        cVence.visibility = if (prefs.servidor.isNotBlank() || hayLista) View.GONE else View.VISIBLE
         val exp = prefs.exp
         val dias = Perfil.diasRestantes(exp)
         when {
@@ -469,9 +471,10 @@ class MainActivity : Activity() {
         Servidores.refrescar(this, prefs)
         val c = prefs.config
         // En modo token no hace falta usuario ni contraseña: el token de este celular hace de las dos.
-        if (c == null || !c.valida() || (!prefs.modoToken && (prefs.user.isBlank() || prefs.pass.isBlank()))) {
+        val hayServidor = servidores.isNotEmpty() || (c != null && c.valida())
+        if (!hayServidor || (!prefs.modoToken && (prefs.user.isBlank() || prefs.pass.isBlank()))) {
             aviso(when {
-                c == null || !c.valida() -> "Primero elegí un servidor"
+                !hayServidor -> "Esta app no trae servidores. Pedí la versión nueva"
                 prefs.user.isBlank() -> "Poné tu usuario"
                 else -> "Poné tu contraseña"
             })
