@@ -1,10 +1,15 @@
-"""Servidor web mínimo del bot: reparte la lista de servidores de la app (servidores.bin) desde la VPS.
+"""Servidor web mínimo del bot: reparte desde la VPS la lista de servidores de la app (servidores.bin) y los
+instaladores del panel (los mismos archivos del repo, de la copia /opt/zumo-repo), para instalar con
+`ZUMO_BASE=https://dominio` sin pasar por GitHub.
 
-Solo sirve archivos de una lista fija (hoy, /servidores.bin); cualquier otra ruta da 404. El archivo ya
-va cifrado (ZL1/AES-GCM), así que no hay nada legible. Escucha en el puerto 80 (Cloudflare "Flexible") y,
+Solo sirve rutas de una lista fija: /servidores.bin y, de la copia del repo, los scripts del panel, sus
+fuentes/configuración, binarios/, scripts/ y bot/. Cualquier otra ruta da 404 (no se listan carpetas, no se
+sigue ningún enlace que salga de la copia). La lista va cifrada (ZL1/AES-GCM), así que no hay nada legible. Escucha en el puerto 80 (Cloudflare "Flexible") y,
 si existe un certificado en /etc/zumo/web/, también en el 443 (Cloudflare "Full"). Si un puerto no se
 puede abrir (ocupado, sin permiso) el bot sigue andando: la app cae a GitHub."""
 import os
+import re
+import shutil
 import ssl
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,6 +19,27 @@ CERT = "/etc/zumo/web/cert.pem"
 CLAVE = "/etc/zumo/web/key.pem"
 PERMITIDOS = {"/servidores.bin": "application/octet-stream"}
 ARCHIVO = "servidores.bin"
+REPO = "/opt/zumo-repo"
+# Archivos del repo que bajan los instaladores (install.sh, actualizar.sh, panel.sh…). Nada más.
+REPO_EXACTOS = {"install.sh", "actualizar.sh", "actualizar-panel.sh", "panel.sh", "zumo-lib.sh",
+                "fuentes/zumo-limit.c", "config/limit.conf"}
+REPO_PATRONES = (
+    re.compile(r"^binarios/[A-Za-z0-9._-]+$"),
+    re.compile(r"^scripts/[A-Za-z0-9._-]+\.sh$"),
+    re.compile(r"^bot/(?!test_)[A-Za-z0-9._-]+\.(py|sh)$"),
+)
+
+
+def ruta_repo(ruta, repo=None):
+    """Ruta absoluta del archivo del repo que corresponde a la URL, o None si no está permitido."""
+    rel = ruta.lstrip("/")
+    if rel not in REPO_EXACTOS and not any(p.match(rel) for p in REPO_PATRONES):
+        return None
+    base = os.path.realpath(repo or REPO)
+    real = os.path.realpath(os.path.join(base, rel))
+    if os.path.commonpath([base, real]) != base or not os.path.isfile(real):
+        return None
+    return real
 
 
 def publicar(datos, directorio=None):
@@ -31,7 +57,7 @@ def hay_lista(directorio=None):
     return os.path.isfile(os.path.join(directorio or DIR, ARCHIVO))
 
 
-def _handler(directorio):
+def _handler(directorio, repo=None):
     class H(BaseHTTPRequestHandler):
         server_version = "zumo"
         sys_version = ""
@@ -41,22 +67,35 @@ def _handler(directorio):
 
         def _responder(self, con_cuerpo):
             ruta = self.path.split("?", 1)[0]
-            tipo = PERMITIDOS.get(ruta)
-            archivo = os.path.join(directorio, ARCHIVO)
-            if tipo is None or not os.path.isfile(archivo):
+            archivo = None
+            if ruta in PERMITIDOS:
+                archivo = os.path.join(directorio, ARCHIVO)
+                tipo = PERMITIDOS[ruta]
+                if not os.path.isfile(archivo):
+                    archivo = None
+            else:
+                archivo = ruta_repo(ruta, repo)
+                tipo = "text/plain; charset=utf-8" if archivo and archivo.endswith((".sh", ".py", ".c", ".conf")) else "application/octet-stream"
+            if archivo is None:
                 self.send_response(404)
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
-            with open(archivo, "rb") as f:
-                datos = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", tipo)
-            self.send_header("Content-Length", str(len(datos)))
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            if con_cuerpo:
-                self.wfile.write(datos)
+            try:
+                f = open(archivo, "rb")
+            except OSError:
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            with f:
+                self.send_response(200)
+                self.send_header("Content-Type", tipo)
+                self.send_header("Content-Length", str(os.fstat(f.fileno()).st_size))
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                if con_cuerpo:
+                    shutil.copyfileobj(f, self.wfile)
 
         def do_GET(self):
             self._responder(True)
@@ -73,10 +112,10 @@ def _handler(directorio):
     return H
 
 
-def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0"):
+def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=None):
     """Abre un puerto en un hilo. Devuelve el servidor, o None si no se pudo abrir (nunca lanza)."""
     try:
-        s = ThreadingHTTPServer((host, puerto), _handler(directorio or DIR))
+        s = ThreadingHTTPServer((host, puerto), _handler(directorio or DIR, repo))
         s.daemon_threads = True
         if cert:
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

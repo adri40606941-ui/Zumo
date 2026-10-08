@@ -12,6 +12,19 @@ En una VPS Debian/Ubuntu, como root:
 curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/install.sh | bash
 ```
 
+**Instalar desde tu dominio, sin GitHub.** Si el centro (la VPS del bot) tiene `ZUMO_DOMINIO` y la copia del repo en
+`/opt/zumo-repo`, reparte los mismos archivos del instalador (solo los del panel, `binarios/`, `scripts/` y `bot/`;
+nada más). En la VPS nueva:
+
+```bash
+export ZUMO_BASE=https://bot.zumoserver.com
+curl -fsSL "$ZUMO_BASE/install.sh" | bash
+```
+
+`ZUMO_BASE` queda guardado: las actualizaciones del panel también salen de ese dominio. Los archivos son los de la
+copia del centro (la que sincroniza con GitHub una vez por día o con «🔄 Sincronizar»). Una excepción: el limitador
+de conexiones baja BadVPN directo de GitHub (`ambrop72/badvpn`).
+
 Después, abrí el panel con:
 
 ```bash
