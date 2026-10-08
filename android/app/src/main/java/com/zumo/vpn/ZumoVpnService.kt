@@ -189,12 +189,14 @@ class ZumoVpnService : VpnService() {
         if (!activo) return                 // lo cancelaron antes de arrancar
         val prefs = Prefs(this)
         Servidores.refrescar(this, prefs)   // servidor de la lista de la app: toma su payload actual
-        val cfg = prefs.config
+        // Con lista de servidores, la app busca sola en cuál está el token (ver Busqueda); si no, la cuenta guardada.
+        val candidatos = Servidores.candidatos(Servidores.lista(this), prefs.ultimoServidor, prefs.config)
+        val cfg = candidatos.firstOrNull()
         // En modo token, el token de este celular hace de usuario y de contraseña.
         val user = if (prefs.modoToken) TokenCel.token(this, prefs) else prefs.user
         val pass = if (prefs.modoToken) user else prefs.pass.ifBlank { prefs.user }
-        if (cfg == null || !cfg.valida() || user.isBlank()) {
-            fallarEncendido("Falta la cuenta: elegí un servidor y poné tu usuario y contraseña (o usá el token de este celular)."); return
+        if (cfg == null || user.isBlank()) {
+            fallarEncendido("No hay servidores cargados en la app. Pedí la versión nueva a tu proveedor."); return
         }
         if (Perfil.vencida(prefs.exp)) {
             fallarEncendido("Tu cuenta venció el ${Perfil.fechaLinda(prefs.exp)}. Pedí la renovación."); return
@@ -213,7 +215,7 @@ class ZumoVpnService : VpnService() {
         }
         cfgActual = cfg
         vigilarRed()
-        hilo = Thread({ bucle(cfg, user, pass) }, "zumo-ssh").also { it.start() }
+        hilo = Thread({ bucle(candidatos, user, pass) }, "zumo-ssh").also { it.start() }
         monitor = Thread({ vigilar() }, "zumo-monitor").also { it.start() }
     }
 
@@ -316,8 +318,10 @@ class ZumoVpnService : VpnService() {
      * solo, con esperas crecientes, mientras el usuario la quiera encendida. Solo se rinde con un
      * error que no se arregla reintentando (usuario/clave mal o cuenta vencida).
      */
-    private fun bucle(cfg: Config, user: String, pass: String) {
+    private fun bucle(candidatos: List<Config>, user: String, pass: String) {
         var espera = 2000L
+        val busq = Busqueda(candidatos)
+        var siguienteYa = false
         while (activo && Prefs(this).wanted) {
             if (Perfil.vencida(Prefs(this).exp)) {
                 detenerPorError("Tu cuenta venció el ${Perfil.fechaLinda(Prefs(this).exp)}. Pedí la renovación."); return
@@ -327,6 +331,8 @@ class ZumoVpnService : VpnService() {
                 if (!esperarReintento(espera)) break
                 espera = (espera * 2).coerceAtMost(20000L); continue
             }
+            val cfg = busq.actual()
+            cfgActual = cfg
             val t = SshTunnel(cfg, user, pass, etapa = { etapaActual = it; Registro.add(it) }, proteger = { sock -> protect(sock) })
             intentoActual = t
             var cayo = false
@@ -334,6 +340,8 @@ class ZumoVpnService : VpnService() {
                 estado = "Conectando..."; conectado = false; conectando = true; actualizarNoti()
                 t.connect()
                 tunel = t
+                busq.exito()
+                Prefs(this).ultimoServidor = cfg.name          // el primero que se prueba la próxima vez
                 estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; espera = 2000L; actualizarNoti()
                 Registro.add("✔ Conectado")
                 while (activo && t.conectado) Thread.sleep(1000)
@@ -341,9 +349,15 @@ class ZumoVpnService : VpnService() {
             } catch (e: InterruptedException) {
                 // el usuario tocó Desconectar, o la red volvió y queremos reintentar ya
             } catch (e: Exception) {
-                if (esFalloDeLogin(e)) { detenerPorError("Usuario o contraseña incorrectos. Pedí tu cuenta de nuevo."); return }
-                ultimoError = mensaje(e); Registro.add("✘ $ultimoError")
-                cayo = activo && Prefs(this).wanted
+                val rechazado = esFalloDeLogin(e)
+                if (!rechazado) { ultimoError = mensaje(e); Registro.add("✘ $ultimoError") }
+                when (busq.fallo(rechazado)) {
+                    Busqueda.Paso.RECHAZADO -> { detenerPorError("Usuario o contraseña incorrectos. Pedí tu cuenta de nuevo."); return }
+                    Busqueda.Paso.NINGUNO -> { detenerPorError("Tu token todavía no está activo. Pedí que lo activen y volvé a intentar."); return }
+                    Busqueda.Paso.SIGUIENTE -> { siguienteYa = true; Registro.add("Probando otro servidor…") }
+                    Busqueda.Paso.REINTENTAR -> {}
+                }
+                cayo = activo && Prefs(this).wanted && !siguienteYa
             } finally {
                 conectado = false
                 if (intentoActual === t) intentoActual = null
@@ -351,6 +365,7 @@ class ZumoVpnService : VpnService() {
                 if (tunel === t) tunel = null
             }
             if (!activo || !Prefs(this).wanted) break
+            if (siguienteYa) { siguienteYa = false; continue }      // el próximo servidor, sin esperar
             if (cayo) { Registro.add("Se perdió la conexión; reconectando…") }
             estado = "Reconectando…"; conectando = true; actualizarNoti()
             if (!esperarReintento(espera)) break
