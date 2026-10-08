@@ -47,14 +47,9 @@ class MainActivity : Activity() {
     private lateinit var btn: Button
     private var btnActualizar: TextView? = null
     @Volatile private var actualizando = false
-    private lateinit var btnModoUser: TextView
-    private lateinit var btnModoToken: TextView
     private lateinit var cajaToken: LinearLayout
     private lateinit var tvTokenCel: TextView
     private lateinit var puntoEstado: View
-    private lateinit var tvVelocidad: TextView
-    private lateinit var tvTiempo: TextView
-    private lateinit var tvDatos: TextView
     private lateinit var cSinCuenta: LinearLayout
     private lateinit var cCuenta: LinearLayout       // servidor de la lista + usuario y contraseña
     private lateinit var tvServidor: TextView
@@ -164,14 +159,6 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { topMargin = dp(8) }
         }
 
-    /** Botón-pestaña para elegir el modo de ingreso (usuario/clave o token). Se pinta en aplicarModo(). */
-    private fun botonModo(t: String, onClick: () -> Unit): TextView =
-        texto(t, 14f, TEXTO, true).apply {
-            gravity = Gravity.CENTER
-            setPadding(dp(10), dp(12), dp(10), dp(12))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener { onClick() }
-        }
 
     private fun tarjeta(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
@@ -244,7 +231,7 @@ class MainActivity : Activity() {
         } else if (tema.logo.isNotBlank()) {
             cab.addView(texto(tema.logo, 34f).apply { gravity = Gravity.CENTER })
         }
-        cab.addView(texto(tema.titulo, 25f, TEXTO, true).apply { gravity = Gravity.CENTER; letterSpacing = 0.03f })
+        cab.addView(texto(tema.titulo, 36f, TEXTO, true).apply { gravity = Gravity.CENTER; letterSpacing = 0.08f; setShadowLayer(dp(12).toFloat(), 0f, dp(3).toFloat(), ACENTO) })
         if (tema.lema.isNotBlank()) cab.addView(texto(tema.lema, 13f, TEXTO_SUAVE).apply {
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
@@ -276,8 +263,6 @@ class MainActivity : Activity() {
 
         // cuenta: se elige un servidor de la lista de la app y se pone usuario y contraseña
         cCuenta = tarjeta()
-        seccion(cCuenta, "🔑", "Tu cuenta")
-        cCuenta.addView(texto("Servidor", 12f, TEXTO_SUAVE))
         tvServidor = texto("", 15.5f, TEXTO, true).apply {
             background = redondo(conOpacidad(CAMPO), radio(0.6f), trazo = 1)
             setPadding(dp(14), dp(13), dp(14), dp(13))
@@ -286,24 +271,11 @@ class MainActivity : Activity() {
         }
         cCuenta.addView(tvServidor)
 
-        // elegir cómo entra: usuario y contraseña, o el token de este celular
-        val filaModo = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
-        }
-        btnModoUser = botonModo("Usuario y clave") { prefs.modoToken = false; cargarCuenta(); refrescar() }
-        btnModoToken = botonModo("🎟 Mi token") { prefs.modoToken = true; cargarCuenta(); refrescar() }
-        (btnModoUser.layoutParams as LinearLayout.LayoutParams).apply { weight = 1f; marginEnd = dp(4) }
-        (btnModoToken.layoutParams as LinearLayout.LayoutParams).apply { weight = 1f; marginStart = dp(4) }
-        filaModo.addView(btnModoUser); filaModo.addView(btnModoToken)
-        cCuenta.addView(filaModo)
-
-        // caja del token de este celular (solo en modo token)
+        // caja del token de este celular (es el único modo de ingreso)
         cajaToken = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
         }
-        cajaToken.addView(texto("Token de este celular (es tu usuario y tu clave):", 12f, TEXTO_SUAVE))
         tvTokenCel = texto("", 17f, ACENTO, true).apply {
             background = redondo(conOpacidad(CAMPO), radio(0.6f), trazo = 1)
             setPadding(dp(14), dp(14), dp(14), dp(14))
@@ -315,9 +287,6 @@ class MainActivity : Activity() {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
             cm.setPrimaryClip(android.content.ClipData.newPlainText("token", TokenCel.token(this, prefs)))
             aviso("Token copiado. Pasáselo a tu proveedor para que te lo active.")
-        })
-        cajaToken.addView(texto("Pasale este código a tu proveedor. Cuando lo active, elegí un servidor y tocá Conectar.", 12f, TEXTO_SUAVE).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
         })
         cCuenta.addView(cajaToken)
 
@@ -387,36 +356,9 @@ class MainActivity : Activity() {
         cVence.addView(tvVence); cVence.addView(tvVenceDetalle)
         if (tema.verVencimiento) col.addView(cVence)
 
-        // velocidad, tiempo conectado y datos usados
-        val cStats = tarjeta()
-        seccion(cStats, "📊", "Conexión")
-        val filaStats = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        fun columnaStat(titulo: String): TextView {
-            val colStat = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            }
-            colStat.addView(texto(titulo, 11.5f, TEXTO_SUAVE).apply { gravity = Gravity.CENTER })
-            val valor = texto("--", 15.5f, TEXTO, true).apply {
-                gravity = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) }
-            }
-            colStat.addView(valor)
-            filaStats.addView(colStat)
-            return valor
-        }
-        tvVelocidad = columnaStat("Velocidad")
-        tvTiempo = columnaStat("Conectado hace")
-        tvDatos = columnaStat("Datos usados")
-        cStats.addView(filaStats)
-        if (tema.verConexion) col.addView(cStats)
-
         // ajustes del teléfono que ayudan a conectar: DNS privado y batería
         val cTel = tarjeta()
         seccion(cTel, "📶", "Ajustes del teléfono")
-        cTel.addView(texto("Si la VPN no conecta, desactivá el DNS privado y sacale el límite de batería a la app.", 12.5f, TEXTO_SUAVE).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) }
-        })
         cTel.addView(botonPrimario("🌐  DNS privado", ACENTO) { abrirDnsPrivado() })
         cTel.addView(botonPrimario("🔋  Uso de batería", NARANJA) {
             PowerGuide.pedirExclusion(this)
@@ -510,15 +452,6 @@ class MainActivity : Activity() {
             }
         }
 
-        tvVelocidad.text = if (con && ZumoVpnService.velocidad.isNotBlank()) ZumoVpnService.velocidad else "--"
-        tvDatos.text = if (con && ZumoVpnService.datosUsados.isNotBlank()) ZumoVpnService.datosUsados else "--"
-        tvTiempo.text = if (con && ZumoVpnService.desde > 0) formatearDuracion(System.currentTimeMillis() - ZumoVpnService.desde) else "--"
-    }
-
-    private fun formatearDuracion(ms: Long): String {
-        val s = ms / 1000
-        val hh = s / 3600; val mm = (s % 3600) / 60; val ss = s % 60
-        return if (hh > 0) "%d:%02d:%02d".format(hh, mm, ss) else "%02d:%02d".format(mm, ss)
     }
 
     // ---------- acciones ----------
@@ -679,17 +612,10 @@ class MainActivity : Activity() {
         aplicarModo()
     }
 
-    /** Pinta las pestañas de modo y muestra la caja del token o la de usuario/clave. */
+    /** Muestra el token de este celular (único modo de ingreso). */
     private fun aplicarModo() {
-        val tok = prefs.modoToken
-        fun pintar(b: TextView, activo: Boolean) {
-            b.background = redondo(conOpacidad(if (activo) ACENTO else CAMPO), radio(0.6f),
-                trazo = if (activo) 2 else 1, colorTrazo = if (activo) ACENTO else BORDE)
-            b.setTextColor(if (activo) ACENTO else TEXTO_SUAVE)
-        }
-        pintar(btnModoUser, !tok); pintar(btnModoToken, tok)
-        cajaToken.visibility = if (tok) View.VISIBLE else View.GONE
-        if (tok) tvTokenCel.text = TokenCel.token(this, prefs)
+        cajaToken.visibility = View.VISIBLE
+        tvTokenCel.text = TokenCel.token(this, prefs)
     }
 
     private fun elegirServidor() {

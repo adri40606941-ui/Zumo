@@ -174,9 +174,9 @@ class ZumoVpnService : VpnService() {
                     val t1 = System.currentTimeMillis()
                     val dt = ((t1 - t0).coerceAtLeast(1)) / 1000.0
                     val tx = st[1]; val rx = st[3]
-                    val subMBs = (tx - txAnt).coerceAtLeast(0) / dt / 1_000_000
-                    val bajMBs = (rx - rxAnt).coerceAtLeast(0) / dt / 1_000_000
-                    velocidad = "↓ %.2f  ↑ %.2f MB/s".format(bajMBs, subMBs)
+                    val subKBs = (tx - txAnt).coerceAtLeast(0) / dt / 1_000
+                    val bajKBs = (rx - rxAnt).coerceAtLeast(0) / dt / 1_000
+                    velocidad = "↓ %.0f  ↑ %.0f KB/s".format(bajKBs, subKBs)
                     datosUsados = formatoDatos(tx + rx)
                     txAnt = tx; rxAnt = rx; t0 = t1
                     actualizarNoti()
@@ -401,7 +401,9 @@ class ZumoVpnService : VpnService() {
             this, 1, Intent(this, ZumoVpnService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE
         )
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL) else @Suppress("DEPRECATION") Notification.Builder(this)
-        val cuerpo = if (conectado && velocidad.isNotBlank()) "$txt  ·  $velocidad" else txt
+        val cuerpo = if (conectado && velocidad.isNotBlank()) {
+            "$txt  ·  ${duracionDesde()}  ·  $velocidad  ·  Total ${datosUsados}"
+        } else txt
         b.setContentTitle(Tema.actual(this).nombre).setContentText(cuerpo)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentIntent(abrir).setOngoing(true).setOnlyAlertOnce(true)
@@ -409,6 +411,14 @@ class ZumoVpnService : VpnService() {
             .addAction(Notification.Action.Builder(null, "Desconectar", parar).build())
         if (Build.VERSION.SDK_INT < 26) @Suppress("DEPRECATION") b.setPriority(Notification.PRIORITY_HIGH)
         return b.build()
+    }
+
+    /** Tiempo transcurrido desde que se conectó, en mm:ss (o h:mm:ss si pasa de una hora). */
+    private fun duracionDesde(): String {
+        if (desde <= 0L) return "--:--"
+        val s = (System.currentTimeMillis() - desde) / 1000
+        val hh = s / 3600; val mm = (s % 3600) / 60; val ss = s % 60
+        return if (hh > 0) "%d:%02d:%02d".format(hh, mm, ss) else "%02d:%02d".format(mm, ss)
     }
 
     private fun actualizarNoti() {

@@ -13,7 +13,7 @@ POR_DEFECTO = {
     "plantilla": "zumo",
     "nombre": "Zumo VPN",
     "lema": "Conexión privada y estable",
-    "logo": "🛡",               # emoji o texto corto arriba del título ("" = nada)
+    "logo": "🚀",               # emoji o texto corto arriba del título ("" = nada)
     "logo_imagen": False,       # mostrar arriba el ícono importado en vez del emoji
     "titulo_mayus": True,       # el título de la pantalla en MAYÚSCULAS
     "fondo": "#14102B",
