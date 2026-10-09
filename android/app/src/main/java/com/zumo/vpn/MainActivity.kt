@@ -97,13 +97,27 @@ class MainActivity : Activity() {
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
+        CrashLog.instalar(this)
         prefs = Prefs(this)
         servidores = Servidores.lista(this)
         armarUi()
+        mostrarCierrePrevio()
         cargarCuenta()
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7)
         importarDesdeIntent(intent)
         chequearListaEnSegundoPlano()
+    }
+
+    /** Si la vez anterior la app se cerró por un error, se muestra el motivo para poder arreglarlo. */
+    private fun mostrarCierrePrevio() {
+        val txt = CrashLog.leer(this) ?: return
+        try {
+            AlertDialog.Builder(this, estiloDialogo)
+                .setTitle("La app se cerró por un error")
+                .setMessage("Mandale una captura de esto a quien te la dio:\n\n" + txt.take(1500))
+                .setPositiveButton("Cerrar", null)
+                .show()
+        } catch (_: Exception) {}
     }
 
     override fun onNewIntent(i: Intent) {
