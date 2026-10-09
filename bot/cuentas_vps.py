@@ -131,8 +131,18 @@ def bloquear(m, token, si=True, correr=None):
         raise ErrorCuenta("La VPS no pudo cambiar el bloqueo (¿el usuario ya no existe?).")
 
 
+def renombrar(m, token, nombre, correr=None):
+    """Cambia el nombre del cliente (GECOS "hwid,<nombre>"). Devuelve el nombre ya limpio."""
+    t = _token(token)
+    n = limpiar_nombre(nombre)
+    r = _sh(m, f'usermod -c {shlex.quote("hwid," + n)} {t} && echo OK || echo NO\n', correr)
+    if "OK" not in r:
+        raise ErrorCuenta("La VPS no pudo cambiar el nombre (¿el usuario ya no existe?).")
+    return n
+
+
 def estado(m, tokens, correr=None):
-    """{token: {'existe', 'vence' (date|None), 'bloqueado'}} de esos tokens, en una sola conexión."""
+    """{token: {'existe', 'vence' (date|None), 'bloqueado', 'conectado'}} de esos tokens, en una sola conexión."""
     tokens = [_token(t) for t in tokens]
     if not tokens:
         return {}
@@ -140,19 +150,21 @@ def estado(m, tokens, correr=None):
               '  if id "$u" >/dev/null 2>&1; then\n'
               f'    v=$(grep "^$u:" {DB} 2>/dev/null | head -1 | cut -d: -f3)\n'
               '    b=$(passwd -S "$u" 2>/dev/null | cut -d" " -f2)\n'
-              '    echo "$u SI ${v:--} ${b:--}"\n'
-              '  else echo "$u NO - -"; fi\n'
+              '    c=-; pgrep -u "$u" >/dev/null 2>&1 && c=C\n'
+              '    echo "$u SI ${v:--} ${b:--} $c"\n'
+              '  else echo "$u NO - - -"; fi\n'
               'done\n')
     out = {}
     for linea in _sh(m, script, correr).splitlines():
         p = linea.split()
-        if len(p) != 4 or p[0] not in tokens:
+        if len(p) not in (4, 5) or p[0] not in tokens:
             continue
         try:
             vence = date.fromisoformat(p[2]) if p[2] != "-" else None
         except ValueError:
             vence = None
-        out[p[0]] = {"existe": p[1] == "SI", "vence": vence, "bloqueado": p[3] == "L"}
+        out[p[0]] = {"existe": p[1] == "SI", "vence": vence, "bloqueado": p[3] == "L",
+                  "conectado": len(p) == 5 and p[4] == "C"}
     return out
 
 

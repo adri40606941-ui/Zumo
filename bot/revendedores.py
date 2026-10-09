@@ -235,6 +235,13 @@ class Revendedores:
             r = d["revendedores"].get(c["rev"]) if c else None
             return {"rev": c["rev"], "etq": c.get("etq", ""), "maquina": r["maquina"]} if r else None
 
+    def renombrar_cuenta(self, token, etiqueta):
+        with self.lock:
+            d = self._leer()
+            if token in d["cuentas"]:
+                d["cuentas"][token]["etq"] = etiqueta
+                self._guardar(d)
+
     def quitar_cuenta(self, token):
         with self.lock:
             d = self._leer()

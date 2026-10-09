@@ -50,6 +50,12 @@ class VpsFalsa:
                 self.us[tok]["bloq"] = True
                 return "OK\n"
             return "NO\n"
+        if "usermod -c" in c:
+            tok = self._tokens(c)[0]
+            if tok not in self.us:
+                return "NO\n"
+            self.us[tok]["nombre"] = shlex.split(shlex.split(c)[2].split("&&")[0])[2][5:]
+            return "OK\n"
         if "usermod -U" in c:
             tok = self._tokens(c)[0]
             if tok in self.us:
@@ -68,7 +74,8 @@ class VpsFalsa:
             out = ""
             for t in lista:
                 u = self.us.get(t)
-                out += f"{t} SI {u['vence'].isoformat()} {'L' if u['bloq'] else 'P'}\n" if u else f"{t} NO - -\n"
+                out += (f"{t} SI {u['vence'].isoformat()} {'L' if u['bloq'] else 'P'} {'C' if u.get('conectado') else '-'}\n"
+                        if u else f"{t} NO - - -\n")
             return out
         if "&& echo EXISTE || echo NO" in c:
             t = c.split("id ")[1].split()[0]
@@ -216,7 +223,7 @@ class TestCuentasVps(unittest.TestCase):
         cv.crear(self.M, "ABCD1234", "Ana", 7, hoy=date(2026, 10, 9), correr=f)
         cv.bloquear(self.M, "ABCD1234", True, correr=f)
         e = cv.estado(self.M, ["ABCD1234", "ZZZZ9999"], correr=f)
-        self.assertEqual(e["ABCD1234"], {"existe": True, "vence": date(2026, 10, 16), "bloqueado": True})
+        self.assertEqual(e["ABCD1234"], {"existe": True, "vence": date(2026, 10, 16), "bloqueado": True, "conectado": False})
         self.assertFalse(e["ZZZZ9999"]["existe"])
         cv.bloquear(self.M, "ABCD1234", False, correr=f)
         self.assertFalse(cv.estado(self.M, ["ABCD1234"], correr=f)["ABCD1234"]["bloqueado"])
@@ -245,6 +252,7 @@ class TestServicio(unittest.TestCase):
             bloquear = staticmethod(lambda m, *a, **k: cv.bloquear(m, *a, correr=self.f, **k))
             estado = staticmethod(lambda m, *a, **k: cv.estado(m, *a, correr=self.f, **k))
             datos = staticmethod(lambda m, *a, **k: cv.datos(m, *a, correr=self.f, **k))
+            renombrar = staticmethod(lambda m, *a, **k: cv.renombrar(m, *a, correr=self.f, **k))
         self.t = [1000.0]
         self.s = Servicio(self.r, lambda _id: self.M, Ops, hoy=lambda: date(2026, 10, 9), reloj=lambda: self.t[0])
         for t in ("bronce", "plata", "oro"):
@@ -343,6 +351,25 @@ class TestNombreYFecha(TestServicio):
         self.assertEqual(self.s.datos_cuenta("ABCD1234")[0], "Ana", "dentro de los 60 s sale lo guardado")
         self.t[0] += 61
         self.assertEqual(self.s.datos_cuenta("ABCD1234"), ("Ana Gómez", "2026-12-25"))
+
+    def test_renombrar_cambia_la_vps_y_lo_guardado(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.assertEqual(self.s.renombrar(self.a, "ABCD1234", "Ana: Gómez"), "Ana Gómez")
+        self.assertEqual(self.f.us["ABCD1234"]["nombre"], "Ana Gómez")
+        self.assertEqual(self.s.listar(self.a)[0]["nombre"], "Ana Gómez")
+        self.assertEqual(self.s.datos_cuenta("ABCD1234")[0], "Ana Gómez")
+
+    def test_no_renombra_usuarios_ajenos(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        with self.assertRaises(rv.ErrorRevendedor):
+            self.s.renombrar(self.b, "ABCD1234", "Otro")
+
+    def test_listar_marca_quien_esta_conectado(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.s.crear(self.a, "EFGH5678", "Beto", 7)
+        self.f.us["EFGH5678"]["conectado"] = True
+        con = {x["token"]: x["conectado"] for x in self.s.listar(self.a)}
+        self.assertEqual(con, {"ABCD1234": False, "EFGH5678": True})
 
     def test_nombre_editado_en_la_vps_sin_el_prefijo_hwid(self):
         self.s.crear(self.a, "ABCD1234", "Ssssss", 7)
