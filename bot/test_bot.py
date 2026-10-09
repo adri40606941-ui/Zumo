@@ -295,6 +295,15 @@ class Pruebas(unittest.TestCase):
         self.assertEqual(sv.desde_texto(sv.a_texto([s])), [s])
         self.assertEqual(sv.desde_texto("[X]\nhost = a.com , b.com\n")[0]["host"], "a.com,b.com")
 
+    def test_datos_cuenta_para_la_app(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = cargar_bot(tmp)
+            open(f"{tmp}/passwd", "w").write("b9da1a72f68f59b8:x:1001:1001:hwid,Adrián:/nonexistent:/bin/false\nroot:x:0:0:root:/root:/bin/bash\n")
+            open(f"{tmp}/usuarios.db", "w").write("b9da1a72f68f59b8:1:2026-11-09\n")
+            self.assertEqual(bot.datos_cuenta("b9da1a72f68f59b8"), ("Adrián", "2026-11-09"))
+            self.assertIsNone(bot.datos_cuenta("root"))
+            self.assertIsNone(bot.datos_cuenta("ffffffffffffffff"))
+
     def test_servidores_dns(self):
         import servidores as sv
         self.assertEqual(sv.normalizar_dns("Google"), "google")

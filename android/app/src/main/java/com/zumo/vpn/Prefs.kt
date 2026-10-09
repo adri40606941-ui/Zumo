@@ -29,6 +29,15 @@ class Prefs(ctx: Context) {
         get() = sp.getString("ultimo_servidor", "") ?: ""
         set(v) { sp.edit().putString("ultimo_servidor", v).apply() }
 
+    /** Nombre del cliente y vencimiento (AAAA-MM-DD) que dijo la VPS la última vez que se conectó. */
+    var cuentaNombre: String
+        get() = sp.getString("cuenta_nombre", "") ?: ""
+        set(v) { sp.edit().putString("cuenta_nombre", v).apply() }
+
+    var cuentaVence: String
+        get() = sp.getString("cuenta_vence", "") ?: ""
+        set(v) { sp.edit().putString("cuenta_vence", v).apply() }
+
     /** Vencimiento de la cuenta (AAAA-MM-DD), o vacío. */
     var exp: String
         get() = sp.getString("exp", "") ?: ""

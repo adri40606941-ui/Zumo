@@ -14,6 +14,7 @@ import re
 import shutil
 import ssl
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -78,7 +79,22 @@ curl -fsSL "$ZUMO_BASE/$S" | bash
 """
 
 
-def _handler(directorio, repo=None, accesos=None, dominio=""):
+TOKEN_RE = re.compile(r"^[A-Za-z0-9]{8,32}$")
+MAX_CUENTA_POR_MIN = 30          # consultas de /cuenta por IP y por minuto
+
+
+def _handler(directorio, repo=None, accesos=None, dominio="", cuenta=None, reloj=time.time):
+    pedidos = {}                 # ip -> [momentos] de las consultas de /cuenta del último minuto
+
+    def _frenado(ip):
+        ahora = reloj()
+        v = [t for t in pedidos.get(ip, []) if ahora - t < 60]
+        v.append(ahora)
+        pedidos[ip] = v
+        if len(pedidos) > 5000:
+            pedidos.clear()
+        return len(v) > MAX_CUENTA_POR_MIN
+
     class H(BaseHTTPRequestHandler):
         server_version = "zumo"
         sys_version = ""
@@ -107,6 +123,17 @@ def _handler(directorio, repo=None, accesos=None, dominio=""):
                 archivo = os.path.join(directorio, nombre)
                 if nombre.endswith(".apk"):
                     adjunto = f'attachment; filename="{nombre}"'
+            elif ruta == "/cuenta" and cuenta:
+                # La app, ya conectada, pregunta con su token cómo se llama el cliente y cuándo vence.
+                if _frenado(self._ip()):
+                    return self._texto(429)
+                t = urllib.parse.parse_qs(consulta).get("t", [""])[0]
+                datos = cuenta(t) if TOKEN_RE.match(t) else None
+                if not datos:
+                    return self._texto(404)
+                nombre, vence = datos
+                nombre = re.sub(r"[\r\n]+", " ", nombre or "").strip()
+                return self._texto(200, f"{nombre}\n{vence or ''}\n".encode("utf-8"), con_cuerpo=con_cuerpo)
             elif ruta == "/i" and dominio and accesos:
                 return self._texto(200, (CARGADOR % {"dominio": dominio}).encode(), con_cuerpo=con_cuerpo)
             elif ruta == "/canje" and accesos:
@@ -153,10 +180,10 @@ def _handler(directorio, repo=None, accesos=None, dominio=""):
     return H
 
 
-def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=None, accesos=None, dominio=""):
+def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=None, accesos=None, dominio="", cuenta=None):
     """Abre un puerto en un hilo. Devuelve el servidor, o None si no se pudo abrir (nunca lanza)."""
     try:
-        s = ThreadingHTTPServer((host, puerto), _handler(directorio or DIR, repo, accesos, dominio))
+        s = ThreadingHTTPServer((host, puerto), _handler(directorio or DIR, repo, accesos, dominio, cuenta))
         s.daemon_threads = True
         if cert:
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -169,9 +196,9 @@ def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=
         return None
 
 
-def iniciar(directorio=None, http=80, https=443, accesos=None, dominio=""):
+def iniciar(directorio=None, http=80, https=443, accesos=None, dominio="", cuenta=None):
     """Arranca los puertos que se puedan. Devuelve la lista de servidores abiertos."""
-    extra = dict(accesos=accesos, dominio=dominio)
+    extra = dict(accesos=accesos, dominio=dominio, cuenta=cuenta)
     abiertos = [servir(http, directorio, **extra)]
     if os.path.isfile(CERT) and os.path.isfile(CLAVE):
         abiertos.append(servir(https, directorio, CERT, CLAVE, **extra))
