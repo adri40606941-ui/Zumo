@@ -607,26 +607,47 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
         self.mostrar(chat, mid, txt, botones)
 
     def pantalla_app(self, chat, mid, aviso=""):
+        """Inicio de la app Android: tres lugares (servidores, apariencia, compilar)."""
+        n = len(cargar_app())
+        txt = ((aviso + "\n\n") if aviso else "") + (
+            "📱 App Android\n\n"
+            f"📡 Servidores: {n}\n"
+            f"🎨 Apariencia: {'personalizada' if tema_guardado() else 'la de siempre'}")
+        self.mostrar(chat, mid, txt, [
+            [(f"📡 Servidores ({n})", "asv")],
+            [("🎨 Apariencia de la app", "t")],
+            [("🔨 Compilar la app", "acx")],
+            [("◂ Menú", "menu")]])
+
+    def pantalla_app_servidores(self, chat, mid, aviso=""):
+        """Los servidores de la app: se ven todos, se agregan, se pegan en lista y se publican para el botón ↻."""
         l = cargar_app()
         filas = "\n".join(f"{i + 1}. {s['name']} · {s['host']}:{s['port']}{' · TLS' if s.get('tls') else ''}"
                           f"{'' if s.get('payload') else ' · directo'}" for i, s in enumerate(l))
-        txt = (aviso + "\n\n" if aviso else "") + "📱 App Android\n" + (
-            f"Servidores en la app ({len(l)}):\n{filas}" if l else
+        txt = (aviso + "\n\n" if aviso else "") + "📡 Servidores de la app\n" + (
+            f"{len(l)} en la lista:\n{filas}" if l else
             "Todavía no cargaste servidores en el bot.\nAl compilar sin servidores, la app usa lo que ya haya en el secreto ZUMO_SERVIDORES del repo.")
         botones = [[(f"{i + 1}. {s['name']}", f"a:{i}")] for i, s in enumerate(l)]
         botones += [[("➕ Agregar servidor", "aadd"), ("📥 Pegar lista", "apegar")],
                     [("📡 Actualizar servidores en la app (↻)", "apub")],
-                    [("🎨 Apariencia de la app", "t")],
-                    [(self.etiqueta_compilar(), "acomp")],
-                    [("🖥 Compilar en la VPS y enviarme el APK", "acompv")],
-                    [("🔑 Asegurar clave de firma", "aclave")],
-                    [("◂ Menú", "menu")]]
+                    [("◂ App Android", "app")]]
         self.mostrar(chat, mid, txt, botones)
+
+    def pantalla_app_compilar(self, chat, mid):
+        """Todas las formas de compilar la app, juntas."""
+        txt = ("🔨 Compilar la app\n\n"
+               "Elegí dónde compilar. La lista de servidores y la apariencia se suben antes de empezar.\n\n"
+               "Si solo cambiaste servidores, payload o DNS, no hace falta compilar: usá 📡 Servidores → Actualizar (↻).")
+        self.mostrar(chat, mid, txt, [
+            [(self.etiqueta_compilar(), "acomp")],
+            [("🖥 Compilar en la VPS y enviarme el APK", "acompv")],
+            [("🔑 Asegurar clave de firma", "aclave")],
+            [("◂ App Android", "app")]])
 
     def pantalla_app_servidor(self, chat, mid, i):
         l = cargar_app()
         if not 0 <= i < len(l):
-            return self.pantalla_app(chat, mid, "Ese servidor ya no está.")
+            return self.pantalla_app_servidores(chat, mid, "Ese servidor ya no está.")
         s = l[i]
         txt = (f"📡 {s['name']}\nHost: {s['host'].replace(',', ', ')}\nPuerto: {s['port']}\n"
                f"TLS: {'sí' if s.get('tls') else 'no'}{' · SNI ' + s['sni'] if s.get('sni') else ''}\n"
@@ -638,7 +659,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
             [(f"🔒 TLS: {'sí' if s.get('tls') else 'no'} (cambiar)", f"at:{i}"), ("SNI", f"as:{i}")],
             [("🌐 DNS de este servidor", f"ad:{i}")],
             [("🗑 Borrar", f"ab:{i}")],
-            [("◂ App Android", "app")]])
+            [("◂ Servidores", "asv")]])
 
     def pedir(self, chat, texto, paso, **datos):
         self.estado[chat] = {"paso": paso, **datos}
@@ -758,7 +779,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
             return self.pantalla_lista(chat, mid, 0)
         if acc == "t":
             return self.boton_tema(chat, mid, arg)
-        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "acompv", "acompv_si", "asinc", "asubir", "apub", "apub_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs", "asp", "aqp", "ad", "adg", "adc", "ada", "adm"):
+        if acc in ("app", "asv", "acx", "a", "aadd", "apegar", "acomp", "acomp_si", "acompv", "acompv_si", "asinc", "asubir", "apub", "apub_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs", "asp", "aqp", "ad", "adg", "adc", "ada", "adm"):
             return self.boton_app(chat, mid, acc, arg)
         return self.menu(chat, mid)      # botón de una versión anterior del bot
 
@@ -766,13 +787,17 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
         e = self.estado.pop(chat, None)
         if acc == "asp":      # servidor nuevo sin payload: se conecta directo por IP y puerto
             if not e or e.get("paso") != "a_payload_nuevo":
-                return self.pantalla_app(chat, mid)
+                return self.pantalla_app_servidores(chat, mid)
             l = cargar_app()
             l.append(srv.nuevo(e["nombre"], e["host"], e["port"], ""))
             guardar_app(l)
             return self.pantalla_app_servidor(chat, None, len(l) - 1)
         if acc == "app":
             return self.pantalla_app(chat, mid)
+        if acc == "asv":
+            return self.pantalla_app_servidores(chat, mid)
+        if acc == "acx":
+            return self.pantalla_app_compilar(chat, mid)
         if acc == "aadd":
             return self.pedir(chat, "➕ Nuevo servidor de la app\n\nEscribí el nombre que va a ver el cliente (ej: APP 02):", "a_nombre")
         if acc == "apegar":
@@ -781,14 +806,14 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
                                     "⚠️ Reemplaza TODA la lista que tiene el bot ahora.", "a_pegar")
         if acc == "acomp":
             if not self.gh:
-                return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env. Corré de nuevo el instalador del bot para cargarlo.", [[("◂ App Android", "app")]])
+                return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env. Corré de nuevo el instalador del bot para cargarlo.", [[("◂ App Android", "acx")]])
             n = len(cargar_app())
             donde = f"{self.gh.repo} (rama {self.gh.rama})"
             return self.mostrar(chat, mid, f"🔨 Compilar la app en GitHub\nRepo: {donde}\n"
                                 f"{n} servidor(es) de la lista del bot se suben al secreto antes de compilar."
                                 f"{'' if n else ' (Lista vacía: no se toca el secreto.)'}\n"
                                 f"{'La apariencia que armaste también se sube.' + chr(10) if tema_guardado() else ''}Tarda unos minutos. ¿Compilo?",
-                                [[("✅ Compilar en GitHub", "acomp_si"), ("✖ No", "app")]])
+                                [[("✅ Compilar en GitHub", "acomp_si"), ("✖ No", "acx")]])
         if acc == "acomp_si":
             return self.compilar_app(chat)
         if acc == "acompv":
@@ -801,29 +826,29 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
             return self.subir_ahora(chat, mid)
         if acc == "apub":
             if not self.gh_pub:
-                return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "app")]])
+                return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ Servidores", "asv")]])
             n = len(cargar_app())
             return self.mostrar(chat, mid, "📡 Actualizar servidores en la app\n\n"
                                 f"Publica los {n} servidor(es) de la lista para que la app los baje con el botón ↻, "
                                 "sin recompilar ni reinstalar. Tarda menos de un minuto. Los clientes tocan ↻ y los tienen.\n\n"
                                 "Sirve para cambios de host, puerto o payload. Para cambiar la apariencia o el ícono, hay que compilar.",
-                                [[("✅ Publicar ahora", "apub_si"), ("✖ No", "app")]])
+                                [[("✅ Publicar ahora", "apub_si"), ("✖ No", "asv")]])
         if acc == "apub_si":
             return self.publicar_servidores(chat)
         if acc == "aclave":
             if not self.gh:
-                return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "app")]])
+                return self.mostrar(chat, mid, "⚠️ Falta GITHUB_TOKEN en /etc/zumo/bot.env.", [[("◂ App Android", "acx")]])
             return self.mostrar(chat, mid, "🔑 Asegurar la clave de firma\n\nHoy la clave con la que se firma la app vive en un caché de GitHub que se borra si pasan 7 días sin compilar; "
                                 "si se pierde, los clientes no podrían actualizar la app encima de la anterior.\n\n"
                                 "Esto hace una compilación, saca la clave actual cifrada, la guarda como secreto fijo del repo y borra el rastro. "
                                 "La app no cambia: sigue firmada con la misma clave. Se hace una sola vez.",
-                                [[("✅ Hacerlo ahora", "aclave_si"), ("✖ No", "app")]])
+                                [[("✅ Hacerlo ahora", "aclave_si"), ("✖ No", "acx")]])
         if acc == "aclave_si":
             return self.compilar_app(chat, asegurar=True)
         i = int(arg) if arg.isdigit() else -1
         l = cargar_app()
         if not 0 <= i < len(l):
-            return self.pantalla_app(chat, mid, "Ese servidor ya no está.")
+            return self.pantalla_app_servidores(chat, mid, "Ese servidor ya no está.")
         s = l[i]
         if acc == "a":
             return self.pantalla_app_servidor(chat, mid, i)
@@ -867,7 +892,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
         if acc == "abs":
             nombre = l.pop(i)["name"]
             guardar_app(l)
-            return self.pantalla_app(chat, mid, f"🗑 {nombre} borrado. Compilá para que se vaya de la app.")
+            return self.pantalla_app_servidores(chat, mid, f"🗑 {nombre} borrado. Actualizá o compilá para que se vaya de la app.")
 
     # -- texto escrito
     def texto_libre(self, chat, t):
@@ -996,7 +1021,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
             guardar_app(nueva)
             self.estado.pop(chat, None)
             self.borrar_entrada(chat, e)
-            return self.pantalla_app(chat, None, f"✅ Lista cargada: {len(nueva)} servidor(es).")
+            return self.pantalla_app_servidores(chat, None, f"✅ Lista cargada: {len(nueva)} servidor(es).")
         return self.menu(chat)
 
     # -- compilar
@@ -1074,7 +1099,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
         if falta:
             return self.mostrar(chat, mid, txt + "Todavía no está listo en esta VPS. Falta: " + ", ".join(falta) + ".\n"
                                 f"Se instala una sola vez, por SSH:\nbash {compilar_vps.INSTALADOR}",
-                                [[("🔄 Revisar de nuevo", "acompv")], [("◂ App Android", "app")]])
+                                [[("🔄 Revisar de nuevo", "acompv")], [("◂ Compilar", "acx")]])
         n = len(cargar_app())
         txt += (f"Copia del repo: {compilar_vps.commit_info()}\n"
                 f"Servidores: {n} de la lista del bot{'' if n else ' (lista vacía: usa la del repo)'}\n"
@@ -1082,12 +1107,12 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
         if not centro.respaldo.clave_firma():
             return self.mostrar(chat, mid, txt + "\n⚠️ Falta la clave de firma en esta VPS. Sin ella el APK saldría con otra firma "
                                 "y los clientes no podrían instalarlo encima del anterior. Traela de GitHub (una sola vez).",
-                                [[("☁️ Traer la clave de GitHub", "ktraer")], [("◂ App Android", "app")]])
+                                [[("☁️ Traer la clave de GitHub", "ktraer")], [("◂ Compilar", "acx")]])
         self.mostrar(chat, mid, txt + "Firma: la clave de este servidor.\n\n"
                      "Antes de compilar baja los cambios de GitHub; si GitHub no responde, usa la copia de la VPS. "
                      "La primera vez tarda más (baja las dependencias). ¿Compilo?",
                      [[("✅ Compilar en la VPS", "acompv_si")], [("🔄 Sincronizar con GitHub", "asinc"), ("⬆️ Subir cambios a GitHub", "asubir")],
-                      [("✖ No", "app")]])
+                      [("✖ No", "acx")]])
 
     def sincronizar_ahora(self, chat, mid):
         def trabajo():
