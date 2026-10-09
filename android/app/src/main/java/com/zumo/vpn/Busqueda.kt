@@ -17,6 +17,7 @@ class Busqueda(candidatos: List<Config>) {
     private var pos = 0
     private val caidos = HashSet<String>()      // servidores (por nombre) que no respondieron en esta vuelta
     private val rechazados = HashSet<String>()  // servidores que respondieron pero no conocen el token
+    private var rondasConRechazo = 0            // vueltas completas en las que algún servidor dijo "no conozco ese token"
 
     init { require(candidatos.isNotEmpty()) }
 
@@ -27,7 +28,7 @@ class Busqueda(candidatos: List<Config>) {
     fun exito() {
         val c = orden[pos]
         orden = listOf(c) + orden.filter { it !== c }
-        pos = 0; caidos.clear(); rechazados.clear()
+        pos = 0; caidos.clear(); rechazados.clear(); rondasConRechazo = 0
     }
 
     /**
@@ -44,11 +45,13 @@ class Busqueda(candidatos: List<Config>) {
         // se terminó la vuelta
         val algunoCaido = caidos.any { it !in rechazados }
         val servidores = orden.map { it.name }.distinct().size
+        if (rechazados.isNotEmpty()) rondasConRechazo++
+        // Si en dos vueltas seguidas los servidores que contestan no conocen el token, se deja de insistir aunque
+        // alguno esté caído (si no, la app quedaría "Conectando…" para siempre con un token que no existe).
+        val definitivo = !algunoCaido || rondasConRechazo >= 2
         pos = 0; caidos.clear(); rechazados.clear()
-        return when {
-            algunoCaido -> Paso.REINTENTAR
-            servidores == 1 -> Paso.RECHAZADO
-            else -> Paso.NINGUNO
-        }
+        if (!definitivo) return Paso.REINTENTAR
+        rondasConRechazo = 0
+        return if (servidores == 1) Paso.RECHAZADO else Paso.NINGUNO
     }
 }

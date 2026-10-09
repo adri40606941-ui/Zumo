@@ -364,7 +364,7 @@ class ZumoVpnService : VpnService() {
                 if (!rechazado) { ultimoError = mensaje(e); Registro.add("✘ $ultimoError") }
                 when (busq.fallo(rechazado)) {
                     Busqueda.Paso.RECHAZADO -> { detenerPorError("Usuario o contraseña incorrectos. Pedí tu cuenta de nuevo."); return }
-                    Busqueda.Paso.NINGUNO -> { detenerPorError("Tu token todavía no está activo. Pedí que lo activen y volvé a intentar."); return }
+                    Busqueda.Paso.NINGUNO -> { detenerPorError("Error de usuario: tu token no está activo en ningún servidor. Pedí que lo activen y volvé a intentar."); return }
                     Busqueda.Paso.SIGUIENTE -> { siguienteYa = true; Registro.add("Probando otro servidor…") }
                     Busqueda.Paso.REINTENTAR -> {}
                 }
