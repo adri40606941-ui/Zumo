@@ -282,11 +282,24 @@ class Pruebas(unittest.TestCase):
         self.assertNotIn("\n", s["payload"])
         self.assertEqual(len(sv.desde_texto(sv.a_texto([s]))), 1)
 
+    def test_servidores_varios_hosts(self):
+        import servidores as sv
+        self.assertEqual(sv.normalizar_hosts("a.com, b.com:443  1.2.3.4;https://c.com/x"), ("a.com,b.com,1.2.3.4,c.com", 443))
+        self.assertEqual(sv.normalizar_hosts("a.com a.com"), ("a.com", None))
+        self.assertEqual(sv.normalizar_hosts("a.com:x"), (None, None))
+        self.assertEqual(sv.normalizar_hosts("   "), (None, None))
+        self.assertEqual(sv.normalizar_hosts(",".join(f"h{i}.com" for i in range(9))), (None, None))
+        s = sv.nuevo("Multi", "a.com, 1.2.3.4", 80, "")
+        self.assertEqual(s["host"], "a.com,1.2.3.4")
+        self.assertIn("host = a.com,1.2.3.4\n", sv.a_texto([s]))
+        self.assertEqual(sv.desde_texto(sv.a_texto([s])), [s])
+        self.assertEqual(sv.desde_texto("[X]\nhost = a.com , b.com\n")[0]["host"], "a.com,b.com")
+
     def test_app_agregar_y_cambiar_payload(self):
         with tempfile.TemporaryDirectory() as tmp:
             bot, tg, b, txt, btn = self.armar(tmp)
             btn("app"); self.assertIn("aadd", tg.datos_botones())
-            btn("aadd"); txt("APP 02"); txt("mal host con espacio"); self.assertIn("inválido", tg.mensajes[-1])
+            btn("aadd"); txt("APP 02"); txt("host:abc"); self.assertIn("inválido", tg.mensajes[-1])
             txt("vps.ejemplo.com:8080"); txt("GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]")
             self.assertEqual(bot.cargar_app(), [{"name": "APP 02", "host": "vps.ejemplo.com", "port": 8080,
                                                   "payload": "GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]", "tls": False, "sni": ""}])

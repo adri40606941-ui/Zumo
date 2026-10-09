@@ -12,17 +12,27 @@ data class Config(
     val tls: Boolean = false,       // envolver la conexión en TLS (puerto 443)
     val sni: String = "",           // SNI para TLS (vacío = el host)
 ) {
-    fun valida(): Boolean = host.isNotBlank() && sshPort in 1..65535
+    fun valida(): Boolean = hosts().isNotEmpty() && sshPort in 1..65535
+
+    /** Los dominios o IP de este servidor (se pueden poner varios, separados por coma, espacio o punto y coma). */
+    fun hosts(): List<String> = host.split(',', ';', ' ', '\t', '\n', '\r').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
+    /** Esta misma configuración pero con un solo host (el que se va a usar para conectar). */
+    fun con(h: String): Config = copy(host = h)
 
     /** Limpia lo que el usuario pegó: "http://", "/", espacios y "dominio:puerto". */
     fun limpiar(): Config {
-        var h = host.trim().removePrefix("https://").removePrefix("http://").substringBefore("/").trim()
         var p = sshPort
-        if (h.count { it == ':' } == 1) {
-            val (a, b) = h.split(":")
-            b.toIntOrNull()?.let { p = it; h = a }
-        }
-        return copy(host = h, sshPort = p)
+        var puertoTomado = false
+        val limpios = hosts().map { crudo ->
+            var h = crudo.removePrefix("https://").removePrefix("http://").substringBefore("/").trim()
+            if (h.count { it == ':' } == 1) {
+                val (a, b) = h.split(":")
+                b.toIntOrNull()?.let { if (!puertoTomado) { p = it; puertoTomado = true }; h = a }
+            }
+            h
+        }.filter { it.isNotEmpty() }.distinct()
+        return copy(host = limpios.joinToString(","), sshPort = p)
     }
 
     fun toJson(): JSONObject = JSONObject()

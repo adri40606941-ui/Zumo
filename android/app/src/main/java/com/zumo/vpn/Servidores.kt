@@ -82,8 +82,11 @@ object Servidores {
     fun candidatos(lista: List<Config>, ultimo: String, guardada: Config?): List<Config> {
         if (lista.isEmpty()) return listOfNotNull(guardada?.takeIf { it.valida() })
         val validos = lista.filter { it.valida() }
-        val primero = validos.firstOrNull { it.name == ultimo } ?: return validos
-        return listOf(primero) + validos.filter { it !== primero }
+        // un servidor con varios hosts son varios candidatos con el mismo nombre, uno por host
+        val expandidos = validos.flatMap { c -> c.hosts().map { c.con(it) } }
+        val primeros = expandidos.filter { it.name == ultimo }
+        if (primeros.isEmpty()) return expandidos
+        return primeros + expandidos.filter { it.name != ultimo }
     }
 
     fun buscar(ctx: Context, nombre: String): Config? =
