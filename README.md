@@ -314,3 +314,7 @@ PDirect (puerto 80) queda **igual**. PDirect v2 es un servicio aparte (`pdirect2
 - `zumo-actualizar` lo recompila solo si cambió el código y no lo reinicia si no hay cambios.
 - Para Cloudflare: el dominio en tu zona con la nube naranja, el payload con `Upgrade: websocket` y el puerto de v2.
 - Probarlo: `bash tests/prueba-pdirect2.sh` (necesita `libevent-dev`).
+
+## Puertos extra (camuflaje)
+
+Panel → Protocolos → **Puertos extra (camuflaje)**. Elegís el puerto de fachada (el que pone el cliente: 8080, 2052, 443…) y el puerto real al que va (80 = PDirect, o el de PDirect v2). La VPS lo redirige por dentro (iptables, regla que se reaplica al reiniciar); la IP del cliente no cambia, así que el limitador sigue contando bien. El panel muestra "Camuflado 8080→80" en los puertos activos. Para usarlo con Cloudflare el destino tiene que ser un PDirect que conteste el WebSocket estándar (v2). Prueba: `bash tests/prueba-puertos-extra.sh`.
