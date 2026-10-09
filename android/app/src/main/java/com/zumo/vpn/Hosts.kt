@@ -30,20 +30,31 @@ object Hosts {
         return orden + hosts.filter { it !in orden }
     }
 
-    /** Reordena los candidatos: dentro de cada servidor con varios hosts, el más rápido primero. El orden entre servidores no cambia. */
-    fun ordenarCandidatos(cands: List<Config>, sondear: (Config) -> Boolean): List<Config> {
-        val nombres = cands.map { it.name }.distinct()
-        return nombres.flatMap { n ->
-            val g = cands.filter { it.name == n }
-            if (g.size < 2) g else {
-                val porHost = g.associateBy { it.host }
-                ordenar(g.map { it.host }) { h -> sondear(porHost.getValue(h)) }.map { porHost.getValue(it) }
-            }
-        }
+    /** Tiempo de conexión que se le da a un host que ya no contestó al sondeo (si volvió, igual entra). */
+    const val TIMEOUT_CAIDO = 5000
+
+    /**
+     * Sondea TODOS los candidatos a la vez (un TCP a cada host, sin iniciar sesión) y los ordena: primero el último
+     * servidor donde se entró (si contesta), después los que contestan, por rapidez; al final los que no
+     * contestaron, con poco tiempo de espera. Así la búsqueda del token no pierde tiempo en servidores caídos.
+     * Espera como máximo [esperaMs] en total, sin importar cuántos servidores haya.
+     */
+    fun ordenarTodos(cands: List<Config>, ultimo: String, esperaMs: Long = 3500, sondear: (Config) -> Boolean): List<Config> {
+        if (cands.size < 2) return cands
+        val vivos = CopyOnWriteArrayList<Config>()
+        val pendientes = CountDownLatch(cands.size)
+        for (c in cands) Thread({
+            try { if (sondear(c)) vivos.add(c) } catch (_: Exception) {} finally { pendientes.countDown() }
+        }, "zumo-sonda").also { it.isDaemon = true }.start()
+        pendientes.await(esperaMs, TimeUnit.MILLISECONDS)
+        val vivosAhora = vivos.toList()
+        val muertos = cands.filter { c -> vivosAhora.none { it === c } }.map { it.copy(conTimeout = TIMEOUT_CAIDO) }
+        val primeros = vivosAhora.filter { it.name == ultimo }
+        return primeros + vivosAhora.filter { it.name != ultimo } + muertos
     }
 
     /** Un TCP al host (ya sacado de la VPN con [proteger]); true si conectó. */
     fun sondeoTcp(c: Config, proteger: (Socket) -> Unit): Boolean = try {
-        Socket().use { s -> proteger(s); s.connect(InetSocketAddress(c.host, c.sshPort), 3500); true }
+        Socket().use { s -> proteger(s); s.connect(InetSocketAddress(c.host, c.sshPort), 3000); true }
     } catch (_: Exception) { false }
 }

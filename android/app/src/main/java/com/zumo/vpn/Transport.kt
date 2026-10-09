@@ -79,7 +79,7 @@ object Transport {
         proteger(s)
         s.tcpNoDelay = true
         s.keepAlive = true
-        s.connect(InetSocketAddress(c.host, c.sshPort), 15000)
+        s.connect(InetSocketAddress(c.host, c.sshPort), c.conTimeout)
         if (c.tls) {
             etapa("Estableciendo canal seguro")
             val sniName = c.sni.ifBlank { c.host }

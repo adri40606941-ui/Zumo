@@ -11,6 +11,7 @@ data class Config(
     val payload: String = "",       // payload HTTP opcional (comodines: [host] [port] [host_port] [crlf] [lf] [split]...)
     val tls: Boolean = false,       // envolver la conexión en TLS (puerto 443)
     val sni: String = "",           // SNI para TLS (vacío = el host)
+    val conTimeout: Int = 15000,    // tiempo máximo para conectar el TCP; no se guarda (la app lo baja para hosts que ya no contestaron)
 ) {
     fun valida(): Boolean = hosts().isNotEmpty() && sshPort in 1..65535
 
