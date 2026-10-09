@@ -90,4 +90,23 @@ class HostsTest {
         assertEquals("a.com", b.actual().host)
         assertEquals(Paso.RECHAZADO, b.fallo(true))
     }
+
+    @Test
+    fun token_inexistente_con_un_host_caido_se_frena_a_la_segunda_vuelta() {
+        // S1 rechaza, S2 nunca responde (caído): antes quedaba reintentando para siempre
+        val b = Busqueda(listOf(Config(name = "S1", host = "a.com", sshPort = 80), Config(name = "S2", host = "b.com", sshPort = 80)))
+        assertEquals(Paso.SIGUIENTE, b.fallo(true))
+        assertEquals(Paso.REINTENTAR, b.fallo(false))      // primera vuelta: puede ser que el token esté en el caído
+        assertEquals(Paso.SIGUIENTE, b.fallo(true))
+        assertEquals(Paso.NINGUNO, b.fallo(false))         // segunda vuelta igual: se frena
+    }
+
+    @Test
+    fun si_nadie_responde_nunca_se_dice_que_el_token_no_sirve() {
+        val b = Busqueda(listOf(Config(name = "S1", host = "a.com", sshPort = 80), Config(name = "S2", host = "b.com", sshPort = 80)))
+        repeat(5) {
+            assertEquals(Paso.SIGUIENTE, b.fallo(false))
+            assertEquals(Paso.REINTENTAR, b.fallo(false))
+        }
+    }
 }
