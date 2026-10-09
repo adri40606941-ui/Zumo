@@ -54,10 +54,26 @@ class HostsTest {
     }
 
     @Test
-    fun ordenarCandidatos_solo_reordena_dentro_de_cada_servidor() {
-        val l = listOf(multi("a.com,b.com"), Config(name = "S2", host = "s2.com", sshPort = 80)).flatMap { c -> c.hosts().map { c.con(it) } }
-        val r = Hosts.ordenarCandidatos(l) { it.host == "b.com" || it.host == "s2.com" }
-        assertEquals(listOf("b.com", "a.com", "s2.com"), r.map { it.host })
+    fun ordenarTodos_pone_primero_al_ultimo_despues_los_rapidos_y_al_final_los_caidos() {
+        val l = listOf("S1", "S2", "S3", "S4").map { Config(name = it, host = "${it.lowercase()}.com", sshPort = 80) }
+        val tiempo = mapOf("S1" to 400L, "S2" to 50L, "S3" to 0L)
+        val r = Hosts.ordenarTodos(l, ultimo = "S1", esperaMs = 3000) { c ->
+            if (c.name == "S4") false else { Thread.sleep(tiempo.getValue(c.name)); true }
+        }
+        // el último que anduvo (S1) primero, luego por rapidez (S3 antes que S2), y el caído (S4) al final con poco tiempo
+        assertEquals(listOf("S1", "S3", "S2", "S4"), r.map { it.name })
+        assertEquals(Hosts.TIMEOUT_CAIDO, r.last().conTimeout)
+        assertEquals(15000, r.first().conTimeout)
+    }
+
+    @Test
+    fun ordenarTodos_no_espera_mas_del_limite_si_alguno_se_cuelga() {
+        val l = listOf("S1", "S2", "S3").map { Config(name = it, host = "${it.lowercase()}.com", sshPort = 80) }
+        val t0 = System.currentTimeMillis()
+        val r = Hosts.ordenarTodos(l, ultimo = "", esperaMs = 600) { c -> if (c.name == "S2") { Thread.sleep(5000); true } else true }
+        assertTrue(System.currentTimeMillis() - t0 < 2500)
+        assertEquals("S2", r.last().name)                 // el que no contestó a tiempo va al final
+        assertEquals(setOf("S1", "S3"), r.take(2).map { it.name }.toSet())
     }
 
     @Test

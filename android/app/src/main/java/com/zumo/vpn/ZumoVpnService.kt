@@ -329,7 +329,7 @@ class ZumoVpnService : VpnService() {
     private fun bucle(candidatos: List<Config>, user: String, pass: String) {
         var espera = 2000L
         val ordenados = try {
-            Hosts.ordenarCandidatos(candidatos) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } }
+            Hosts.ordenarTodos(candidatos, Prefs(this).ultimoServidor) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } }
         } catch (e: Exception) { candidatos }       // si algo falla al ordenar, se usa el orden de la lista
         val busq = Busqueda(ordenados)
         var siguienteYa = false
