@@ -76,8 +76,16 @@ class TestAcceso(Base):
 
     def test_cookie_segura(self):
         _, cab, _ = self.pedir("POST", "/r/entrar", {"usuario": "juan", "clave": "secreto1"})
-        for parte in ("HttpOnly", "Secure", "SameSite=Strict", "Path=/r"):
+        for parte in ("HttpOnly", "Secure", "SameSite=Lax", "Path=/r"):
             self.assertIn(parte, cab["Set-Cookie"])
+
+    def test_encabezados_en_minuscula_tambien_funcionan(self):
+        """Cloudflare o un proxy pueden mandar 'cookie' y 'host' en minúscula."""
+        c = self.entrar()
+        cod, _, cuerpo = self.p.manejar("GET", "/r", {"host": "bot.ejemplo.com", "cookie": "zr=" + c}, b"", "1.1.1.1", True)
+        self.assertIn("Tus monedas", cuerpo.decode())
+        cod, cab, _ = self.p.manejar("GET", "/r", {"host": "bot.ejemplo.com"}, b"", "1.1.1.1", False)
+        self.assertEqual(cab["Location"], "https://bot.ejemplo.com/r")
 
     def test_cabeceras_de_seguridad(self):
         c = self.entrar()

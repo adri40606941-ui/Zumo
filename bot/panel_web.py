@@ -4,7 +4,7 @@ Cada revendedor entra con el usuario y la contraseña que le creó el administra
 crear usuarios (token + nombre + 7/15/30 días), renovarlos, bloquearlos/desbloquearlos y eliminarlos. Crear y renovar
 gastan monedas (bronce 7 días, plata 15, oro 30); lo demás es gratis. Solo ve y toca los usuarios que él creó.
 
-Seguridad: sin JavaScript (CSP estricta), cookie de sesión HttpOnly + SameSite=Strict + Secure, token CSRF en cada
+Seguridad: sin JavaScript (CSP estricta), cookie de sesión HttpOnly + SameSite=Lax + Secure, token CSRF en cada
 formulario, contraseñas con scrypt, freno de intentos por IP y por usuario, y solo funciona por https (por http
 redirige). Se engancha al servidor web del bot (publico.py) con manejar().
 """
@@ -86,6 +86,9 @@ class PanelWeb:
         """(código, cabeceras, cuerpo en bytes). Solo para rutas que empiezan con /r."""
         if metodo not in ("GET", "HEAD", "POST"):
             return self._resp(405, "No permitido")
+        # Los nombres de los encabezados no distinguen mayúsculas: Cloudflare o un proxy pueden mandar "cookie" o
+        # "host" en minúscula, y con eso la sesión nunca se encontraba (el login volvía siempre en blanco).
+        cabeceras = {k.title(): v for k, v in cabeceras.items()}
         if not https:
             host = cabeceras.get("Host", "")
             if not HOST_RE.match(host):
@@ -114,7 +117,7 @@ class PanelWeb:
 
     # ------------------------------------------------------------------ sesión
     def _cookie(self, valor, vida):
-        return f"zr={valor}; Path={BASE}; HttpOnly; Secure; SameSite=Strict; Max-Age={vida}"
+        return f"zr={valor}; Path={BASE}; HttpOnly; Secure; SameSite=Lax; Max-Age={vida}"
 
     def _sesion(self, cabeceras, ahora):
         for parte in cabeceras.get("Cookie", "").split(";"):
