@@ -354,7 +354,7 @@ class TestNombreYFecha(TestServicio):
 
     def test_renombrar_cambia_la_vps_y_lo_guardado(self):
         self.s.crear(self.a, "ABCD1234", "Ana", 7)
-        self.assertEqual(self.s.renombrar(self.a, "ABCD1234", "Ana: Gómez"), "Ana Gómez")
+        self.assertEqual(self.s.renombrar(self.a, "ABCD1234", "Ana: Gómez")["nombre"], "Ana Gómez")
         self.assertEqual(self.f.us["ABCD1234"]["nombre"], "Ana Gómez")
         self.assertEqual(self.s.listar(self.a)[0]["nombre"], "Ana Gómez")
         self.assertEqual(self.s.datos_cuenta("ABCD1234")[0], "Ana Gómez")
@@ -416,3 +416,172 @@ class TestNombreYFecha(TestServicio):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVariasVps(unittest.TestCase):
+    """Un revendedor con dos VPS: todo se hace en las dos, y si una cae se sigue con la otra."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.r = rv.Revendedores(os.path.join(self.d, "r.json"))
+        self.a = self.r.crear("juan", "secreto1", "m1")["id"]
+        self.r.agregar_maquina(self.a, "m2")
+        self.m = {"m1": {"id": "m1", "nombre": "app01", "host": "1.1.1.1"}, "m2": {"id": "m2", "nombre": "app02", "host": "2.2.2.2"}}
+        self.f = {"m1": VpsFalsa(), "m2": VpsFalsa()}
+        corre = lambda m: self.f[m["id"]]
+
+        class Ops:
+            crear = staticmethod(lambda m, *a, **k: cv.crear(m, *a, correr=corre(m), **k))
+            renovar = staticmethod(lambda m, *a, **k: cv.renovar(m, *a, correr=corre(m), **k))
+            eliminar = staticmethod(lambda m, *a, **k: cv.eliminar(m, *a, correr=corre(m), **k))
+            bloquear = staticmethod(lambda m, *a, **k: cv.bloquear(m, *a, correr=corre(m), **k))
+            estado = staticmethod(lambda m, *a, **k: cv.estado(m, *a, correr=corre(m), **k))
+            datos = staticmethod(lambda m, *a, **k: cv.datos(m, *a, correr=corre(m), **k))
+            renombrar = staticmethod(lambda m, *a, **k: cv.renombrar(m, *a, correr=corre(m), **k))
+            fijar_vence = staticmethod(lambda m, *a, **k: cv.fijar_vence(m, *a, correr=corre(m), **k))
+        self.avisos = []
+        self.t = [1000.0]
+        self.s = Servicio(self.r, lambda i: self.m.get(i), Ops, hoy=lambda: date(2026, 10, 9), reloj=lambda: self.t[0],
+                          notificar=self.avisos.append)
+        for t in ("bronce", "plata", "oro"):
+            self.r.agregar_monedas(self.a, t, 3)
+
+    def test_crear_en_las_dos_y_avisar_al_admin(self):
+        res = self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.assertEqual(res["vps"], ["app01", "app02"])
+        self.assertIn("ABCD1234", self.f["m1"].us)
+        self.assertIn("ABCD1234", self.f["m2"].us)
+        self.assertEqual(self.r.cuentas_de(self.a)["ABCD1234"]["maq"], ["m1", "m2"])
+        self.assertEqual(self.r.buscar(self.a)["monedas"]["bronce"], 2, "gasta una sola moneda, no una por VPS")
+        self.assertEqual(len(self.avisos), 1)
+        self.assertIn("juan creó a Ana", self.avisos[0])
+        self.assertIn("app01, app02", self.avisos[0])
+        self.assertIn("ABCD1234", self.avisos[0])
+
+    def test_si_una_vps_cae_se_crea_en_la_otra_y_se_completa_despues(self):
+        self.f["m2"].caida = True
+        res = self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.assertEqual(res["vps"], ["app01"])
+        self.assertEqual(res["fallaron"], ["app02"])
+        self.assertIn("app02", self.avisos[0])
+        self.assertEqual(self.r.cuentas_de(self.a)["ABCD1234"]["maq"], ["m1"])
+        self.f["m2"].caida = False
+        hechos = self.s.reparar()
+        self.assertTrue(any("creado en app02" in h for h in hechos), hechos)
+        self.assertIn("ABCD1234", self.f["m2"].us)
+        self.assertEqual(self.f["m2"].us["ABCD1234"]["vence"], date(2026, 10, 16), "con el mismo vencimiento")
+        self.assertEqual(self.r.cuentas_de(self.a)["ABCD1234"]["maq"], ["m1", "m2"])
+        self.assertEqual(self.s.reparar(), [], "la segunda vez no hay nada que hacer")
+
+    def test_si_caen_las_dos_no_gasta_moneda(self):
+        self.f["m1"].caida = self.f["m2"].caida = True
+        with self.assertRaises(rv.ErrorRevendedor):
+            self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.assertEqual(self.r.buscar(self.a)["monedas"]["bronce"], 3)
+        self.assertIsNone(self.r.dueno("ABCD1234"))
+
+    def test_renovar_deja_las_dos_en_la_misma_fecha(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.f["m2"].us["ABCD1234"]["vence"] = date(2026, 10, 10)        # una quedó atrasada
+        res = self.s.renovar(self.a, "ABCD1234", 15)
+        self.assertEqual(res["vence"], date(2026, 10, 31))
+        self.assertEqual(self.f["m1"].us["ABCD1234"]["vence"], date(2026, 10, 31))
+        self.assertEqual(self.f["m2"].us["ABCD1234"]["vence"], date(2026, 10, 31))
+        self.assertEqual(self.r.buscar(self.a)["monedas"]["plata"], 2)
+
+    def test_renovar_con_una_caida_avisa_y_la_repara_despues(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.f["m2"].caida = True
+        res = self.s.renovar(self.a, "ABCD1234", 15)
+        self.assertEqual(res["fallaron"], ["app02"])
+        self.f["m2"].caida = False
+        hechos = self.s.reparar()
+        self.assertTrue(any("vencimiento igualado en app02" in h for h in hechos), hechos)
+        self.assertEqual(self.f["m2"].us["ABCD1234"]["vence"], res["vence"])
+
+    def test_bloquear_nombre_y_eliminar_en_todas(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.s.bloquear(self.a, "ABCD1234", True)
+        self.assertTrue(self.f["m1"].us["ABCD1234"]["bloq"] and self.f["m2"].us["ABCD1234"]["bloq"])
+        self.s.renombrar(self.a, "ABCD1234", "Ana Gómez")
+        self.assertEqual(self.f["m2"].us["ABCD1234"]["nombre"], "Ana Gómez")
+        self.s.eliminar(self.a, "ABCD1234")
+        self.assertEqual((self.f["m1"].us, self.f["m2"].us), ({}, {}))
+        self.assertIsNone(self.r.dueno("ABCD1234"))
+
+    def test_eliminar_con_una_caida_deja_pendiente_solo_esa(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.f["m2"].caida = True
+        with self.assertRaises(rv.ErrorRevendedor) as c:
+            self.s.eliminar(self.a, "ABCD1234")
+        self.assertIn("app02", str(c.exception))
+        self.assertNotIn("ABCD1234", self.f["m1"].us)
+        self.assertEqual(self.r.cuentas_de(self.a)["ABCD1234"]["maq"], ["m2"], "queda anotado solo donde falta borrar")
+        self.f["m2"].caida = False
+        self.s.eliminar(self.a, "ABCD1234")
+        self.assertIsNone(self.r.dueno("ABCD1234"))
+
+    def test_listar_junta_las_vps_conectado_en_cualquiera(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.f["m2"].us["ABCD1234"]["conectado"] = True
+        fila = self.s.listar(self.a)[0]
+        self.assertTrue(fila["conectado"])
+        self.assertEqual(fila["maquinas"], ["app01", "app02"])
+        self.assertFalse(fila["sin_datos"])
+
+    def test_listar_con_una_vps_caida_marca_sin_datos_pero_muestra_lo_de_la_otra(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.f["m2"].caida = True
+        fila = self.s.listar(self.a)[0]
+        self.assertTrue(fila["sin_datos"])
+        self.assertEqual(fila["vence"], date(2026, 10, 16))
+
+    def test_la_app_pregunta_en_la_otra_si_una_cae(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.f["m1"].caida = True
+        self.assertEqual(self.s.datos_cuenta("ABCD1234"), ("Ana", "2026-10-16"))
+
+    def test_vps_nueva_completa_los_usuarios_que_ya_tenia(self):
+        r2 = self.r.crear("luis", "secreto2", "m1")["id"]
+        for t in ("bronce",):
+            self.r.agregar_monedas(r2, t, 2)
+        self.s.crear(r2, "ZZZZ9999", "Zeta", 7)
+        self.assertNotIn("ZZZZ9999", self.f["m2"].us)
+        self.r.agregar_maquina(r2, "m2")
+        hechos = self.s.reparar()
+        self.assertTrue(any("Zeta: creado en app02" in h for h in hechos), hechos)
+        self.assertIn("ZZZZ9999", self.f["m2"].us)
+
+    def test_reparar_copia_el_bloqueo(self):
+        self.f["m2"].caida = True
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.s.bloquear(self.a, "ABCD1234", True)
+        self.f["m2"].caida = False
+        self.s.reparar()
+        self.assertTrue(self.f["m2"].us["ABCD1234"]["bloq"])
+
+    def test_aviso_cuando_se_queda_sin_monedas(self):
+        r = self.r.buscar(self.a)
+        self.r.agregar_monedas(self.a, "oro", -2)
+        self.s.crear(self.a, "ABCD1234", "Ana", 30)
+        self.assertTrue(any("se quedó sin monedas de oro" in a for a in self.avisos), self.avisos)
+
+    def test_migracion_de_un_revendedor_viejo_de_una_sola_vps(self):
+        import json
+        viejo = {"n": 1, "revendedores": {"1": {"id": "1", "usuario": "ana", "hash": "x", "maquina": "m1", "activo": True,
+                                                "creado": 1, "monedas": {"bronce": 1, "plata": 0, "oro": 0}}},
+                 "cuentas": {"TOK12345": {"rev": "1", "etq": "Cli", "creado": 5}}, "mov": []}
+        ruta = os.path.join(self.d, "viejo.json")
+        json.dump(viejo, open(ruta, "w"))
+        r = rv.Revendedores(ruta)
+        self.assertEqual(r.buscar("1")["maquinas"], ["m1"])
+        self.assertEqual(r.cuentas_de("1")["TOK12345"]["maq"], ["m1"])
+        self.assertEqual(r.cuentas_de_token("TOK12345")["maquinas"], ["m1"])
+
+    def test_agregar_y_quitar_maquina_reglas(self):
+        with self.assertRaises(rv.ErrorRevendedor):
+            self.r.agregar_maquina(self.a, "m2")            # ya la tiene
+        self.r.quitar_maquina(self.a, "m1")
+        with self.assertRaises(rv.ErrorRevendedor):
+            self.r.quitar_maquina(self.a, "m2")             # es la última
+        self.assertEqual(self.r.buscar(self.a)["maquina"], "m2", "'maquina' sigue apuntando a la primera")

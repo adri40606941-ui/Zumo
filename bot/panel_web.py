@@ -25,6 +25,8 @@ MAX_SESIONES = 500
 FALLOS_IP, VENTANA_IP = 10, 300
 FALLOS_USUARIO, VENTANA_USUARIO = 8, 600
 CACHE_LISTA = 15
+PRONTO = 3              # días: desde ahí un usuario se marca como "vence pronto"
+LIMITE_FILAS = 100
 HOST_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}(:\d{1,5})?$")
 CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-%s'; img-src data:; form-action 'self'; "
        "base-uri 'none'; frame-ancestors 'none'")
@@ -72,6 +74,12 @@ details.edit{margin-top:8px}details.edit>summary{list-style:none;cursor:pointer;
 details.edit>summary::-webkit-details-marker{display:none}details.edit[open]>summary{border-color:var(--acento)}
 details.edit svg.lapiz{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .nom{display:flex;gap:6px;margin-top:10px}.nom input{flex:1;min-width:0;padding:8px 10px}
+.pronto{background:var(--aviso)}.aviso-pronto{background:rgba(201,138,0,.15);border:1px solid var(--aviso)}
+.buscar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px}
+.buscar input{flex:1;min-width:150px;padding:8px 10px}
+select{padding:8px;border-radius:12px;border:1px solid var(--borde);background:var(--campo);color:var(--texto);font:inherit}
+.resumen{cursor:pointer;font-weight:600}details.tarjeta>summary+*{margin-top:10px}
+.movs{margin:0;padding-left:18px;font-size:14px;color:var(--suave)}.movs li{margin:3px 0}
 .etq{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:700;color:#fff}
 .activo{background:var(--ok)}.vencido{background:var(--mal)}.bloqueado{background:var(--aviso)}
 .aviso{padding:12px 14px;border-radius:12px;margin:0 0 14px;font-size:15px}
@@ -141,8 +149,9 @@ def _moneda(tipo, tam=22):
 
 
 class PanelWeb:
-    def __init__(self, rev, servicio, reloj=time.time, hoy=date.today):
+    def __init__(self, rev, servicio, reloj=time.time, hoy=date.today, notificar=None):
         self.rev, self.srv, self.reloj, self.hoy = rev, servicio, reloj, hoy
+        self.notificar = notificar or (lambda texto: None)      # el bot lo cambia por "avisar a los admins"
         self.sesiones = {}       # cookie -> {"rid", "csrf", "vence", "aviso"}
         self.fallos_ip = {}      # ip -> [momentos]
         self.fallos_usr = {}     # usuario -> [momentos]
@@ -150,8 +159,9 @@ class PanelWeb:
         self._pedido = threading.local()    # el tema elegido en el pedido que se está atendiendo
 
     # ------------------------------------------------------------------ entrada
-    def manejar(self, metodo, ruta, cabeceras, cuerpo, ip, https):
-        """(código, cabeceras, cuerpo en bytes). Solo para rutas que empiezan con /r."""
+    def manejar(self, metodo, ruta, cabeceras, cuerpo, ip, https, consulta=""):
+        """(código, cabeceras, cuerpo en bytes). Solo para rutas que empiezan con /r. `consulta` es lo que va
+        después del ? (el buscador de usuarios)."""
         if metodo not in ("GET", "HEAD", "POST"):
             return self._resp(405, "No permitido")
         # Los nombres de los encabezados no distinguen mayúsculas: Cloudflare o un proxy pueden mandar "cookie" o
@@ -189,7 +199,8 @@ class PanelWeb:
             return self._resp(404, "No existe")
         if not s:
             return self._pagina(self._login(), 200)
-        return self._pagina(self._inicio(s), 200, con_script=True)
+        c = {k: v[0][:60] for k, v in urllib.parse.parse_qs(consulta[:300]).items()}
+        return self._pagina(self._inicio(s, c.get("q", "").strip(), c.get("o", "")), 200, con_script=True)
 
     # ------------------------------------------------------------------ sesión
     def _cookie(self, valor, vida):
@@ -232,6 +243,9 @@ class PanelWeb:
         if not r:
             self._fallo(self.fallos_ip, ip, ahora)
             self._fallo(self.fallos_usr, usuario, ahora)
+            if len(self.fallos_ip[ip]) == FALLOS_IP or len(self.fallos_usr[usuario]) == FALLOS_USUARIO:
+                self.notificar(f"🚨 Muchos intentos fallidos en el panel de revendedores: usuario «{usuario}», IP {ip}. "
+                               "Quedó frenado unos minutos.")
             return self._pagina(self._login("Usuario o contraseña incorrectos."), 200)
         self.fallos_usr.pop(usuario, None)
         if len(self.sesiones) >= MAX_SESIONES:
@@ -247,6 +261,12 @@ class PanelWeb:
     def _ir(self, destino):
         return 303, {"Location": destino, "Cache-Control": "no-store", "Content-Length": "0"}, b""
 
+    @staticmethod
+    def _falla(res):
+        """Aviso extra cuando alguna VPS del revendedor no contestó (la operación sí se hizo en las demás)."""
+        f = res.get("fallaron") if isinstance(res, dict) else None
+        return f" ⚠️ No se pudo en: {', '.join(f)}." if f else ""
+
     def _accion(self, s, d):
         rid = s["rid"]
         a, token = d.get("a", ""), d.get("token", "").strip()
@@ -257,16 +277,20 @@ class PanelWeb:
                 dias = int(d["dias"])
                 res = self.srv.crear(rid, token, d.get("nombre", ""), dias)
                 s["aviso"] = ("ok", f"✅ Usuario creado. Token: {res['token']} · vence el {res['vence']:%d/%m/%Y} "
-                                    f"· gastó 1 moneda de {res['moneda']}.")
+                                    f"· gastó 1 moneda de {res['moneda']}." + self._falla(res) +
+                                    (" Se completa solo en cuanto esa VPS conteste." if res["fallaron"] else ""))
             elif a in ("r7", "r15", "r30"):
                 res = self.srv.renovar(rid, token, int(a[1:]))
-                s["aviso"] = ("ok", f"✅ Renovado {a[1:]} días. Ahora vence el {res['vence']:%d/%m/%Y} · gastó 1 moneda de {res['moneda']}.")
+                s["aviso"] = ("ok", f"✅ Renovado {a[1:]} días. Ahora vence el {res['vence']:%d/%m/%Y} · gastó 1 moneda de {res['moneda']}."
+                                    + self._falla(res))
             elif a in ("bloquear", "desbloquear"):
-                self.srv.bloquear(rid, token, a == "bloquear")
-                s["aviso"] = ("ok", "✅ Usuario bloqueado." if a == "bloquear" else "✅ Usuario desbloqueado.")
+                res = self.srv.bloquear(rid, token, a == "bloquear")
+                s["aviso"] = ("ok", ("✅ Usuario bloqueado." if a == "bloquear" else "✅ Usuario desbloqueado.") + self._falla(res))
             elif a == "renombrar":
-                n = self.srv.renombrar(rid, token, d.get("nombre", ""))
-                s["aviso"] = ("ok", f"✅ Nombre cambiado a «{n}».")
+                res = self.srv.renombrar(rid, token, d.get("nombre", ""))
+                s["aviso"] = ("ok", f"✅ Nombre cambiado a «{res['nombre']}»." + self._falla(res))
+            elif a == "clave":
+                self._cambiar_clave(s, d)
             elif a == "eliminar":
                 return self._pagina(self._confirmar(s, token), 200)
             elif a == "eliminar_ok":
@@ -280,6 +304,24 @@ class PanelWeb:
             s["aviso"] = ("mal", f"⚠️ {ex}")
         self.cache.pop(rid, None)
         return self._ir(BASE)
+
+    def _cambiar_clave(self, s, d):
+        r = self.rev.buscar(s["rid"])
+        ahora = self.reloj()
+        if self._frenado(self.fallos_usr, r["usuario"], FALLOS_USUARIO, VENTANA_USUARIO, ahora):
+            raise ErrorRevendedor("Demasiados intentos. Esperá unos minutos y probá de nuevo.")
+        actual, nueva, repetir = d.get("actual", ""), d.get("nueva", ""), d.get("repetir", "")
+        if not self.rev.verificar(r["usuario"], actual):
+            self._fallo(self.fallos_usr, r["usuario"], ahora)
+            raise ErrorRevendedor("La contraseña actual no es correcta.")
+        if nueva != repetir:
+            raise ErrorRevendedor("Las dos contraseñas nuevas no coinciden.")
+        if nueva == actual:
+            raise ErrorRevendedor("La contraseña nueva tiene que ser distinta de la actual.")
+        self.rev.cambiar_clave(s["rid"], nueva)
+        # cualquier otra sesión abierta con la contraseña vieja se cierra; esta sigue
+        self.sesiones = {k: v for k, v in self.sesiones.items() if v is s or v["rid"] != s["rid"]}
+        s["aviso"] = ("ok", "✅ Contraseña cambiada. Las demás sesiones abiertas se cerraron.")
 
     # ------------------------------------------------------------------ páginas
     def _resp(self, codigo, texto):
@@ -325,7 +367,7 @@ class PanelWeb:
                 '<button class="gris chico">Salir</button></form></div></div>'
                 f'<div class="tarjeta"><div class="suave" style="margin-bottom:8px">Tus monedas</div><div class="monedas">{m}</div></div>')
 
-    def _inicio(self, s):
+    def _inicio(self, s, q="", o=""):
         r = self.rev.buscar(s["rid"])
         partes = [self._cabecera(s, r)]
         if s.get("aviso"):
@@ -333,7 +375,9 @@ class PanelWeb:
             partes.append(f'<div class="aviso {tipo}" role="alert">{e(texto)}</div>')
             s["aviso"] = None
         partes.append(self._form_crear(s, r))
-        partes.append(self._lista(s, r))
+        partes.append(self._lista(s, r, q, o))
+        partes.append(self._historial(r))
+        partes.append(self._form_clave(s))
         return "".join(partes)
 
     def _form_crear(self, s, r):
@@ -368,30 +412,63 @@ class PanelWeb:
         self.cache[rid] = (ahora, filas)
         return filas
 
-    def _lista(self, s, r):
+    ORDENES = (("", "Más nuevos primero"), ("venc", "Los que vencen antes"), ("nombre", "Por nombre (A-Z)"))
+
+    def _buscador(self, q, o):
+        ops = "".join(f'<option value="{v}"{" selected" if v == o else ""}>{t}</option>' for v, t in self.ORDENES)
+        limpiar = f' <a href="{BASE}">Limpiar</a>' if (q or o) else ""
+        return (f'<form class="buscar" method="get" action="{BASE}"><input type="text" name="q" value="{e(q)}" maxlength="60" '
+                'placeholder="Buscar por nombre o token" autocomplete="off" autocapitalize="none" aria-label="Buscar">'
+                f'<select name="o" aria-label="Orden">{ops}</select><button class="gris chico">Buscar</button>{limpiar}</form>')
+
+    def _lista(self, s, r, q="", o=""):
         filas = self._filas(r["id"])
         if isinstance(filas, str):
             return f'<div class="tarjeta"><h2>👥 Tus usuarios</h2><div class="aviso mal">⚠️ {e(filas)}</div></div>'
         if not filas:
             return '<div class="tarjeta"><h2>👥 Tus usuarios</h2><p class="suave">Todavía no creaste ninguno.</p></div>'
         hoy = self.hoy()
-        out = [f'<div class="tarjeta"><h2>👥 Tus usuarios · {len(filas)}</h2>']
-        if filas[0].get("sin_datos"):
-            out.append('<div class="aviso mal">No pude consultar la VPS ahora: puede que no veas la fecha ni el estado.</div>')
+        total = len(filas)
+        pronto = [f for f in filas if f["vence"] and 0 <= (f["vence"] - hoy).days <= PRONTO and not f["bloqueado"]]
+        if q:
+            ql = q.casefold()
+            filas = [f for f in filas if ql in f["nombre"].casefold() or ql in f["token"].casefold()]
+        if o == "venc":
+            filas = sorted(filas, key=lambda f: (f["vence"] is None, f["vence"] or hoy))
+        elif o == "nombre":
+            filas = sorted(filas, key=lambda f: f["nombre"].casefold())
+        out = [f'<div class="tarjeta"><h2>👥 Tus usuarios · {total}</h2>']
+        if pronto:
+            out.append(f'<div class="aviso aviso-pronto">⏰ {len(pronto)} vence{"n" if len(pronto) > 1 else ""} en {PRONTO} días '
+                       'o menos. Renovalos para que no se corten.</div>')
+        if total > 5 or q or o:
+            out.append(self._buscador(q, o))
+        if any(f.get("sin_datos") for f in filas):
+            out.append('<div class="aviso mal">No pude consultar la VPS ahora (o alguna de tus VPS): puede que no veas la fecha ni el estado de algunos usuarios.</div>')
+        if not filas:
+            out.append(f'<p class="suave">Ningún usuario coincide con «{e(q)}».</p>')
+        if len(filas) > LIMITE_FILAS:
+            out.append(f'<p class="suave">Mostrando {LIMITE_FILAS} de {len(filas)}. Usá el buscador para encontrar el resto.</p>')
+            filas = filas[:LIMITE_FILAS]
+        varias = len(r["maquinas"]) > 1
         for f in filas:
+            dias = (f["vence"] - hoy).days if f["vence"] else None
             if not f["existe"]:
                 estado, cls = "No existe en la VPS", "vencido"
             elif f["bloqueado"]:
                 estado, cls = "Bloqueado", "bloqueado"
-            elif f["vence"] and f["vence"] < hoy:
+            elif dias is not None and dias < 0:
                 estado, cls = "Vencido", "vencido"
+            elif dias is not None and dias <= PRONTO:
+                estado, cls = ("Vence hoy" if dias == 0 else f"Vence en {dias} d"), "pronto"
             else:
                 estado, cls = "Activo", "activo"
             if f["vence"]:
-                dias = (f["vence"] - hoy).days
                 vence = f'vence {f["vence"]:%d/%m/%Y}' + (f" · {dias} d" if dias >= 0 else "")
             else:
                 vence = "sin fecha"
+            if varias and f.get("maquinas"):
+                vence += " · 🖥 " + ", ".join(f["maquinas"])
             tok = e(f["token"])
             botones = "".join(f'<button class="gris chico" name="a" value="r{d}" title="Renovar {d} días">{_moneda(t, 22)}'
                               f'Renovar {d}</button>' for t, d in MONEDAS.items())
@@ -411,7 +488,7 @@ class PanelWeb:
                        f'<input type="hidden" name="csrf" value="{e(s["csrf"])}"><input type="hidden" name="token" value="{tok}">'
                        f'{punto}<b>{e(f["nombre"])}</b> <span class="etq {cls}">{estado}</span>'
                        f'{enlinea}<br>'
-                       f'<span class="suave">{tok} · {vence}</span>'
+                       f'<span class="suave">{tok} · {e(vence)}</span>'
                        f'<details class="edit"><summary>{lapiz} Editar</summary>'
                        f'<div class="nom"><input type="text" name="nombre" value="{e(f["nombre"])}" maxlength="48" '
                        'autocomplete="off" aria-label="Nombre del usuario">'
@@ -420,6 +497,40 @@ class PanelWeb:
                        '<button class="gris chico" name="a" value="eliminar">🗑 Eliminar</button></div></details></form></div>')
         out.append("</div>")
         return "".join(out)
+
+    def _historial(self, r):
+        movs = self.rev.movimientos(r["id"], 20)
+        if not movs:
+            return ""
+        nombres = {t: c.get("etq", "") for t, c in self.rev.cuentas_de(r["id"]).items()}
+        filas = "".join(f"<li>{e(self._linea_mov(m, nombres))}</li>" for m in reversed(movs))
+        return (f'<details class="tarjeta"><summary class="resumen">📜 Mis movimientos</summary>'
+                f'<ul class="movs">{filas}</ul></details>')
+
+    @staticmethod
+    def _linea_mov(m, nombres):
+        cuando = time.strftime("%d/%m %H:%M", time.localtime(m["t"]))
+        q, tok = m["que"], m.get("token", "")
+        quien = nombres.get(tok) or tok
+        txt = {"crear": f"Creó a {quien} ({m.get('dias', '')} días)", "renovar": f"Renovó a {quien} ({m.get('dias', '')} días)",
+               "bloquear": f"Bloqueó a {quien}", "desbloquear": f"Desbloqueó a {quien}", "eliminar": f"Eliminó a {quien}",
+               "nombre": f"Cambió el nombre de {quien}", "clave": "Se cambió la contraseña",
+               "alta": "Cuenta creada", "activo": "Acceso activado", "bloqueado": "Acceso bloqueado"}.get(q)
+        if q == "monedas":
+            n = m.get("n", 0)
+            txt = f"{'Le cargaron' if n > 0 else 'Le quitaron'} {abs(n)} moneda{'s' if abs(n) != 1 else ''} de {m.get('tipo', '')}"
+        if m.get("moneda") and q in ("crear", "renovar"):
+            txt += f" · gastó 1 de {m['moneda']}"
+        return f"{cuando} · {txt or q}"
+
+    def _form_clave(self, s):
+        return ('<details class="tarjeta"><summary class="resumen">🔑 Cambiar mi contraseña</summary>'
+                f'<form method="post" action="{BASE}/accion"><input type="hidden" name="csrf" value="{e(s["csrf"])}">'
+                '<input type="hidden" name="a" value="clave">'
+                '<label>Contraseña actual</label><input type="password" name="actual" autocomplete="current-password" required>'
+                '<label>Contraseña nueva</label><input type="password" name="nueva" autocomplete="new-password" required>'
+                '<label>Repetí la nueva</label><input type="password" name="repetir" autocomplete="new-password" required>'
+                '<p><button type="submit">Cambiar contraseña</button></p></form></details>')
 
     def _confirmar(self, s, token):
         propias = self.rev.cuentas_de(s["rid"])

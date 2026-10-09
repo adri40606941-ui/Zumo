@@ -1821,10 +1821,11 @@ def main():
     if gh:
         bot.gh_pub = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
                                      workflow="publicar-servidores.yml", rama=env.get("GITHUB_REF") or "main")
+    servicio = servicio_rev.Servicio(bot.revs, notificar=bot.avisar_admins)
+    bot.srv_rev = servicio
     if bot.dominio_lista():
-        web = panel_web.PanelWeb(bot.revs, servicio_rev.Servicio(bot.revs))   # panel de revendedores: https://dominio/r
-        # La app pide "Nombre [dd/mm]": primero la VPS del bot y, si el token es de un revendedor, su VPS asignada.
-        servicio = web.srv
+        web = panel_web.PanelWeb(bot.revs, servicio, notificar=bot.avisar_admins)   # panel de revendedores: https://dominio/r
+        # La app pide "Nombre [dd/mm]": primero la VPS del bot y, si el token es de un revendedor, sus VPS asignadas.
         publico.iniciar(accesos=bot.accesos, dominio=bot.dominio_lista(),
                         cuenta=lambda t: datos_cuenta(t) or servicio.datos_cuenta(t), web=web)
         if not publico.hay_lista():
@@ -1832,6 +1833,7 @@ def main():
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()
     threading.Thread(target=bot.sincronizar_diario, daemon=True).start()
     threading.Thread(target=bot.refrescar_maquinas_loop, daemon=True).start()
+    threading.Thread(target=bot.vigilar_revendedores, daemon=True).start()
     print("zumo-bot: listo, admins:", sorted(admins) or "ninguno (mandá /id al bot)", flush=True)
     offset = 0
     while True:
