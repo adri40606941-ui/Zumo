@@ -14,5 +14,6 @@ mkdir -p "$D"
 printf '[Journal]\nSystemMaxUse=200M\nMaxRetentionSec=2week\n' > "$D/zumo.conf"
 [ -n "$ZUMO_JOURNAL_DIR" ] && exit 0
 systemctl restart systemd-journald 2>/dev/null
+journalctl --rotate >/dev/null 2>&1          # cierra el archivo activo: si no, la limpieza no lo toca
 journalctl --vacuum-size=200M >/dev/null 2>&1
 echo "registro del sistema limitado a 200 MB / 2 semanas ($(journalctl --disk-usage 2>/dev/null | grep -o '[0-9.]*[KMG]' | head -1) ahora)"
