@@ -1360,6 +1360,9 @@ if curl -fsSL "$ZUMO_RAW/scripts/zumo-baneo.sh" -o "$_bn" && bash -n "$_bn" 2>/d
 bash "$_bn" || echo -e " \e[1;33m! no se pudo activar el baneo automático (se puede activar luego desde el panel)\e[0m"
 fi
 rm -f "$_bn"
+_jn=$(mktemp)
+if curl -fsSL "$ZUMO_RAW/scripts/zumo-journal.sh" -o "$_jn" && bash -n "$_jn" 2>/dev/null; then bash "$_jn" >/dev/null 2>&1 || true; fi
+rm -f "$_jn"
 paso "Finalizando"
 echo
 
