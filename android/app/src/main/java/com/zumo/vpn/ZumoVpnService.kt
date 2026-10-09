@@ -321,9 +321,13 @@ class ZumoVpnService : VpnService() {
     private fun cargarCuenta(token: String) {
         Thread({
             try {
-                val d = Cuenta.consultar(Servidores.urlActualizar(this), token) ?: return@Thread
+                val base = Servidores.urlActualizar(this)
+                if (Cuenta.urls(base, token).isEmpty()) { Registro.add("Cuenta: esta app no tiene la dirección de tu VPS (solo GitHub)"); return@Thread }
+                val d = Cuenta.consultar(base, token)
+                if (d == null) { Registro.add("Cuenta: la VPS no contestó o no conoce este token (¿bot sin actualizar?)"); return@Thread }
                 val p = Prefs(this)
                 p.cuentaNombre = d.nombre; p.cuentaVence = d.vence
+                Registro.add("Cuenta: ${Cuenta.etiqueta(d.nombre, d.vence)}")
             } catch (_: Exception) { }
         }, "zumo-cuenta").start()
     }
