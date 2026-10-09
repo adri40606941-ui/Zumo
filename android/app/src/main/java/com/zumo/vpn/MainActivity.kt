@@ -425,7 +425,7 @@ class MainActivity : Activity() {
         cCuenta.visibility = if (hayLista || tieneCuenta) View.VISIBLE else View.GONE
         // El selector se ve siempre: "Automático" busca sola dónde está el token (Busqueda) y, si el cliente
         // elige un servidor de la lista, se conecta solo a ese.
-        tvServidor.visibility = View.VISIBLE
+        tvServidor.visibility = if (hayLista && !Servidores.MOSTRAR_SELECTOR) View.GONE else View.VISIBLE
 
         val con = ZumoVpnService.conectado
         val conectando = ZumoVpnService.conectando && !con

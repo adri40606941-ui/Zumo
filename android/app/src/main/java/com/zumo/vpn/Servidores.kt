@@ -26,6 +26,9 @@ import java.net.URL
  *   sni =
  */
 object Servidores {
+    /** false = el cliente no ve ni elige servidores (siempre Automático). true = se muestra el selector. */
+    const val MOSTRAR_SELECTOR = false
+
     private const val ASSET = "servidores.bin"
     private const val ASSET_URL = "actualizar.url"
     private const val ARCHIVO_ONLINE = "servidores-online.bin"
