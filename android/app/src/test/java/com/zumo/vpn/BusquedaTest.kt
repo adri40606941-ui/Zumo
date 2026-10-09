@@ -81,4 +81,32 @@ class BusquedaTest {
     fun sin_candidatos_no_hay_busqueda() {
         Busqueda(emptyList())
     }
+
+    @Test
+    fun en_paralelo_todos_rechazan_es_error_de_usuario() {
+        val b = Busqueda(lista(3))
+        assertEquals(Paso.NINGUNO, b.resultadoRonda(setOf("S1", "S2", "S3"), emptySet()))
+    }
+
+    @Test
+    fun en_paralelo_si_alguno_esta_caido_reintenta_y_a_la_segunda_corta() {
+        val b = Busqueda(lista(3))
+        assertEquals(Paso.REINTENTAR, b.resultadoRonda(setOf("S1", "S2"), setOf("S3")))
+        assertEquals(Paso.NINGUNO, b.resultadoRonda(setOf("S1", "S2"), setOf("S3")))
+    }
+
+    @Test
+    fun en_paralelo_si_nadie_responde_reintenta_siempre() {
+        val b = Busqueda(lista(3))
+        repeat(4) { assertEquals(Paso.REINTENTAR, b.resultadoRonda(emptySet(), setOf("S1", "S2", "S3"))) }
+    }
+
+    @Test
+    fun en_paralelo_un_exito_reinicia_la_cuenta() {
+        val b = Busqueda(lista(3))
+        assertEquals(Paso.REINTENTAR, b.resultadoRonda(setOf("S1"), setOf("S2", "S3")))
+        b.exitoNombre("S2")
+        assertEquals("S2", b.actual().name)
+        assertEquals(Paso.REINTENTAR, b.resultadoRonda(setOf("S1"), setOf("S2", "S3")))
+    }
 }

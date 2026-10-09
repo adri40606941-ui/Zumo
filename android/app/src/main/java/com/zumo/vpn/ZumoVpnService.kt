@@ -87,6 +87,7 @@ class ZumoVpnService : VpnService() {
     private var socks: SocksServer? = null
     private var proxyWifi: HttpProxyServer? = null
     @Volatile private var tunel: SshTunnel? = null
+    private val enCarrera = java.util.concurrent.CopyOnWriteArrayList<SshTunnel>()   // intentos en paralelo (búsqueda del token)
     @Volatile private var intentoActual: SshTunnel? = null   // conexión en curso, para poder cortarla al instante
     @Volatile private var activo = false
     @Volatile private var reintentarYa = false               // la red volvió: reintentar sin esperar
@@ -332,6 +333,8 @@ class ZumoVpnService : VpnService() {
             Hosts.ordenarTodos(candidatos, Prefs(this).ultimoServidor) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } }
         } catch (e: Exception) { candidatos }       // si algo falla al ordenar, se usa el orden de la lista
         val busq = Busqueda(ordenados)
+        // Con 2 o más servidores se prueban todos a la vez (el primero que deja entrar gana); con uno, el camino de siempre.
+        val varios = candidatos.map { it.name }.distinct().size >= 2
         var siguienteYa = false
         while (activo && Prefs(this).wanted) {
             if (Perfil.vencida(Prefs(this).exp)) {
@@ -341,6 +344,45 @@ class ZumoVpnService : VpnService() {
                 estado = "Reconectando…"; conectado = false; conectando = true; actualizarNoti()
                 if (!esperarReintento(espera)) break
                 espera = (espera * 2).coerceAtMost(20000L); continue
+            }
+            if (varios) {
+                val res = carrera(candidatos, user, pass)
+                if (!activo || !Prefs(this).wanted) { res.tunel?.close(); break }
+                if (res.cancelado) continue                  // la red volvió: se prueba de nuevo ya
+                val g = res.tunel
+                val cg = res.cfg
+                if (g == null || cg == null) {
+                    when (busq.resultadoRonda(res.rechazados, res.caidos)) {
+                        Busqueda.Paso.RECHAZADO -> { detenerPorError("Usuario o contraseña incorrectos. Pedí tu cuenta de nuevo."); return }
+                        Busqueda.Paso.NINGUNO -> { detenerPorError("Error de usuario: tu token no está activo en ningún servidor. Pedí que lo activen y volvé a intentar."); return }
+                        else -> {}
+                    }
+                    ultimoError = "Ningún servidor respondió"; Registro.add("✘ $ultimoError; reintentando…")
+                    estado = "Reconectando…"; conectado = false; conectando = true; actualizarNoti()
+                    if (!esperarReintento(espera)) break
+                    espera = (espera * 2).coerceAtMost(20000L); continue
+                }
+                var cayoG = false
+                try {
+                    cfgActual = cg; tunel = g
+                    busq.exitoNombre(cg.name)
+                    Prefs(this).ultimoServidor = cg.name
+                    estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; espera = 2000L; actualizarNoti()
+                    Registro.add("✔ Conectado (${cg.name})")
+                    while (activo && g.conectado) Thread.sleep(1000)
+                    cayoG = activo && Prefs(this).wanted
+                } catch (e: InterruptedException) {
+                } finally {
+                    conectado = false
+                    try { g.close() } catch (_: Exception) {}
+                    if (tunel === g) tunel = null
+                }
+                if (!activo || !Prefs(this).wanted) break
+                if (cayoG) Registro.add("Se perdió la conexión; reconectando…")
+                estado = "Reconectando…"; conectando = true; actualizarNoti()
+                if (!esperarReintento(espera)) break
+                espera = (espera * 2).coerceAtMost(20000L)
+                continue
             }
             val cfg = busq.actual()
             cfgActual = cfg
@@ -382,6 +424,72 @@ class ZumoVpnService : VpnService() {
             if (!esperarReintento(espera)) break
             espera = (espera * 2).coerceAtMost(20000L)
         }
+    }
+
+    private class ResultadoCarrera(
+        val tunel: SshTunnel?, val cfg: Config?, val rechazados: Set<String>, val caidos: Set<String>, val cancelado: Boolean = false,
+    )
+
+    /**
+     * Prueba TODOS los servidores a la vez (uno por hilo; dentro de cada uno, sus hosts por orden de respuesta).
+     * El primero que deja entrar gana y se cortan los demás. Así la búsqueda tarda lo que tarde el servidor
+     * correcto, no la suma de los que fallan o están caídos.
+     */
+    private fun carrera(candidatos: List<Config>, user: String, pass: String): ResultadoCarrera {
+        val porServidor = candidatos.groupBy { it.name }
+        val ganador = java.util.concurrent.atomic.AtomicReference<Pair<SshTunnel, Config>?>(null)
+        val rechazados = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val caidos = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val pendientes = java.util.concurrent.CountDownLatch(porServidor.size)
+        val fin = java.util.concurrent.atomic.AtomicBoolean(false)
+        estado = "Conectando..."; conectado = false; conectando = true; actualizarNoti()
+        Registro.add("Probando ${porServidor.size} servidores a la vez…")
+        for ((nombre, cands) in porServidor) {
+            Thread({
+                try { probarServidor(nombre, cands, user, pass, ganador, fin, rechazados, caidos) }
+                catch (_: Throwable) { caidos.add(nombre) }
+                finally { pendientes.countDown() }
+            }, "zumo-carrera").also { it.isDaemon = true }.start()
+        }
+        var cancelado = false
+        try {
+            while (ganador.get() == null && !pendientes.await(100, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                if (!activo || !Prefs(this).wanted) { cancelado = true; break }
+            }
+        } catch (_: InterruptedException) { cancelado = true }
+        val g = if (cancelado) null else ganador.get()
+        for (t in enCarrera.toList()) if (t !== g?.first) { try { t.close() } catch (_: Exception) {} }
+        fin.set(true)       // los que terminen tarde se cierran solos
+        if (cancelado) ganador.get()?.first?.let { try { it.close() } catch (_: Exception) {} }
+        return if (g != null) ResultadoCarrera(g.first, g.second, emptySet(), emptySet())
+        else ResultadoCarrera(null, null, rechazados.toSet(), caidos.toSet(), cancelado)
+    }
+
+    private fun probarServidor(
+        nombre: String, cands: List<Config>, user: String, pass: String,
+        ganador: java.util.concurrent.atomic.AtomicReference<Pair<SshTunnel, Config>?>,
+        fin: java.util.concurrent.atomic.AtomicBoolean,
+        rechazados: MutableSet<String>, caidos: MutableSet<String>,
+    ) {
+        val orden = try { Hosts.ordenarTodos(cands, "", 3500) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } } } catch (e: Exception) { cands }
+        for (cfg in orden) {
+            if (ganador.get() != null || fin.get() || !activo) return
+            val t = SshTunnel(cfg, user, pass, etapa = { Registro.add("[$nombre] $it") }, proteger = { sock -> protect(sock) })
+            enCarrera.add(t)
+            try {
+                t.connect()
+                if (!fin.get() && ganador.compareAndSet(null, Pair(t, cfg))) { enCarrera.remove(t); return }
+                try { t.close() } catch (_: Exception) {}       // otro servidor entró primero
+                enCarrera.remove(t)
+                return
+            } catch (e: Exception) {
+                try { t.close() } catch (_: Exception) {}
+                enCarrera.remove(t)
+                if (esFalloDeLogin(e)) { rechazados.add(nombre); return }      // responde pero no conoce el token: no se insiste con sus otros hosts
+                Registro.add("✘ [$nombre] ${mensaje(e)}")
+            }
+        }
+        if (ganador.get() == null) caidos.add(nombre)
     }
 
     /** Espera [ms] antes de reintentar, pero vuelve antes si la red reapareció. false = hay que parar. */
@@ -459,6 +567,7 @@ class ZumoVpnService : VpnService() {
         try { callback?.let { (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(it) } } catch (_: Exception) {}
         hilo?.interrupt(); hilo = null
         monitor?.interrupt(); monitor = null
+        try { enCarrera.forEach { try { it.close() } catch (_: Exception) {} } } catch (_: Exception) {}
         try { intentoActual?.close() } catch (_: Exception) {}   // corta un connect() en curso
         intentoActual = null
         try { tunel?.close() } catch (_: Exception) {}
