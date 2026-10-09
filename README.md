@@ -278,3 +278,17 @@ curl -fsSL https://raw.githubusercontent.com/adri40606941-ui/Zumo/main/scripts/q
 ## Baneo automático de IP que fallan el puerto 22
 
 `install.sh` y `actualizar.sh` activan fail2ban solos (`scripts/zumo-baneo.sh`): una IP que falla la contraseña 5 veces en 10 min queda baneada del puerto SSH 22 (1 h por defecto; se cambia en el panel → Herramientas → Fail2ban). Los fallos que llegan por PDirect (puerto 80), WebSocket o BHTTP entran al sshd como 127.0.0.1, que está en `ignoreip`, así que **nunca banean a nadie**; el baneo no afecta a los puertos 80/443 ni al limitador. Si ya tenías un `jail.local`, no se pisa.
+
+## Instalar sin GitHub ni dominio (paquete de instalación)
+
+En el bot: **💾 Respaldo → 📦 Paquete de instalación** manda el repo completo cifrado con la contraseña del respaldo
+(`zumo-paquete-AAAAMMDD.enc`, en partes `.parte1`, `.parte2` si pesa más de 40 MB). Guardalo junto al respaldo. Con una VPS limpia, desde una PC:
+
+```bash
+scp zumo-paquete-*.enc* root@IP_NUEVA:/root/
+# en la VPS nueva, como root:
+cat /root/zumo-paquete-*.enc* | openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 | tar xz -C /opt   # deja /opt/zumo-repo
+bash /opt/zumo-repo/bot/instalar-bot.sh
+```
+
+El instalador usa esa copia cuando GitHub y el dominio no responden. Después restaurá el respaldo desde el bot.

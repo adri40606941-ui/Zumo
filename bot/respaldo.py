@@ -57,6 +57,27 @@ def crear(clave, dir_=None):
     return salida
 
 
+REPO = os.environ.get("ZUMO_REPO_LOCAL", "/opt/zumo-repo")
+PARTE = 40 * 1024 * 1024            # tamaño máximo de cada archivo que se manda por Telegram
+
+
+def paquete_repo(clave, repo=None):
+    """Copia del repo (con .git) en tar.gz cifrado, partida en pedazos de PARTE bytes.
+    Devuelve la lista de bytes de cada parte. Se vuelve a armar con `cat parte* | openssl ... | tar xz`."""
+    repo = repo or REPO
+    if len(clave) < 8:
+        raise ErrorRespaldo("La contraseña del respaldo tiene que tener al menos 8 caracteres.")
+    if not os.path.isdir(os.path.join(repo, "bot")):
+        raise ErrorRespaldo("No hay copia del repo en esta VPS (" + repo + "). Repetí el instalador del bot con el dominio puesto.")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+        t.add(repo, arcname=os.path.basename(repo.rstrip("/")))
+    rc, salida = _openssl("-e", buf.getvalue(), clave)
+    if rc != 0 or not salida:
+        raise ErrorRespaldo("openssl no pudo cifrar el paquete.")
+    return [salida[i:i + PARTE] for i in range(0, len(salida), PARTE)]
+
+
 def _miembros_seguros(t):
     for m in t.getmembers():
         n = m.name

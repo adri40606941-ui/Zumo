@@ -45,6 +45,23 @@ class Pruebas(unittest.TestCase):
         with self.assertRaises(respaldo.ErrorRespaldo):
             respaldo.restaurar(b"basura" * 50, "clave-larga-1")
 
+    def test_paquete_repo(self):
+        repo = os.path.join(self.d, "zumo-repo")
+        os.makedirs(os.path.join(repo, "bot"))
+        with open(os.path.join(repo, "bot", "a.py"), "w") as f:
+            f.write("hola")
+        respaldo.PARTE = 200
+        partes = respaldo.paquete_repo("clave-larga-1", repo)
+        self.assertGreater(len(partes), 1)
+        rc, claro = respaldo._openssl("-d", b"".join(partes), "clave-larga-1")
+        self.assertEqual(rc, 0)
+        import io, tarfile
+        self.assertIn("zumo-repo/bot/a.py", tarfile.open(fileobj=io.BytesIO(claro)).getnames())
+        with self.assertRaises(respaldo.ErrorRespaldo):
+            respaldo.paquete_repo("corta", repo)
+        with self.assertRaises(respaldo.ErrorRespaldo):
+            respaldo.paquete_repo("clave-larga-1", os.path.join(self.d, "nada"))
+
     def test_clave_corta(self):
         with self.assertRaises(respaldo.ErrorRespaldo):
             respaldo.crear("corta")

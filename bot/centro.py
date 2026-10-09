@@ -55,7 +55,8 @@ class CentroMixin:
         txt += "\nEl respaldo se manda cifrado a este chat. Sin la contraseña no se puede abrir: guardala aparte."
         filas = [[("💾 Respaldar ahora", "rnow")],
                  [("🔒 Contraseña del respaldo", "rpass"), ("♻️ Restaurar", "rrest")],
-                 [("📥 Importar clave de firma", "kimp"), ("📤 Exportar clave", "kexp")]]
+                 [("📥 Importar clave de firma", "kimp"), ("📤 Exportar clave", "kexp")],
+                 [("📦 Paquete de instalación", "rpaq")]]
         if getattr(self, "gh", None):
             txt += ("\nGitHub: ✅ conectado (si compilás en los dos lados, que la clave sea la misma)")
             filas.append([("⬆️ Usar esta clave en GitHub", "ksubir")] if c else [])
@@ -96,6 +97,13 @@ class CentroMixin:
         elif acc == "rrest":
             self.pedir(chat, "♻️ Mandame el archivo de respaldo (zumo-respaldo-….enc) como documento.\n"
                              "⚠️ Reemplaza los archivos de /etc/zumo con los del respaldo.", "r_archivo")
+        elif acc == "rpaq":
+            self.mostrar(chat, mid, "📦 Paquete de instalación\n\nTe mando una copia cifrada de todo el código (con la contraseña del respaldo) "
+                                    "para poder instalar el bot aunque GitHub y esta VPS no estén. Guardala junto al respaldo. "
+                                    "Cómo usarla: README → «Instalar sin GitHub ni dominio».",
+                         [[("✅ Mandar paquete", "rpaq_si")], [("◂ Respaldo", "resp")]])
+        elif acc == "rpaq_si":
+            self.mandar_paquete(chat)
         elif acc == "kimp":
             self.pedir(chat, "📥 Mandame el archivo clave-firma.enc como documento.", "k_archivo")
         elif acc == "kexp":
@@ -257,6 +265,20 @@ class CentroMixin:
         self.tg.documento(chat, nombre, blob, "💾 Respaldo cifrado de Zumo. Guardalo y conservá la contraseña aparte.")
         if manual:
             self.tg.mensaje(chat, "✅ Respaldo enviado.", [[("◂ Respaldo", "resp")]])
+
+    def mandar_paquete(self, chat):
+        pw = (self.leer_env_fn() if self.leer_env_fn else {}).get("RESPALDO_PASS", "")
+        if not pw:
+            return self.tg.mensaje(chat, "⚠️ Primero poné la contraseña del respaldo.", [[("🔒 Contraseña del respaldo", "rpass")]])
+        try:
+            partes = respaldo.paquete_repo(pw)
+        except respaldo.ErrorRespaldo as ex:
+            return self.tg.mensaje(chat, "⚠️ " + str(ex), [[("◂ Respaldo", "resp")]])
+        dia = datetime.now().strftime("%Y%m%d")
+        for i, datos in enumerate(partes, 1):
+            nombre = f"zumo-paquete-{dia}.enc" + (f".parte{i}" if len(partes) > 1 else "")
+            self.tg.documento(chat, nombre, datos, f"📦 Paquete de instalación {i}/{len(partes)}")
+        self.tg.mensaje(chat, f"✅ Paquete enviado ({len(partes)} archivo(s)).", [[("◂ Respaldo", "resp")]])
 
     def respaldo_diario(self):
         """Hilo: una vez por día manda el respaldo a cada admin (si hay contraseña puesta)."""
