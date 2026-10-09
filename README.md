@@ -299,3 +299,9 @@ En el bot, al poner o cambiar el host de un servidor de la app se pueden escribi
 (`a.com, b.com, 1.2.3.4:443`; hasta 8; el puerto es el del primero que lo traiga). La app los prueba todos a la vez con un TCP
 (sin iniciar sesión, así no cuenta como intento fallido), usa el que responde primero y, si ese falla, sigue con los otros hosts del mismo
 servidor. Si el servidor rechaza el token no insiste con sus otros hosts. Hay que compilar y repartir una app nueva: las apps viejas no entienden la lista.
+
+## Que la VPS tenga siempre lo mismo que GitHub
+
+Los instaladores y actualizadores del dominio salen de la copia del repo de la central (`/opt/zumo-repo`). El bot la sincroniza con GitHub
+**cada hora** y **cada vez que le pides un código** de instalación o actualización; también a mano en 📱 App Android → Compilar en la VPS → 🔄 Sincronizar con GitHub.
+Para actualizar una VPS con panel: `zumo-actualizar` (o el código «actualizar» si todavía no está pasada al dominio).

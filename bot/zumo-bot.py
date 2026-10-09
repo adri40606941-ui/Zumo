@@ -1114,7 +1114,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
                 self.sincronizar_una_vez()
             except Exception as e:  # el hilo no se puede caer
                 print("zumo-bot: no pude sincronizar la copia del repo:", e, flush=True)
-            time.sleep(24 * 3600)
+            time.sleep(3600)
 
     def publicar_servidores(self, chat):
         """Publica la lista para el botón ↻ de la app: al instante desde la VPS (si hay dominio) y, como
