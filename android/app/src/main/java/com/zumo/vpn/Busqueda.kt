@@ -15,8 +15,8 @@ class Busqueda(candidatos: List<Config>) {
 
     private var orden: List<Config> = candidatos
     private var pos = 0
-    private var intentos = 0     // intentos fallidos en la vuelta actual
-    private var sinRespuesta = 0 // de esos, los que no respondieron (no fue un "token desconocido")
+    private val caidos = HashSet<String>()      // servidores (por nombre) que no respondieron en esta vuelta
+    private val rechazados = HashSet<String>()  // servidores que respondieron pero no conocen el token
 
     init { require(candidatos.isNotEmpty()) }
 
@@ -27,20 +27,28 @@ class Busqueda(candidatos: List<Config>) {
     fun exito() {
         val c = orden[pos]
         orden = listOf(c) + orden.filter { it !== c }
-        pos = 0; intentos = 0; sinRespuesta = 0
+        pos = 0; caidos.clear(); rechazados.clear()
     }
 
-    /** [tokenRechazado] = el servidor respondió pero no acepta el token (no es lo mismo que estar caído). */
+    /**
+     * [tokenRechazado] = el servidor respondió pero no acepta el token (no es lo mismo que estar caído).
+     * Un servidor con varios hosts son varios candidatos con el mismo nombre: si uno cae se prueba el
+     * otro host; si el servidor rechaza el token, no se insiste con sus otros hosts.
+     */
     fun fallo(tokenRechazado: Boolean): Paso {
-        if (orden.size == 1) return if (tokenRechazado) Paso.RECHAZADO else Paso.REINTENTAR
-        if (!tokenRechazado) sinRespuesta++
-        intentos++
-        if (intentos >= orden.size) {
-            val ninguno = sinRespuesta == 0
-            intentos = 0; sinRespuesta = 0; pos = 0
-            return if (ninguno) Paso.NINGUNO else Paso.REINTENTAR
+        val nombre = orden[pos].name
+        if (tokenRechazado) rechazados.add(nombre) else caidos.add(nombre)
+        var n = pos + 1
+        while (n < orden.size && orden[n].name in rechazados) n++
+        if (n < orden.size) { pos = n; return Paso.SIGUIENTE }
+        // se terminó la vuelta
+        val algunoCaido = caidos.any { it !in rechazados }
+        val servidores = orden.map { it.name }.distinct().size
+        pos = 0; caidos.clear(); rechazados.clear()
+        return when {
+            algunoCaido -> Paso.REINTENTAR
+            servidores == 1 -> Paso.RECHAZADO
+            else -> Paso.NINGUNO
         }
-        pos++
-        return Paso.SIGUIENTE
     }
 }

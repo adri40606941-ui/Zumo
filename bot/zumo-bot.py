@@ -618,7 +618,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
         if not 0 <= i < len(l):
             return self.pantalla_app(chat, mid, "Ese servidor ya no está.")
         s = l[i]
-        txt = (f"📡 {s['name']}\nHost: {s['host']}\nPuerto: {s['port']}\n"
+        txt = (f"📡 {s['name']}\nHost: {s['host'].replace(',', ', ')}\nPuerto: {s['port']}\n"
                f"TLS: {'sí' if s.get('tls') else 'no'}{' · SNI ' + s['sni'] if s.get('sni') else ''}\n\n"
                f"Payload:\n{s.get('payload') or '(vacío)'}")
         self.mostrar(chat, mid, txt, [
@@ -824,7 +824,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
                                     "Si cambiás solo el payload, no le cambies el nombre: así a los clientes les sigue andando al actualizar.\n"
                                     "Para quitarlo (conexión directa por IP y puerto) tocá el botón o escribí -", "a_payload", i=i, _extra=[[("🚫 Quitar payload", f"aqp:{i}")]])
         if acc == "ah":
-            return self.pedir(chat, "🌐 Escribí el dominio o IP, con el puerto si no es el 80.\nEj: vps.ejemplo.com  o  vps.ejemplo.com:443", "a_host", i=i)
+            return self.pedir(chat, "🌐 Escribí el dominio o IP, con el puerto si no es el 80.\nPodés poner varios separados por coma (la app prueba todos y usa el que responda): a.com, b.com, 1.2.3.4:443", "a_host", i=i)
         if acc == "an":
             return self.pedir(chat, "🏷 Escribí el nombre nuevo (los clientes que ya lo usan tendrán que volver a elegir el servidor):", "a_nombre_edit", i=i)
         if acc == "at":
@@ -919,20 +919,19 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
                 self.estado.pop(chat, None)
                 return self.pantalla_app_servidor(chat, None, i)
             e.update(paso="a_host", nombre=n)
-            return self.tg.mensaje(chat, f"Nombre: {n}\nAhora el dominio o IP, con el puerto si no es el 80.\nEj: vps.ejemplo.com:443", CANCELAR)
+            return self.tg.mensaje(chat, f"Nombre: {n}\nAhora el dominio o IP, con el puerto si no es el 80.\nPodés poner varios separados por coma (si uno no responde, la app usa el otro): a.com, b.com, 1.2.3.4:443", CANCELAR)
         if paso == "a_host":
-            host, _, puerto = t.partition(":")
-            host = host.strip().removeprefix("https://").removeprefix("http://").strip("/")
-            if srv.error_host(host) or (puerto and not (puerto.isdigit() and 1 <= int(puerto) <= 65535)):
-                return self.tg.mensaje(chat, "⚠️ Host o puerto inválido. Ej: vps.ejemplo.com:80", CANCELAR)
+            host, puerto = srv.normalizar_hosts(t)
+            if host is None:
+                return self.tg.mensaje(chat, "⚠️ Host o puerto inválido. Ej: vps.ejemplo.com:80  o varios: a.com, b.com, 1.2.3.4:80", CANCELAR)
             if i is not None:
                 l[i]["host"] = host
                 if puerto:
-                    l[i]["port"] = int(puerto)
+                    l[i]["port"] = puerto
                 guardar_app(l)
                 self.estado.pop(chat, None)
                 return self.pantalla_app_servidor(chat, None, i)
-            e.update(paso="a_payload_nuevo", host=host, port=int(puerto) if puerto else 80)
+            e.update(paso="a_payload_nuevo", host=host, port=puerto or 80)
             return self.tg.mensaje(chat, "Ahora pegá el payload en un solo mensaje (podés usar [crlf], [host], [split]...).\n"
                                          "Si no usa payload, la app se conecta directo por IP y puerto: tocá el botón.",
                                    [[("➡️ Sin payload (directo)", "asp")]] + CANCELAR)

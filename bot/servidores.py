@@ -19,15 +19,45 @@ def limpiar_linea(t):
 
 
 def nuevo(nombre, host="", puerto=80, payload="", tls=False, sni=""):
-    return {"name": limpiar_nombre(nombre), "host": host.strip(), "port": int(puerto),
+    return {"name": limpiar_nombre(nombre), "host": ",".join(lista_hosts(host)), "port": int(puerto),
             "payload": limpiar_linea(payload), "tls": bool(tls), "sni": sni.strip()}
 
 
+MAX_HOSTS = 8
+
+
+def lista_hosts(host):
+    """Los dominios o IP de un servidor: se pueden poner varios, separados por coma, espacio o punto y coma."""
+    return [h for h in re.split(r"[,;\s]+", host or "") if h]
+
+
 def error_host(host):
-    h = (host or "").strip()
-    if not h or re.search(r"\s", h) or "/" in h or ":" in h:
-        return "Host inválido: solo el dominio o IP, sin http:// ni espacios."
+    hs = lista_hosts(host)
+    if not hs:
+        return "Host inválido: falta el dominio o IP."
+    if len(hs) > MAX_HOSTS:
+        return f"Demasiados hosts (máximo {MAX_HOSTS})."
+    if any("/" in h or ":" in h for h in hs):
+        return "Host inválido: solo el dominio o IP, sin http:// ni puerto (el puerto va aparte)."
     return None
+
+
+def normalizar_hosts(texto):
+    """Texto escrito por el admin ("a.com, b.com:443", con http:// o no) → (hosts "a.com,b.com", puerto o None).
+    El puerto es el del primer host que lo traiga. Si algo no sirve, devuelve (None, None)."""
+    hosts, puerto = [], None
+    for crudo in lista_hosts(texto):
+        h = re.sub(r"^https?://", "", crudo).split("/")[0]
+        if h.count(":") == 1:
+            h, _, p = h.partition(":")
+            if not (p.isdigit() and 1 <= int(p) <= 65535):
+                return None, None
+            if puerto is None:
+                puerto = int(p)
+        if h and h not in hosts:
+            hosts.append(h)
+    h = ",".join(hosts)
+    return (h, puerto) if h and error_host(h) is None else (None, None)
 
 
 def valido(s):
@@ -40,7 +70,7 @@ def a_texto(lista):
     for s in lista:
         if not valido(s):
             continue
-        bloques.append(f"[{s['name']}]\nhost = {s['host']}\npuerto = {int(s['port'])}\n"
+        bloques.append(f"[{s['name']}]\nhost = {','.join(lista_hosts(s['host']))}\npuerto = {int(s['port'])}\n"
                        f"tls = {'si' if s.get('tls') else 'no'}\nsni = {s.get('sni', '')}\n"
                        f"payload = {limpiar_linea(s.get('payload', ''))}\n")
     return "\n".join(bloques)
@@ -77,6 +107,7 @@ def desde_texto(texto):
             actual["sni"] = v
     out, vistos = [], set()
     for b in bloques:
+        b["host"] = ",".join(lista_hosts(b["host"]))
         if b["port"] is None:  # como la app: 80, o 443 si hay TLS
             b["port"] = 443 if b["tls"] else 80
         if not valido(b):

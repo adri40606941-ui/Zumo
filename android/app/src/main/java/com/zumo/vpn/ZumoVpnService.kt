@@ -320,7 +320,7 @@ class ZumoVpnService : VpnService() {
      */
     private fun bucle(candidatos: List<Config>, user: String, pass: String) {
         var espera = 2000L
-        val busq = Busqueda(candidatos)
+        val busq = Busqueda(Hosts.ordenarCandidatos(candidatos) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } })
         var siguienteYa = false
         while (activo && Prefs(this).wanted) {
             if (Perfil.vencida(Prefs(this).exp)) {
