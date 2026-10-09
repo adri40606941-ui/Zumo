@@ -423,8 +423,18 @@ class Telegram:
     def _post(self, metodo, datos, timeout=40):
         req = urllib.request.Request(self.base + metodo, data=json.dumps(datos).encode(),
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.load(r)
+        # Un corte de red de un instante ("Network is unreachable") no tiene que cortar una compilación a la mitad:
+        # se reintenta unas veces. Un error de Telegram (HTTPError) sí se devuelve en el acto.
+        for intento in range(4):
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    return json.load(r)
+            except urllib.error.HTTPError:
+                raise
+            except (urllib.error.URLError, ConnectionError):
+                if intento == 3:
+                    raise
+                time.sleep(2 * (intento + 1))
 
     def actualizaciones(self, offset):
         return self._post("getUpdates", {"offset": offset, "timeout": 30,
