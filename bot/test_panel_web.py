@@ -30,6 +30,7 @@ class Base(unittest.TestCase):
             eliminar = staticmethod(lambda m, *a, **k: cv.eliminar(m, *a, correr=self.f, **k))
             bloquear = staticmethod(lambda m, *a, **k: cv.bloquear(m, *a, correr=self.f, **k))
             estado = staticmethod(lambda m, *a, **k: cv.estado(m, *a, correr=self.f, **k))
+            renombrar = staticmethod(lambda m, *a, **k: cv.renombrar(m, *a, correr=self.f, **k))
         hoy = lambda: date(2026, 10, 9)
         self.p = panel_web.PanelWeb(self.r, Servicio(self.r, lambda _i: M, Ops, hoy=hoy), reloj=lambda: self.t[0], hoy=hoy)
 
@@ -150,6 +151,25 @@ class TestPanel(Base):
         self.assertNotIn("disabled", p, "no están deshabilitadas: así el aviso aparece al tocarlas")
         self.assertIn("No disponés de la moneda de", p, "el aviso de la pantalla")
         self.assertIn('id="sin-moneda"', p)
+
+    def test_punto_verde_solo_si_esta_conectado(self):
+        self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana", dias="7")
+        self.accion(self.c, a="crear", token="EFGH5678", nombre="Beto", dias="7")
+        self.p.cache.clear()
+        self.f.us["EFGH5678"]["conectado"] = True
+        _, p = self.pagina(self.c)
+        self.assertEqual(p.count('class="punto"'), 1)
+
+    def test_lapiz_renombra_y_ofrece_renovar_bloquear_eliminar(self):
+        self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana", dias="7")
+        _, p = self.pagina(self.c)
+        for v in ('value="renombrar"', 'value="r7"', 'value="bloquear"', 'value="eliminar"'):
+            self.assertIn(v, p)
+        self.assertIn("<details class=\"edit\">", p)
+        self.accion(self.c, a="renombrar", token="ABCD1234", nombre="Ana Gómez")
+        _, p = self.pagina(self.c)
+        self.assertIn("Nombre cambiado a «Ana Gómez»", p)
+        self.assertEqual(self.f.us["ABCD1234"]["nombre"], "Ana Gómez")
 
     def test_modo_oscuro_con_un_boton_y_cookie(self):
         _, p = self.pagina(self.c)

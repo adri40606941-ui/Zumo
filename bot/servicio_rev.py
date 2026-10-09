@@ -86,6 +86,16 @@ class Servicio:
             self._vps(self.ops.bloquear, m, token, si)
             self.rev.anotar(rid, "bloquear" if si else "desbloquear", token)
 
+    def renombrar(self, rid, token, nombre):
+        with self._candado(rid):
+            r, m = self._contexto(rid)
+            self._propio(rid, token)
+            n = self._vps(self.ops.renombrar, m, token, nombre)
+            self.rev.renombrar_cuenta(token, n)
+            self._datos.pop(token, None)
+            self.rev.anotar(rid, "nombre", token)
+            return n
+
     def eliminar(self, rid, token):
         with self._candado(rid):
             r, m = self._contexto(rid)
@@ -108,7 +118,7 @@ class Servicio:
         for t, c in sorted(propias.items(), key=lambda x: -x[1].get("creado", 0)):
             e = est.get(t, {})
             filas.append({"token": t, "nombre": c.get("etq", ""), "vence": e.get("vence"),
-                          "bloqueado": e.get("bloqueado", False), "existe": e.get("existe", True), "sin_datos": sin_datos})
+                          "bloqueado": e.get("bloqueado", False), "conectado": e.get("conectado", False), "existe": e.get("existe", True), "sin_datos": sin_datos})
         return filas
 
     def datos_cuenta(self, token):

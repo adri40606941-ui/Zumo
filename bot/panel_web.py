@@ -66,6 +66,11 @@ button.icono svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .fila b{word-break:break-all}.acciones{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .acciones button{display:inline-flex;align-items:center;gap:6px}
 .acciones svg{width:22px;height:22px}
+.punto{display:inline-block;width:11px;height:11px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(31,157,87,.25);vertical-align:middle;margin-right:6px}
+details.edit{margin-top:8px}details.edit>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--borde);border-radius:99px;font-size:14px;font-weight:600}
+details.edit>summary::-webkit-details-marker{display:none}details.edit[open]>summary{border-color:var(--acento)}
+details.edit svg.lapiz{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.nom{display:flex;gap:6px;margin-top:10px}.nom input{flex:1;min-width:0;padding:8px 10px}
 .etq{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:700;color:#fff}
 .activo{background:var(--ok)}.vencido{background:var(--mal)}.bloqueado{background:var(--aviso)}
 .aviso{padding:12px 14px;border-radius:12px;margin:0 0 14px;font-size:15px}
@@ -258,6 +263,9 @@ class PanelWeb:
             elif a in ("bloquear", "desbloquear"):
                 self.srv.bloquear(rid, token, a == "bloquear")
                 s["aviso"] = ("ok", "✅ Usuario bloqueado." if a == "bloquear" else "✅ Usuario desbloqueado.")
+            elif a == "renombrar":
+                n = self.srv.renombrar(rid, token, d.get("nombre", ""))
+                s["aviso"] = ("ok", f"✅ Nombre cambiado a «{n}».")
             elif a == "eliminar":
                 return self._pagina(self._confirmar(s, token), 200)
             elif a == "eliminar_ok":
@@ -388,12 +396,21 @@ class PanelWeb:
                               f'Renovar {d}</button>' for t, d in MONEDAS.items())
             bloqueo = ('<button class="gris chico" name="a" value="desbloquear">▶ Desbloquear</button>' if f["bloqueado"]
                        else '<button class="gris chico" name="a" value="bloquear">🔒 Bloquear</button>')
+            punto = ('<span class="punto" role="img" aria-label="Conectado" title="Conectado ahora"></span>'
+                     if f.get("conectado") else "")
+            lapiz = ('<svg class="lapiz" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/>'
+                     '<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>')
             out.append(f'<div class="fila"><form class="una" method="post" action="{BASE}/accion">'
                        f'<input type="hidden" name="csrf" value="{e(s["csrf"])}"><input type="hidden" name="token" value="{tok}">'
-                       f'<b>{e(f["nombre"])}</b> <span class="etq {cls}">{estado}</span><br>'
+                       f'{punto}<b>{e(f["nombre"])}</b> <span class="etq {cls}">{estado}</span>'
+                       f'{" <span class=suave>· conectado</span>" if punto else ""}<br>'
                        f'<span class="suave">{tok} · {vence}</span>'
+                       f'<details class="edit"><summary>{lapiz} Editar</summary>'
+                       f'<div class="nom"><input type="text" name="nombre" value="{e(f["nombre"])}" maxlength="48" '
+                       'autocomplete="off" aria-label="Nombre del usuario">'
+                       '<button class="chico" name="a" value="renombrar">Guardar nombre</button></div>'
                        f'<div class="acciones">{botones}{bloqueo}'
-                       '<button class="gris chico" name="a" value="eliminar">🗑 Eliminar</button></div></form></div>')
+                       '<button class="gris chico" name="a" value="eliminar">🗑 Eliminar</button></div></details></form></div>')
         out.append("</div>")
         return "".join(out)
 
