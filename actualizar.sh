@@ -214,6 +214,7 @@ refrescar activar-pdirect.sh   ZUMOPDIRECTACT
 refrescar desactivar-pdirect.sh DESPDEOF
 refrescar activar-pdirect2.sh  ZUMOPDIRECT2ACT
 refrescar desactivar-pdirect2.sh DESPD2EOF
+refrescar puertos-extra.sh     ZUMOEXTRAPORTS
 refrescar activar-bhttp.sh     ZUMOBHTTPACT
 refrescar desactivar-bhttp.sh  DESBHTTPEOF
 refrescar activar-bhttp2.sh    ZUMOBHTTP2ACT

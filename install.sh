@@ -909,6 +909,93 @@ DESPD2EOF
 chmod +x /etc/zumo/desactivar-pdirect2.sh
 ok "desactivador de PDirect v2 instalado"
 
+paso "Instalando puertos extra (camuflaje)"
+
+cat > /etc/zumo/puertos-extra.sh <<'ZUMOEXTRAPORTS'
+#!/bin/bash
+# Puertos extra: el cliente se conecta a un puerto "de fachada" (8080, 2052, 443...) y la VPS
+# lo manda por dentro al puerto donde escucha PDirect (80 por defecto). No cambia la IP del
+# cliente, así que el limitador sigue contando bien.
+# Uso: puertos-extra.sh agregar PUERTO [DESTINO] | quitar PUERTO | listar | aplicar | limpiar
+CONF="${ZUMO_EXTRA_CONF:-/etc/zumo/puertos-extra.conf}"
+UNIT=/etc/systemd/system/zumo-puertos-extra.service
+_num() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+aplicar() {
+command -v iptables >/dev/null 2>&1 || { echo "Falta iptables (apt install iptables)"; return 1; }
+local ipt p d
+for ipt in iptables ip6tables; do
+command -v "$ipt" >/dev/null 2>&1 || continue
+"$ipt" -t nat -N ZUMO_EXTRA 2>/dev/null
+"$ipt" -t nat -F ZUMO_EXTRA 2>/dev/null
+"$ipt" -t nat -C PREROUTING -j ZUMO_EXTRA 2>/dev/null || "$ipt" -t nat -I PREROUTING -j ZUMO_EXTRA 2>/dev/null
+[ -f "$CONF" ] || continue
+while IFS=: read -r p d; do
+[ -n "$p" ] || continue
+"$ipt" -t nat -A ZUMO_EXTRA -p tcp --dport "$p" -j REDIRECT --to-ports "${d:-80}" 2>/dev/null
+done < "$CONF"
+done
+return 0
+}
+limpiar() {
+local ipt
+for ipt in iptables ip6tables; do
+command -v "$ipt" >/dev/null 2>&1 || continue
+"$ipt" -t nat -D PREROUTING -j ZUMO_EXTRA 2>/dev/null
+"$ipt" -t nat -F ZUMO_EXTRA 2>/dev/null
+"$ipt" -t nat -X ZUMO_EXTRA 2>/dev/null
+done
+if [ -z "${ZUMO_EXTRA_CONF:-}" ]; then
+systemctl disable --now zumo-puertos-extra 2>/dev/null
+rm -f "$UNIT"; systemctl daemon-reload 2>/dev/null
+fi
+return 0
+}
+instalar_unidad() {
+[ -z "${ZUMO_EXTRA_CONF:-}" ] || return 0
+cat > "$UNIT" <<'UEOF'
+[Unit]
+Description=ZUMO - puertos extra (redirigen a PDirect)
+After=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/etc/zumo/puertos-extra.sh aplicar
+ExecStop=/etc/zumo/puertos-extra.sh limpiar
+[Install]
+WantedBy=multi-user.target
+UEOF
+systemctl daemon-reload; systemctl enable zumo-puertos-extra >/dev/null 2>&1
+}
+case "${1:-}" in
+agregar)
+p="${2:-}"; d="${3:-80}"
+_num "$p" && _num "$d" || { echo "Puerto inválido (1-65535)"; exit 1; }
+[ "$p" != "22" ] && [ "$p" != "$d" ] || { echo "El puerto extra no puede ser el 22 ni igual al destino"; exit 1; }
+if grep -q "^$p:" "$CONF" 2>/dev/null; then echo "El puerto $p ya es un puerto extra"; exit 1; fi
+if ss -ltnH "sport = :$p" 2>/dev/null | grep -q .; then echo "El puerto $p ya está en uso por otro servicio"; exit 1; fi
+mkdir -p "$(dirname "$CONF")"
+echo "$p:$d" >> "$CONF"
+aplicar || { sed -i "/^$p:/d" "$CONF"; exit 1; }
+instalar_unidad
+echo "Listo: el puerto $p ahora entra a PDirect (puerto $d)."
+;;
+quitar)
+p="${2:-}"; _num "$p" || { echo "Puerto inválido"; exit 1; }
+grep -q "^$p:" "$CONF" 2>/dev/null || { echo "El puerto $p no es un puerto extra"; exit 1; }
+sed -i "/^$p:/d" "$CONF"
+if [ -s "$CONF" ]; then aplicar; else rm -f "$CONF"; limpiar; fi
+echo "Puerto $p quitado."
+;;
+listar) [ -f "$CONF" ] && cat "$CONF" ;;
+aplicar) aplicar ;;
+limpiar) limpiar ;;
+*) echo "Uso: $0 agregar PUERTO [DESTINO] | quitar PUERTO | listar | aplicar | limpiar"; exit 2 ;;
+esac
+ZUMOEXTRAPORTS
+
+chmod +x /etc/zumo/puertos-extra.sh
+ok "puertos extra instalados"
+
 paso "Instalando BadVPN (UDP 7300)"
 
 cat > /etc/zumo/activar-badvpn.sh <<'ZUMOBADVPNACT'

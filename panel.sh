@@ -207,6 +207,7 @@ ssh=$(awk 'tolower($1)=="port"{print $2; exit}' /etc/ssh/sshd_config 2>/dev/null
 out="SSH ${ssh:-22}"
 systemctl is-active --quiet pdirect-80 2>/dev/null && out+=" · WebSocket 80"
 systemctl is-active --quiet pdirect2 2>/dev/null && out+=" · WebSocket v2 $(pdirect2_port)"
+if [ -s /etc/zumo/puertos-extra.conf ]; then out+=" · Camuflado $(paste -sd, /etc/zumo/puertos-extra.conf | sed 's/:/→/g')"; fi
 systemctl is-active --quiet udpgw-7300 2>/dev/null && out+=" · BadVPN 7300"
 if systemctl is-active --quiet bhttp-server 2>/dev/null && systemctl is-active --quiet bhttp-shim 2>/dev/null; then out+=" · BHTTP $(bhttp_port)"; fi
 systemctl is-active --quiet bhttp-v2 2>/dev/null && out+=" · BHTTP v2 $(bhttp2_port)"
@@ -887,6 +888,35 @@ esac
 done
 }
 
+menu_puertos_extra() {
+while true; do
+banner; echo -e " \e[1;38;5;141mPUERTOS EXTRA (camuflaje)${N}\n"
+echo -e " \e[2mEl cliente se conecta a un puerto de fachada (8080, 2052, 443...) y la VPS lo"
+echo -e " manda por dentro a PDirect (80). La app y el limitador no notan la diferencia.${N}\n"
+systemctl is-active --quiet pdirect-80 || echo -e " \e[1;33m⚠ PDirect (80) está inactivo: activalo o estos puertos no tendrán a dónde entrar.${N}\n"
+local l; l=$(bash /etc/zumo/puertos-extra.sh listar 2>/dev/null)
+if [ -n "$l" ]; then echo -e " \e[1;32m● Camuflado activo:${N} (el cliente usa → entra a)"; echo "$l" | sed 's/^\(.*\):\(.*\)$/   puerto \1 → \2/'; echo
+else echo -e " \e[2mTodavía no hay puertos extra.${N}\n"; fi
+op 1 "⚡" "Agregar puerto extra"
+op 2 "✖" "Quitar puerto extra"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) local pe de
+local d2; d2=$(pdirect2_port)
+echo -e " Puertos a los que podés mandar: \e[1;38;5;214m80${N} (PDirect)$(systemctl is-active --quiet pdirect2 && echo ", \e[1;38;5;214m$d2${N} (PDirect v2)")"
+read -rp " Puerto de fachada, el que pone el cliente (ej. 8080, 2052, 443): " pe
+read -rp " Puerto real al que va [80]: " de; de=${de:-80}
+if bash /etc/zumo/puertos-extra.sh agregar "$pe" "$de"; then msg_ok "Camuflado: el cliente usa el $pe y entra al $de"; else msg_err "No se pudo agregar"; fi; pausa ;;
+2) local pq
+read -rp " Puerto a quitar: " pq
+if bash /etc/zumo/puertos-extra.sh quitar "$pq"; then msg_ok "Quitado"; else msg_err "No se pudo quitar"; fi; pausa ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
 badvpn_limite() {
 # $1 = max-clients | max-connections-for-client ; imprime el valor actual del servicio
 sed -n "s/.*--$1 \([0-9]\+\).*/\1/p" /etc/systemd/system/udpgw-7300.service 2>/dev/null | head -n1
@@ -1115,6 +1145,7 @@ op 2 "⚡" "BadVPN"
 op 3 "⚡" "BHTTP"
 op 4 "⚡" "HCR Server"
 op 5 "🧪" "PDirect v2 (pruebas, Cloudflare)"
+op 6 "🎭" "Puertos extra (camuflaje)"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -1123,6 +1154,7 @@ case $o in
 3) menu_bhttp ;;
 4) menu_hcr ;;
 5) menu_pdirect2 ;;
+6) menu_puertos_extra ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
