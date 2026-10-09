@@ -38,7 +38,7 @@ class PayloadTest {
     @Test
     fun separadores_y_pausas() {
         assertEquals(listOf("A" to 0L, "B" to 150L), Transport.partes("A[split]B"))
-        assertEquals(listOf("A" to 0L, "B" to 0L), Transport.partes("A[instant_split]B"))
+        assertEquals(listOf("A" to 0L, "B" to 150L), Transport.partes("A[instant_split]B"))      // igual que siempre
         assertEquals(listOf("A" to 0L, "B" to 1500L), Transport.partes("A[delay_split]B"))
         assertEquals(listOf("A" to 0L, "B" to 400L, "C" to 150L), Transport.partes("A[split_delay=400]B[split]C"))
         assertEquals(listOf("sin cortes" to 0L), Transport.partes("sin cortes"))

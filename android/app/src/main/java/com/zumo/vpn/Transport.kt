@@ -179,7 +179,7 @@ object Transport {
     }
 
     private val RE_SEPARADOR = Regex("\\[(instant_split|delay_split|split_delay=\\d{1,5}|split)\\]", RegexOption.IGNORE_CASE)
-    private const val ESPERA_SPLIT = 150L        // pausa normal entre partes
+    private const val ESPERA_SPLIT = 150L        // pausa entre partes ([split] e [instant_split] siempre esperaron esto: no se cambia)
     private const val ESPERA_DELAY_SPLIT = 1500L
 
     /** Las partes del payload, cada una con cuánto esperar antes de mandarla (ms). La primera sale sin espera. */
@@ -192,7 +192,6 @@ object Transport {
             if (trozo.isNotEmpty()) { out.add(trozo to (if (out.isEmpty()) 0L else espera)) }
             val k = m.groupValues[1].lowercase()
             espera = when {
-                k == "instant_split" -> 0L
                 k == "delay_split" -> ESPERA_DELAY_SPLIT
                 k.startsWith("split_delay=") -> k.substringAfter('=').toLong().coerceIn(0L, 10000L)
                 else -> ESPERA_SPLIT
