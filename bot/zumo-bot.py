@@ -1100,7 +1100,15 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
 
     def url_apk(self):
         d = self.dominio_lista()
-        return f"https://{d}/zumo-vpn.apk" if d else ""
+        if not d:
+            return ""
+        # Cloudflare guarda los .apk en su caché horas y entrega uno viejo ("paquete no válido"). Con la versión
+        # (la hora del APK publicado) en la dirección, cada APK nuevo tiene un enlace nuevo y nunca sale uno viejo.
+        try:
+            v = int(os.path.getmtime(os.path.join(publico.DIR, "zumo-vpn.apk")))
+        except OSError:
+            return f"https://{d}/zumo-vpn.apk"
+        return f"https://{d}/zumo-vpn.apk?v={v}"
 
     def publicar_apk_en_vps(self, apk):
         """Deja el APK para que tus clientes lo bajen de tu dominio. Devuelve el enlace, o '' si no se pudo."""

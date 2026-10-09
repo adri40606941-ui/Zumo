@@ -102,6 +102,12 @@ class Servidor(unittest.TestCase):
         self.assertIn("zumo-vpn.apk", r.getheader("Content-Disposition"))
         self.assertEqual(self.pedir("GET", "/servidores.bin")[1], self.datos, "la lista no se pisa")
 
+    def test_el_apk_con_version_en_la_direccion_se_baja_igual(self):
+        # El enlace lleva ?v=<hora> para que Cloudflare no entregue un APK viejo de su caché.
+        publico.publicar(b"PK-apk", self.dir, "zumo-vpn.apk")
+        st, cuerpo, _ = self.pedir("GET", "/zumo-vpn.apk?v=931353")
+        self.assertEqual((st, cuerpo), (200, b"PK-apk"))
+
     def test_head_no_manda_cuerpo(self):
         st, cuerpo, r = self.pedir("HEAD", "/servidores.bin")
         self.assertEqual((st, cuerpo), (200, b""))
