@@ -408,6 +408,13 @@ class MainActivity : Activity() {
                 alpha = 0.7f
                 layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) }
             })
+            // enlace chico para ver qué hizo la conexión (sirve para mandarle una captura a quien te dio la app)
+            col.addView(texto("Ver registro", 12f, ACENTO).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(8), 0, dp(14))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                setOnClickListener { verRegistro() }
+            })
         }
 
         setContentView(root)
