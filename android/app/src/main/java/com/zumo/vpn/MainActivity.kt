@@ -454,6 +454,7 @@ class MainActivity : Activity() {
         val scroll = android.widget.ScrollView(this).apply { addView(caja) }
         dialogo("Registro", scroll)
             .setPositiveButton("Cerrar", null)
+            .setOnDismissListener { Registro.limpiar() }     // al salir se borra, para que no se acumule
             .setNeutralButton("Copiar") { _, _ ->
                 val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(ClipData.newPlainText("registro", t))
