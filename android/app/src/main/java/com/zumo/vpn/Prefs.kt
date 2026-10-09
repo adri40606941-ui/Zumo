@@ -29,6 +29,11 @@ class Prefs(ctx: Context) {
         get() = sp.getString("ultimo_servidor", "") ?: ""
         set(v) { sp.edit().putString("ultimo_servidor", v).apply() }
 
+    /** Host (dominio o IP) con el que se conectó la última vez: dentro de un servidor con varios hosts, se prueba primero. */
+    var ultimoHost: String
+        get() = sp.getString("ultimo_host", "") ?: ""
+        set(v) { sp.edit().putString("ultimo_host", v).apply() }
+
     /** Nombre del cliente y vencimiento (AAAA-MM-DD) que dijo la VPS la última vez que se conectó. */
     var cuentaNombre: String
         get() = sp.getString("cuenta_nombre", "") ?: ""

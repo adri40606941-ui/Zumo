@@ -53,6 +53,24 @@ object Hosts {
         return primeros + vivosAhora.filter { it.name != ultimo } + muertos
     }
 
+    /**
+     * Como [ordenarTodos], pero si el último host donde se conectó ([nombre] + [host]) sigue contestando, sale ya con ese
+     * primero, sin esperar a sondear los demás. Si no contesta en 2 segundos, se ordena como siempre.
+     */
+    fun ordenarConUltimo(cands: List<Config>, nombre: String, host: String, esperaMs: Long = 3500, sondear: (Config) -> Boolean): List<Config> {
+        val rec = if (host.isBlank()) null else cands.firstOrNull { it.name == nombre && it.host == host }
+        if (rec != null && cands.size > 1) {
+            val vivo = java.util.concurrent.atomic.AtomicBoolean(false)
+            val listo = CountDownLatch(1)
+            Thread({
+                try { if (sondear(rec)) vivo.set(true) } catch (_: Exception) {} finally { listo.countDown() }
+            }, "zumo-sonda-ultimo").also { it.isDaemon = true }.start()
+            listo.await(2000, TimeUnit.MILLISECONDS)
+            if (vivo.get()) return listOf(rec) + cands.filter { it !== rec }
+        }
+        return ordenarTodos(cands, nombre, esperaMs, sondear)
+    }
+
     /** Un TCP al host (ya sacado de la VPN con [proteger]); true si conectó. */
     fun sondeoTcp(c: Config, proteger: (Socket) -> Unit): Boolean = try {
         Socket().use { s -> proteger(s); s.connect(InetSocketAddress(c.host, c.sshPort), 3000); true }
