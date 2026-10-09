@@ -11,12 +11,16 @@ data class Config(
     val payload: String = "",       // payload HTTP opcional (comodines: [host] [port] [host_port] [crlf] [lf] [split]...)
     val tls: Boolean = false,       // envolver la conexión en TLS (puerto 443)
     val sni: String = "",           // SNI para TLS (vacío = el host)
+    val dns: String = "",           // DNS para resolver los nombres por este servidor: "" (el del servidor) | google | cloudflare | ip,ip
     val conTimeout: Int = 15000,    // tiempo máximo para conectar el TCP; no se guarda (la app lo baja para hosts que ya no contestaron)
 ) {
     fun valida(): Boolean = hosts().isNotEmpty() && sshPort in 1..65535
 
     /** Los dominios o IP de este servidor (se pueden poner varios, separados por coma, espacio o punto y coma). */
     fun hosts(): List<String> = host.split(',', ';', ' ', '\t', '\n', '\r').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
+    /** Las IP del DNS elegido para este servidor; vacío = que resuelva el servidor SSH, como siempre. */
+    fun dnsServidores(): List<String> = Dns.servidores(dns)
 
     /** Esta misma configuración pero con un solo host (el que se va a usar para conectar). */
     fun con(h: String): Config = copy(host = h)
@@ -33,12 +37,12 @@ data class Config(
             }
             h
         }.filter { it.isNotEmpty() }.distinct()
-        return copy(host = limpios.joinToString(","), sshPort = p)
+        return copy(host = limpios.joinToString(","), sshPort = p, dns = Dns.normalizar(dns))
     }
 
     fun toJson(): JSONObject = JSONObject()
         .put("name", name).put("host", host).put("sshPort", sshPort)
-        .put("payload", payload).put("tls", tls).put("sni", sni)
+        .put("payload", payload).put("tls", tls).put("sni", sni).put("dns", dns)
 
     fun toLink(): String =
         "zumo://" + Base64.encodeToString(
@@ -54,6 +58,7 @@ data class Config(
             payload = j.optString("payload", ""),
             tls = j.optBoolean("tls", false),
             sni = j.optString("sni", ""),
+            dns = j.optString("dns", ""),
         ).limpiar()
 
         fun fromLink(link: String): Config? = try {

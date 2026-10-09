@@ -18,9 +18,40 @@ def limpiar_linea(t):
     return re.sub(r"\s*[\r\n]+\s*", "", t or "").strip()
 
 
-def nuevo(nombre, host="", puerto=80, payload="", tls=False, sni=""):
+def nuevo(nombre, host="", puerto=80, payload="", tls=False, sni="", dns=""):
     return {"name": limpiar_nombre(nombre), "host": ",".join(lista_hosts(host)), "port": int(puerto),
-            "payload": limpiar_linea(payload), "tls": bool(tls), "sni": sni.strip()}
+            "payload": limpiar_linea(payload), "tls": bool(tls), "sni": sni.strip(), "dns": normalizar_dns(dns) or ""}
+
+
+MAX_DNS = 4
+
+
+def _ipv4(t):
+    p = t.split(".")
+    return len(p) == 4 and all(x.isdigit() and len(x) <= 3 and int(x) <= 255 for x in p)
+
+
+def normalizar_dns(texto):
+    """DNS que usa la app para ese servidor → "" (el del servidor) | "google" | "cloudflare" | "ip,ip".
+    Igual que Dns.normalizar de la app. Devuelve None si el texto no sirve (ninguna IP válida)."""
+    t = (texto or "").strip().lower()
+    if t in ("", "-", "auto", "automatico", "automático", "servidor"):
+        return ""
+    if t in ("google", "8.8.8.8"):
+        return "google"
+    if t in ("cloudflare", "cf", "1.1.1.1"):
+        return "cloudflare"
+    ips = []
+    for x in re.split(r"[,;\s]+", t):
+        if _ipv4(x) and x not in ips:
+            ips.append(x)
+    return ",".join(ips[:MAX_DNS]) or None
+
+
+def etiqueta_dns(dns):
+    d = normalizar_dns(dns) or ""
+    return {"": "automático (el del servidor)", "google": "Google (8.8.8.8)",
+            "cloudflare": "Cloudflare (1.1.1.1)"}.get(d, d.replace(",", ", "))
 
 
 MAX_HOSTS = 8
@@ -72,6 +103,7 @@ def a_texto(lista):
             continue
         bloques.append(f"[{s['name']}]\nhost = {','.join(lista_hosts(s['host']))}\npuerto = {int(s['port'])}\n"
                        f"tls = {'si' if s.get('tls') else 'no'}\nsni = {s.get('sni', '')}\n"
+                       f"dns = {normalizar_dns(s.get('dns', '')) or ''}\n"
                        f"payload = {limpiar_linea(s.get('payload', ''))}\n")
     return "\n".join(bloques)
 
@@ -86,7 +118,7 @@ def desde_texto(texto):
         if l.startswith("[") and l.endswith("]") and len(l) > 2:
             dentro = l[1:-1].strip()
             if dentro and not any(c in dentro for c in "[]="):
-                actual = {"name": dentro, "host": "", "port": None, "payload": "", "tls": False, "sni": ""}
+                actual = {"name": dentro, "host": "", "port": None, "payload": "", "tls": False, "sni": "", "dns": ""}
                 bloques.append(actual)
                 continue
         if actual is None:
@@ -105,9 +137,12 @@ def desde_texto(texto):
             actual["tls"] = v.lower() in SI
         elif k == "sni":
             actual["sni"] = v
+        elif k == "dns":
+            actual["dns"] = v
     out, vistos = [], set()
     for b in bloques:
         b["host"] = ",".join(lista_hosts(b["host"]))
+        b["dns"] = normalizar_dns(b.get("dns", "")) or ""
         if b["port"] is None:  # como la app: 80, o 443 si hay TLS
             b["port"] = 443 if b["tls"] else 80
         if not valido(b):

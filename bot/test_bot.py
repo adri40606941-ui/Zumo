@@ -295,6 +295,31 @@ class Pruebas(unittest.TestCase):
         self.assertEqual(sv.desde_texto(sv.a_texto([s])), [s])
         self.assertEqual(sv.desde_texto("[X]\nhost = a.com , b.com\n")[0]["host"], "a.com,b.com")
 
+    def test_servidores_dns(self):
+        import servidores as sv
+        self.assertEqual(sv.normalizar_dns("Google"), "google")
+        self.assertEqual(sv.normalizar_dns("cf"), "cloudflare")
+        self.assertEqual(sv.normalizar_dns("-"), "")
+        self.assertEqual(sv.normalizar_dns("9.9.9.9, 9.9.9.9 8.8.4.4"), "9.9.9.9,8.8.4.4")
+        self.assertEqual(sv.normalizar_dns("1.1.1.1 2.2.2.2 3.3.3.3 4.4.4.4 5.5.5.5"), "1.1.1.1,2.2.2.2,3.3.3.3,4.4.4.4")
+        self.assertIsNone(sv.normalizar_dns("dns.malo.com 999.1.1.1"))
+        s = sv.nuevo("D", "a.com", 80, "", dns="google")
+        self.assertIn("dns = google\n", sv.a_texto([s]))
+        self.assertEqual(sv.desde_texto(sv.a_texto([s])), [s])
+        self.assertEqual(sv.desde_texto("[X]\nhost = a.com\ndns = 9.9.9.9 xx\n")[0]["dns"], "9.9.9.9")
+        self.assertEqual(sv.desde_texto("[X]\nhost = a.com\n")[0]["dns"], "")
+
+    def test_app_elegir_dns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bot, tg, b, txt, btn = self.armar(tmp)
+            btn("aadd"); txt("APP 02"); txt("vps.ejemplo.com"); txt("-")
+            btn("ad:0"); self.assertIn("adg:0", tg.datos_botones())
+            btn("adg:0"); self.assertEqual(bot.cargar_app()[0]["dns"], "google")
+            self.assertIn("DNS: Google", tg.mensajes[-1])
+            btn("adm:0"); txt("nada"); self.assertIn("ninguna IP", tg.mensajes[-1])
+            txt("9.9.9.9, 1.1.1.1"); self.assertEqual(bot.cargar_app()[0]["dns"], "9.9.9.9,1.1.1.1")
+            btn("ada:0"); self.assertEqual(bot.cargar_app()[0]["dns"], "")
+
     def test_app_agregar_y_cambiar_payload(self):
         with tempfile.TemporaryDirectory() as tmp:
             bot, tg, b, txt, btn = self.armar(tmp)
@@ -302,7 +327,7 @@ class Pruebas(unittest.TestCase):
             btn("aadd"); txt("APP 02"); txt("host:abc"); self.assertIn("inválido", tg.mensajes[-1])
             txt("vps.ejemplo.com:8080"); txt("GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]")
             self.assertEqual(bot.cargar_app(), [{"name": "APP 02", "host": "vps.ejemplo.com", "port": 8080,
-                                                  "payload": "GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]", "tls": False, "sni": ""}])
+                                                  "payload": "GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]", "tls": False, "sni": "", "dns": ""}])
             self.assertTrue(tg.borrados)  # el mensaje con el payload se borra del chat
             btn("ap:0"); txt("GET /nuevo HTTP/1.1[crlf][crlf]")
             self.assertEqual(bot.cargar_app()[0]["payload"], "GET /nuevo HTTP/1.1[crlf][crlf]")
