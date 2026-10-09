@@ -150,7 +150,7 @@ def estado(m, tokens, correr=None):
               '  if id "$u" >/dev/null 2>&1; then\n'
               f'    v=$(grep "^$u:" {DB} 2>/dev/null | head -1 | cut -d: -f3)\n'
               '    b=$(passwd -S "$u" 2>/dev/null | cut -d" " -f2)\n'
-              '    c=-; pgrep -u "$u" >/dev/null 2>&1 && c=C\n'
+              '    c=-; { pgrep -u "$u" >/dev/null 2>&1 || pgrep -f "^sshd: $u(@| |$)" >/dev/null 2>&1; } && c=C\n'
               '    echo "$u SI ${v:--} ${b:--} $c"\n'
               '  else echo "$u NO - - -"; fi\n'
               'done\n')

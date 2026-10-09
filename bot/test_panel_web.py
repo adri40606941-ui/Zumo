@@ -158,7 +158,10 @@ class TestPanel(Base):
         self.p.cache.clear()
         self.f.us["EFGH5678"]["conectado"] = True
         _, p = self.pagina(self.c)
-        self.assertEqual(p.count('class="punto"'), 1)
+        self.assertEqual(p.count('class="punto"'), 1, "uno verde, el conectado")
+        self.assertEqual(p.count('class="punto off"'), 1, "uno rojo, el que no está en línea")
+        self.assertIn("· en línea", p)
+        self.assertIn("· sin conexión", p)
 
     def test_lapiz_renombra_y_ofrece_renovar_bloquear_eliminar(self):
         self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana", dias="7")
