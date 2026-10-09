@@ -436,6 +436,21 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility = barras
     }
 
+    private var cuentaPedida = 0L
+    private val cuentaOcupada = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private fun refrescarCuenta() {
+        val ahora = System.currentTimeMillis()
+        if (ahora - cuentaPedida < 60_000L || !cuentaOcupada.compareAndSet(false, true)) return
+        cuentaPedida = ahora
+        val token = TokenCel.token(this, prefs)
+        val base = Servidores.urlActualizar(this)
+        Thread({
+            try { if (Cuenta.actualizar(base, token, Prefs(applicationContext))) runOnUiThread { refrescar() } }
+            catch (_: Exception) {} finally { cuentaOcupada.set(false) }
+        }, "zumo-cuenta-ui").start()
+    }
+
     private fun refrescar() {
         val tieneCuenta = prefs.config?.valida() == true && prefs.user.isNotBlank()
         val hayLista = servidores.isNotEmpty()
@@ -465,6 +480,8 @@ class MainActivity : Activity() {
         }
         tvEstado.setTextColor(colorEstado)
         val cuenta = if (con) Cuenta.etiqueta(prefs.cuentaNombre, prefs.cuentaVence) else ""
+        // con la VPN conectada se vuelve a preguntar cada minuto: si cambiaste el nombre o la fecha en la VPS, se actualiza solo
+        if (con) refrescarCuenta()
         tvCuenta.text = cuenta
         tvCuenta.visibility = if (cuenta.isEmpty()) View.GONE else View.VISIBLE
         puntoEstado.background = redondo(colorEstado, 10)

@@ -36,6 +36,13 @@ object Cuenta {
         return listOf(nombre.trim(), f).filter { it.isNotEmpty() }.joinToString(" ")
     }
 
+    /** Pregunta y guarda el resultado en [prefs]. true si se pudo leer. No va en el hilo principal. */
+    fun actualizar(actualizar: String, token: String, prefs: Prefs): Boolean {
+        val d = consultar(actualizar, token) ?: return false
+        prefs.cuentaNombre = d.nombre; prefs.cuentaVence = d.vence
+        return true
+    }
+
     /** Pregunta al bot (sin hilo principal). null si no hay dirección, no contesta o el token no existe. */
     fun consultar(actualizar: String, token: String): Datos? {
         for (u in urls(actualizar, token)) {

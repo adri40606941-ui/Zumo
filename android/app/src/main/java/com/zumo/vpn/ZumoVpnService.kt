@@ -369,7 +369,7 @@ class ZumoVpnService : VpnService() {
     private fun bucle(candidatos: List<Config>, user: String, pass: String) {
         var espera = 2000L
         val ordenados = try {
-            Hosts.ordenarTodos(candidatos, Prefs(this).ultimoServidor) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } }
+            Hosts.ordenarConUltimo(candidatos, Prefs(this).ultimoServidor, Prefs(this).ultimoHost) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } }
         } catch (e: Exception) { candidatos }       // si algo falla al ordenar, se usa el orden de la lista
         val busq = Busqueda(ordenados)
         // Con 2 o más servidores se prueban todos a la vez (el primero que deja entrar gana); con uno, el camino de siempre.
@@ -414,6 +414,7 @@ class ZumoVpnService : VpnService() {
                     busq.exitoNombre(cg.name)
                     huboConexion = true
                     Prefs(this).ultimoServidor = cg.name
+                    Prefs(this).ultimoHost = cg.host
                     estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; espera = 2000L; actualizarNoti()
                     listaBajada = false
                     Registro.add("✔ Conectado (${cg.name})")
@@ -446,6 +447,7 @@ class ZumoVpnService : VpnService() {
                 busq.exito()
                 huboConexion = true
                 Prefs(this).ultimoServidor = cfg.name          // el primero que se prueba la próxima vez
+                Prefs(this).ultimoHost = cfg.host
                 estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; espera = 2000L; actualizarNoti()
                 listaBajada = false
                 Registro.add("✔ Conectado")
@@ -530,7 +532,7 @@ class ZumoVpnService : VpnService() {
         fin: java.util.concurrent.atomic.AtomicBoolean,
         rechazados: MutableSet<String>, caidos: MutableSet<String>,
     ) {
-        val orden = try { Hosts.ordenarTodos(cands, "", 3500) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } } } catch (e: Exception) { cands }
+        val orden = try { Hosts.ordenarConUltimo(cands, nombre, Prefs(this).ultimoHost, 3500) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } } } catch (e: Exception) { cands }
         for (cfg in orden) {
             if (ganador.get() != null || fin.get() || !activo) return
             val t = SshTunnel(cfg, user, pass, etapa = { Registro.add("[$nombre] $it") }, proteger = { sock -> protect(sock) })
