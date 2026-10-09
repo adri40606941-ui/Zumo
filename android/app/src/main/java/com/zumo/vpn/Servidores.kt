@@ -79,11 +79,13 @@ object Servidores {
      * Servidores que se prueban con el token, en orden: el último donde se entró primero y el resto como vienen
      * en la lista. Si la app no trae lista, queda solo la cuenta guardada (si sirve).
      */
-    fun candidatos(lista: List<Config>, ultimo: String, guardada: Config?): List<Config> {
+    fun candidatos(lista: List<Config>, ultimo: String, guardada: Config?, fijo: String = ""): List<Config> {
         if (lista.isEmpty()) return listOfNotNull(guardada?.takeIf { it.valida() })
         val validos = lista.filter { it.valida() }
         // un servidor con varios hosts son varios candidatos con el mismo nombre, uno por host
-        val expandidos = validos.flatMap { c -> c.hosts().map { c.con(it) } }
+        val todos = validos.flatMap { c -> c.hosts().map { c.con(it) } }
+        // Si el cliente eligió un servidor a mano, se usa solo ese. Si ya no está en la lista, vuelve a automático.
+        val expandidos = if (fijo.isBlank()) todos else todos.filter { it.name == fijo }.ifEmpty { todos }
         val primeros = expandidos.filter { it.name == ultimo }
         if (primeros.isEmpty()) return expandidos
         return primeros + expandidos.filter { it.name != ultimo }

@@ -70,6 +70,19 @@ class ServidoresTest {
     }
 
     @Test
+    fun servidor_elegido_a_mano_prueba_solo_ese() {
+        val a = Config("APP 01", "a.com", 80, "x")
+        val b = Config("APP 02", "b.com", 80, "x")
+        val lista = listOf(a, b)
+        // automático: se prueban todos, el último donde se entró va primero
+        assertEquals(listOf("APP 02", "APP 01"), Servidores.candidatos(lista, "APP 02", null).map { it.name })
+        // elegido a mano: solo ese, aunque el último haya sido otro
+        assertEquals(listOf("APP 01"), Servidores.candidatos(lista, "APP 02", null, "APP 01").map { it.name })
+        // si el elegido ya no está en la lista, vuelve a automático
+        assertEquals(listOf("APP 01", "APP 02"), Servidores.candidatos(lista, "", null, "APP 99").map { it.name })
+    }
+
+    @Test
     fun separa_las_direcciones_de_descarga() {
         assertEquals(listOf("https://bot.zumoserver.com/servidores.bin", "https://raw.githubusercontent.com/o/r/apk/servidores.bin"),
             Servidores.separarUrls("https://bot.zumoserver.com/servidores.bin|https://raw.githubusercontent.com/o/r/apk/servidores.bin\n"))

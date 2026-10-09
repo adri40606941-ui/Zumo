@@ -192,7 +192,7 @@ class ZumoVpnService : VpnService() {
         val prefs = Prefs(this)
         Servidores.refrescar(this, prefs)   // servidor de la lista de la app: toma su payload actual
         // Con lista de servidores, la app busca sola en cuál está el token (ver Busqueda); si no, la cuenta guardada.
-        val candidatos = Servidores.candidatos(Servidores.lista(this), prefs.ultimoServidor, prefs.config)
+        val candidatos = Servidores.candidatos(Servidores.lista(this), prefs.ultimoServidor, prefs.config, prefs.servidor)
         val cfg = candidatos.firstOrNull()
         // En modo token, el token de este celular hace de usuario y de contraseña.
         val user = if (prefs.modoToken) TokenCel.token(this, prefs) else prefs.user
