@@ -154,3 +154,24 @@ def estado(m, tokens, correr=None):
             vence = None
         out[p[0]] = {"existe": p[1] == "SI", "vence": vence, "bloqueado": p[3] == "L"}
     return out
+
+
+def datos(m, token, correr=None):
+    """(existe, nombre del cliente o None, vence o None) de ese token en la VPS. El nombre sale del GECOS
+    ("hwid,<nombre>"), así que si lo cambiás en la VPS, acá cambia también."""
+    t = _token(token)
+    script = (f'id {t} >/dev/null 2>&1 || {{ echo NO; exit 0; }}\n'
+              f'echo "G $(getent passwd {t} | cut -d: -f5)"\n'
+              f'echo "V $(grep "^{t}:" {DB} 2>/dev/null | head -1 | cut -d: -f3)"\n')
+    existe, nombre, vence = False, None, None
+    for linea in _sh(m, script, correr, timeout=15).splitlines():
+        if linea.startswith("G "):
+            existe = True
+            g = linea[2:].strip()
+            nombre = g[5:].strip() if g.startswith("hwid,") else None
+        elif linea.startswith("V "):
+            try:
+                vence = date.fromisoformat(linea[2:].strip())
+            except ValueError:
+                vence = None
+    return existe, nombre or None, vence

@@ -227,6 +227,14 @@ class Revendedores:
             c = self._leer()["cuentas"].get(token)
             return c["rev"] if c else None
 
+    def cuentas_de_token(self, token):
+        """{'rev', 'etq', 'maquina'} del usuario con ese token (la VPS es la de su revendedor), o None."""
+        with self.lock:
+            d = self._leer()
+            c = d["cuentas"].get(token)
+            r = d["revendedores"].get(c["rev"]) if c else None
+            return {"rev": c["rev"], "etq": c.get("etq", ""), "maquina": r["maquina"]} if r else None
+
     def quitar_cuenta(self, token):
         with self.lock:
             d = self._leer()

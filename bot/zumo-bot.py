@@ -1823,7 +1823,10 @@ def main():
                                      workflow="publicar-servidores.yml", rama=env.get("GITHUB_REF") or "main")
     if bot.dominio_lista():
         web = panel_web.PanelWeb(bot.revs, servicio_rev.Servicio(bot.revs))   # panel de revendedores: https://dominio/r
-        publico.iniciar(accesos=bot.accesos, dominio=bot.dominio_lista(), cuenta=datos_cuenta, web=web)
+        # La app pide "Nombre [dd/mm]": primero la VPS del bot y, si el token es de un revendedor, su VPS asignada.
+        servicio = web.srv
+        publico.iniciar(accesos=bot.accesos, dominio=bot.dominio_lista(),
+                        cuenta=lambda t: datos_cuenta(t) or servicio.datos_cuenta(t), web=web)
         if not publico.hay_lista():
             bot.publicar_en_vps(cargar_app())
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()

@@ -1,4 +1,6 @@
 import os
+import re
+import shlex
 import tempfile
 import unittest
 from datetime import date
@@ -29,7 +31,10 @@ class VpsFalsa:
             if tok in self.us:
                 return "EXISTE\n"
             exp = date.fromisoformat(self._fecha_db(c))
-            self.us[tok] = {"vence": exp, "bloq": False}
+            linea = next(l for l in shlex.split(c)[2].splitlines() if l.startswith("useradd"))
+            p_ = shlex.split(linea.split("||")[0])
+            nombre = p_[p_.index("-c") + 1][5:]           # sin el "hwid,"
+            self.us[tok] = {"vence": exp, "bloq": False, "nombre": nombre}
             return "OK\n"
         if "usermod -e" in c:
             tok = self._tokens(c)[0]
@@ -51,6 +56,12 @@ class VpsFalsa:
                 self.us[tok]["bloq"] = False
                 return "OK\n"
             return "NO\n"
+        if "getent passwd" in c:
+            tok = c.split("id ")[1].split()[0]
+            u = self.us.get(tok)
+            if not u:
+                return "NO\n"
+            return f"G hwid,{u['nombre']}\nV {u['vence'].isoformat()}\n"
         if "for u in" in c:
             lista = c.split("for u in ")[1].split(";")[0].split()
             out = ""
@@ -232,7 +243,9 @@ class TestServicio(unittest.TestCase):
             eliminar = staticmethod(lambda m, *a, **k: cv.eliminar(m, *a, correr=self.f, **k))
             bloquear = staticmethod(lambda m, *a, **k: cv.bloquear(m, *a, correr=self.f, **k))
             estado = staticmethod(lambda m, *a, **k: cv.estado(m, *a, correr=self.f, **k))
-        self.s = Servicio(self.r, lambda _id: self.M, Ops, hoy=lambda: date(2026, 10, 9))
+            datos = staticmethod(lambda m, *a, **k: cv.datos(m, *a, correr=self.f, **k))
+        self.t = [1000.0]
+        self.s = Servicio(self.r, lambda _id: self.M, Ops, hoy=lambda: date(2026, 10, 9), reloj=lambda: self.t[0])
         for t in ("bronce", "plata", "oro"):
             self.r.agregar_monedas(self.a, t, 2)
 
@@ -312,6 +325,59 @@ class TestServicio(unittest.TestCase):
         self.f.caida = True
         fila = self.s.listar(self.a)[0]
         self.assertEqual((fila["token"], fila["nombre"], fila["sin_datos"]), ("ABCD1234", "Ana", True))
+
+
+class TestNombreYFecha(TestServicio):
+    """/cuenta para la app: "Nombre [dd/mm]" de los usuarios de la VPS asignada al revendedor."""
+
+    def test_nombre_y_vencimiento_desde_la_vps(self):
+        self.s.crear(self.a, "ABCD1234", "Ana Pérez", 15)
+        self.assertEqual(self.s.datos_cuenta("ABCD1234"), ("Ana Pérez", "2026-10-24"))
+
+    def test_si_cambias_el_nombre_o_la_fecha_en_la_vps_se_actualiza(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.s.datos_cuenta("ABCD1234")
+        self.f.us["ABCD1234"]["nombre"] = "Ana Gómez"
+        self.f.us["ABCD1234"]["vence"] = date(2026, 12, 25)
+        self.assertEqual(self.s.datos_cuenta("ABCD1234")[0], "Ana", "dentro de los 60 s sale lo guardado")
+        self.t[0] += 61
+        self.assertEqual(self.s.datos_cuenta("ABCD1234"), ("Ana Gómez", "2026-12-25"))
+
+    def test_guarda_el_resultado_para_no_entrar_por_ssh_cada_vez(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.s.datos_cuenta("ABCD1234")
+        n = len(self.f.scripts)
+        for _ in range(5):
+            self.s.datos_cuenta("ABCD1234")
+        self.assertEqual(len(self.f.scripts), n)
+
+    def test_token_desconocido_no_toca_ninguna_vps(self):
+        self.assertIsNone(self.s.datos_cuenta("ZZZZ9999"))
+        self.assertEqual(self.f.scripts, [])
+
+    def test_renovar_actualiza_la_fecha_en_el_acto(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.s.datos_cuenta("ABCD1234")
+        self.s.renovar(self.a, "ABCD1234", 30)
+        self.assertEqual(self.s.datos_cuenta("ABCD1234")[1], "2026-11-15")
+
+    def test_usuario_borrado_en_la_vps_ya_no_figura(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        del self.f.us["ABCD1234"]
+        self.assertIsNone(self.s.datos_cuenta("ABCD1234"))
+
+    def test_si_la_vps_no_contesta_sale_el_nombre_guardado_sin_fecha(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.f.caida = True
+        self.assertEqual(self.s.datos_cuenta("ABCD1234"), ("Ana", ""))
+        self.f.caida = False
+        self.t[0] += 31
+        self.assertEqual(self.s.datos_cuenta("ABCD1234")[1], "2026-10-16")
+
+    def test_revendedor_bloqueado_sus_clientes_siguen_viendo_su_nombre(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.r.activar(self.a, False)
+        self.assertEqual(self.s.datos_cuenta("ABCD1234")[0], "Ana")
 
 
 if __name__ == "__main__":
