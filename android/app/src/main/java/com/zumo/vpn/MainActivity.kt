@@ -381,6 +381,17 @@ class MainActivity : Activity() {
         cTel.addView(botonPrimario("📶  WiFi", VERDE) { abrirWifi() })
         if (tema.verTelefono) col.addView(cTel)
 
+        // versión de la compilación, chiquita al final de todo de la pantalla
+        val version = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "" } catch (_: Exception) { "" }
+        if (version.isNotBlank()) {
+            col.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f) })
+            col.addView(texto("v$version", 10f, TEXTO_SUAVE).apply {
+                gravity = Gravity.CENTER
+                alpha = 0.7f
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) }
+            })
+        }
+
         setContentView(root)
     }
 
