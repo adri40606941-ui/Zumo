@@ -389,7 +389,6 @@ class MainActivity : Activity() {
             PowerGuide.pedirExclusion(this)
             aviso(if (PowerGuide.sinOptimizar(this)) "La app ya está sin límite de batería" else "Permití \"Sin restricciones\" para esta app")
         })
-        cTel.addView(botonPrimario("📶  WiFi", VERDE) { abrirWifi() })
         if (tema.verTelefono) col.addView(cTel)
 
         // versión de la compilación, chiquita al final de todo de la pantalla
