@@ -217,7 +217,8 @@ Cosas a tener en cuenta:
 - Si el revendedor se equivoca de contraseña 8 veces seguidas queda frenado unos minutos. Para sacarle el acceso:
   ⏸ Bloquear acceso (sus usuarios siguen conectando). Los datos van en `/etc/zumo/revendedores.json` (sin contraseñas
   en claro) y entran en el respaldo del bot.
-- La app todavía no muestra «Nombre [dd/mm]» para estos usuarios (solo para los de la VPS del bot).
+- La app muestra «Nombre [dd/mm]» junto a «Conectado» también para estos usuarios: el bot lee el nombre y el vencimiento de la
+  VPS asignada (se guarda 60 s, así que un cambio de nombre o de fecha en la VPS aparece en un minuto). No hace falta recompilar la app.
 
 ## Archivos del repo
 

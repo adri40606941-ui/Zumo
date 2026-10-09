@@ -4,6 +4,7 @@ Lo usan el panel web (panel_web.py) y las pruebas. Todo error se levanta como Er
 puede mostrar tal cual en pantalla.
 """
 import threading
+import time
 from datetime import date
 
 import cuentas_vps as cv
@@ -12,7 +13,9 @@ from revendedores import ErrorRevendedor, moneda_de
 
 
 class Servicio:
-    def __init__(self, rev, buscar_maquina=None, ops=None, hoy=date.today):
+    def __init__(self, rev, buscar_maquina=None, ops=None, hoy=date.today, reloj=time.time):
+        self.reloj = reloj
+        self._datos = {}         # token -> (momento, resultado) de datos_cuenta
         self.rev = rev
         self.buscar_maquina = buscar_maquina or mq.buscar
         self.ops = ops or cv
@@ -73,6 +76,7 @@ class Servicio:
                 self.rev.devolver(rid, tipo)
                 raise
             self.rev.anotar(rid, "renovar", token, dias, tipo)
+            self._datos.pop(token, None)
             return {"token": token, "vence": exp, "moneda": tipo}
 
     def bloquear(self, rid, token, si=True):
@@ -88,6 +92,7 @@ class Servicio:
             self._propio(rid, token)
             self._vps(self.ops.eliminar, m, token)
             self.rev.quitar_cuenta(token)
+            self._datos.pop(token, None)
             self.rev.anotar(rid, "eliminar", token)
 
     def listar(self, rid):
@@ -105,6 +110,32 @@ class Servicio:
             filas.append({"token": t, "nombre": c.get("etq", ""), "vence": e.get("vence"),
                           "bloqueado": e.get("bloqueado", False), "existe": e.get("existe", True), "sin_datos": sin_datos})
         return filas
+
+    def datos_cuenta(self, token):
+        """(nombre, vencimiento AAAA-MM-DD o '') para que la app muestre "Nombre [dd/mm]" junto a «Conectado»,
+        o None si ese token no es de ningún revendedor (o ya no existe en su VPS). Solo consulta la VPS por
+        tokens que el bot conoce, así que nadie puede usar esto para hacer que el bot entre por SSH a cualquier lado.
+        El resultado se guarda 60 s (30 s si la VPS no contestó)."""
+        c = self.rev.cuentas_de_token(token)
+        if not c:
+            return None
+        ahora = self.reloj()
+        g = self._datos.get(token)
+        if g and ahora - g[0] < g[2]:
+            return g[1]
+        try:
+            m = self.buscar_maquina(c["maquina"])
+            if not m:
+                raise ErrorRevendedor("sin VPS")
+            existe, nombre, vence = self._vps(self.ops.datos, m, token)
+            res = (nombre or c["etq"], vence.isoformat() if vence else "") if existe else None
+            vida = 60
+        except ErrorRevendedor:
+            res, vida = (c["etq"], ""), 30
+        if len(self._datos) > 2000:
+            self._datos.clear()
+        self._datos[token] = (ahora, res, vida)
+        return res
 
     @staticmethod
     def dias_validos(dias):
