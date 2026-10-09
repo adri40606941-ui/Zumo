@@ -443,6 +443,25 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility = barras
     }
 
+    /** Muestra el registro de la conexión (cada línea con su hora) y deja copiarlo. */
+    private fun verRegistro() {
+        val t = Registro.texto(60).ifBlank { "Todavía no hay nada. Tocá Conectar y volvé a abrir esto." }
+        val caja = TextView(this).apply {
+            text = t; textSize = sp(11.5f); setTextColor(TEXTO); typeface = android.graphics.Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        val scroll = android.widget.ScrollView(this).apply { addView(caja) }
+        dialogo("Registro", scroll)
+            .setPositiveButton("Cerrar", null)
+            .setNeutralButton("Copiar") { _, _ ->
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("registro", t))
+                aviso("Registro copiado")
+            }
+            .mostrar()
+    }
+
     private var cuentaPedida = 0L
     private val cuentaOcupada = java.util.concurrent.atomic.AtomicBoolean(false)
 
