@@ -317,6 +317,17 @@ class ZumoVpnService : VpnService() {
     private val ERROR_SERVIDOR = "Error de servidor. Ningún servidor respondió; probá de nuevo en un rato."
 
     /** Si el servidor tiene un DNS elegido, se deja anotado en el registro. */
+    /** Ya conectado, pregunta a la VPS cómo se llama el cliente y cuándo vence (para mostrarlo en pantalla). */
+    private fun cargarCuenta(token: String) {
+        Thread({
+            try {
+                val d = Cuenta.consultar(Servidores.urlActualizar(this), token) ?: return@Thread
+                val p = Prefs(this)
+                p.cuentaNombre = d.nombre; p.cuentaVence = d.vence
+            } catch (_: Exception) { }
+        }, "zumo-cuenta").start()
+    }
+
     private fun avisarDns(c: Config) {
         if (c.dnsServidores().isNotEmpty()) Registro.add("DNS: ${Dns.etiqueta(c.dns)}")
     }
@@ -407,6 +418,7 @@ class ZumoVpnService : VpnService() {
                     listaBajada = false
                     Registro.add("✔ Conectado (${cg.name})")
                     avisarDns(cg)
+                    cargarCuenta(user)
                     while (activo && g.conectado) Thread.sleep(1000)
                     cayoG = activo && Prefs(this).wanted
                 } catch (e: InterruptedException) {
@@ -438,6 +450,7 @@ class ZumoVpnService : VpnService() {
                 listaBajada = false
                 Registro.add("✔ Conectado")
                 avisarDns(cfg)
+                cargarCuenta(user)
                 while (activo && t.conectado) Thread.sleep(1000)
                 cayo = activo && Prefs(this).wanted      // se cortó sola, no la cortó el usuario
             } catch (e: InterruptedException) {

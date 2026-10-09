@@ -44,6 +44,7 @@ class MainActivity : Activity() {
     private val h = Handler(Looper.getMainLooper())
     private lateinit var tvEstado: TextView
     private lateinit var tvError: TextView
+    private lateinit var tvCuenta: TextView
     private lateinit var tvDiagTitulo: TextView
     private lateinit var tvDiagPorque: TextView
     private lateinit var btn: Button
@@ -352,6 +353,13 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(10) }
         }
         filaEstado.addView(tvEstado)
+        // nombre del cliente y vencimiento, a la derecha del estado, solo con la VPN conectada
+        tvCuenta = texto("", 14f, TEXTO_SUAVE).apply {
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            maxWidth = dp(190); visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(12) }
+        }
+        filaEstado.addView(tvCuenta)
         cEstado.addView(filaEstado)
         tvError = texto("", 12.5f, NARANJA).apply {
             gravity = Gravity.CENTER
@@ -456,6 +464,9 @@ class MainActivity : Activity() {
             else -> ROJO
         }
         tvEstado.setTextColor(colorEstado)
+        val cuenta = if (con) Cuenta.etiqueta(prefs.cuentaNombre, prefs.cuentaVence) else ""
+        tvCuenta.text = cuenta
+        tvCuenta.visibility = if (cuenta.isEmpty()) View.GONE else View.VISIBLE
         puntoEstado.background = redondo(colorEstado, 10)
         tvError.text = when {
             con -> ""

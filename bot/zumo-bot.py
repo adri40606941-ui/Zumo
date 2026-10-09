@@ -222,6 +222,15 @@ def hwids():
     return out
 
 
+def datos_cuenta(token):
+    """(nombre del cliente, vencimiento AAAA-MM-DD) del cliente HWID con ese token, o None si no existe.
+    Lo usa la app, ya conectada, para mostrar "Nombre [dd/mm]" (ver publico.py: /cuenta)."""
+    nombre = hwids().get(token)
+    if nombre is None:
+        return None
+    return nombre, usuarios().get(token, ("", ""))[1]
+
+
 def limpiar_hwid(t):
     """Deja solo letras y números (lo que pegan suele traer espacios o guiones)."""
     return re.sub(r"[^A-Za-z0-9]", "", t)
@@ -1735,7 +1744,7 @@ def main():
         bot.gh_pub = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
                                      workflow="publicar-servidores.yml", rama=env.get("GITHUB_REF") or "main")
     if bot.dominio_lista():
-        publico.iniciar(accesos=bot.accesos, dominio=bot.dominio_lista())
+        publico.iniciar(accesos=bot.accesos, dominio=bot.dominio_lista(), cuenta=datos_cuenta)
         if not publico.hay_lista():
             bot.publicar_en_vps(cargar_app())
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()

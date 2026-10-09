@@ -27,6 +27,46 @@ def puerto_libre():
     return p
 
 
+class Cuenta(unittest.TestCase):
+    """/cuenta?t=<token>: nombre del cliente y vencimiento, solo con un token que existe."""
+    def setUp(self):
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        self.puerto = puerto_libre()
+        datos = {"b9da1a72f68f59b8": ("Adrián", "2026-11-09")}
+        self.s = publico.servir(self.puerto, t.name, host="127.0.0.1", cuenta=datos.get)
+        self.addCleanup(lambda: (self.s.shutdown(), self.s.server_close()))
+
+    def pedir(self, ruta):
+        c = http.client.HTTPConnection("127.0.0.1", self.puerto, timeout=5)
+        c.request("GET", ruta)
+        r = c.getresponse()
+        return r.status, r.read()
+
+    def test_da_nombre_y_vencimiento(self):
+        self.assertEqual(self.pedir("/cuenta?t=b9da1a72f68f59b8"), (200, "Adrián\n2026-11-09\n".encode()))
+
+    def test_token_que_no_existe_o_mal_formado_da_404(self):
+        self.assertEqual(self.pedir("/cuenta?t=ffffffffffffffff")[0], 404)
+        self.assertEqual(self.pedir("/cuenta?t=a")[0], 404)
+        self.assertEqual(self.pedir("/cuenta?t=../etc/passwd")[0], 404)
+        self.assertEqual(self.pedir("/cuenta")[0], 404)
+
+    def test_frena_a_quien_insiste(self):
+        estados = [self.pedir("/cuenta?t=ffffffffffffffff")[0] for _ in range(publico.MAX_CUENTA_POR_MIN + 3)]
+        self.assertEqual(estados[-1], 429)
+
+    def test_sin_funcion_de_cuenta_no_existe_la_ruta(self):
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        p = puerto_libre()
+        s = publico.servir(p, t.name, host="127.0.0.1")
+        self.addCleanup(lambda: (s.shutdown(), s.server_close()))
+        c = http.client.HTTPConnection("127.0.0.1", p, timeout=5)
+        c.request("GET", "/cuenta?t=b9da1a72f68f59b8")
+        self.assertEqual(c.getresponse().status, 404)
+
+
 class Servidor(unittest.TestCase):
     def setUp(self):
         t = tempfile.TemporaryDirectory()
