@@ -212,6 +212,8 @@ rm -f "$tmp"
 PD_ANTES=$(sha256sum /etc/zumo/activar-pdirect.sh 2>/dev/null | cut -d' ' -f1)
 refrescar activar-pdirect.sh   ZUMOPDIRECTACT
 refrescar desactivar-pdirect.sh DESPDEOF
+refrescar activar-pdirect2.sh  ZUMOPDIRECT2ACT
+refrescar desactivar-pdirect2.sh DESPD2EOF
 refrescar activar-bhttp.sh     ZUMOBHTTPACT
 refrescar desactivar-bhttp.sh  DESBHTTPEOF
 refrescar activar-bhttp2.sh    ZUMOBHTTP2ACT
@@ -234,6 +236,11 @@ if systemctl is-active --quiet pdirect-80 2>/dev/null; then
 		if bash /etc/zumo/activar-pdirect.sh >/dev/null 2>&1 && systemctl is-active --quiet pdirect-80; then ok "PDirect recompilado y reiniciado"
 		else err "PDirect no quedó activo: reactivalo desde el panel (o bash /etc/zumo/activar-pdirect.sh)"; fi
 	fi
+fi
+# PDirect v2 (pruebas): si está activo, se recompila solo si cambió su código fuente.
+if systemctl is-active --quiet pdirect2 2>/dev/null; then
+	if ZUMO_PD2_SOLO_SI_CAMBIO=1 ZUMO_BASE="$BASE" bash /etc/zumo/activar-pdirect2.sh >/dev/null 2>&1 && systemctl is-active --quiet pdirect2; then ok "PDirect v2 al día"
+	else err "PDirect v2 no quedó activo: reactivalo desde el panel (Protocolos)"; fi
 fi
 echo -e " \e[2mLos demás protocolos (BHTTP, HCR, etc.) se reactivan desde el panel si querés actualizarlos.${N}"
 else

@@ -199,11 +199,14 @@ ip=$(curl -4 -fsS --max-time 3 https://api.ipify.org 2>/dev/null)
 echo "${ip:-?}"
 }
 
+pdirect2_port() { grep -m1 '^PDIRECT2_PORT=' /etc/zumo/pdirect2.env 2>/dev/null | cut -d= -f2-; }
+
 puertos_activos() {
 local ssh out
 ssh=$(awk 'tolower($1)=="port"{print $2; exit}' /etc/ssh/sshd_config 2>/dev/null)
 out="SSH ${ssh:-22}"
 systemctl is-active --quiet pdirect-80 2>/dev/null && out+=" · WebSocket 80"
+systemctl is-active --quiet pdirect2 2>/dev/null && out+=" · WebSocket v2 $(pdirect2_port)"
 systemctl is-active --quiet udpgw-7300 2>/dev/null && out+=" · BadVPN 7300"
 if systemctl is-active --quiet bhttp-server 2>/dev/null && systemctl is-active --quiet bhttp-shim 2>/dev/null; then out+=" · BHTTP $(bhttp_port)"; fi
 systemctl is-active --quiet bhttp-v2 2>/dev/null && out+=" · BHTTP v2 $(bhttp2_port)"
@@ -856,6 +859,34 @@ esac
 done
 }
 
+menu_pdirect2() {
+while true; do
+banner; echo -e " \e[1;38;5;141mPDIRECT v2 (pruebas)${N}\n"
+echo -e " \e[2mIgual que PDirect pero contesta el WebSocket del estándar (Sec-WebSocket-Accept),"
+echo -e " que piden proxies estrictos como Cloudflare. Va aparte: PDirect (80) no se toca.${N}\n"
+if systemctl is-active --quiet pdirect2; then
+echo -e " \e[1;32m● PDirect v2: activo ($(pdirect2_port) → SSH)${N}\n"
+else
+echo -e " \e[1;31m● PDirect v2: inactivo${N}\n"
+fi
+op 1 "⚡" "Activar / cambiar puerto"
+op 2 "✖" "Desactivar"
+op 0 "◂" "Volver"
+echo -e "\n $L"; read -rp " Opción: " o
+case $o in
+1) local pp
+read -rp " Puerto [$(pdirect2_port || true)] (Enter = el último o 2052; con Cloudflare: 8080, 8880, 2052, 2082, 2086, 2095): " pp
+echo -e " \e[1;38;5;141mCompilando e instalando, aguardá...${N}"
+if bash /etc/zumo/activar-pdirect2.sh "$pp"; then msg_ok "PDirect v2 activo en el puerto $(pdirect2_port)"
+else msg_err "Falló; revisá 'journalctl -u pdirect2'"; fi; pausa ;;
+2) bash /etc/zumo/desactivar-pdirect2.sh
+msg_ok "PDirect v2 desactivado"; pausa ;;
+0) return ;;
+*) msg_err "Opción inválida"; sleep 1 ;;
+esac
+done
+}
+
 badvpn_limite() {
 # $1 = max-clients | max-connections-for-client ; imprime el valor actual del servicio
 sed -n "s/.*--$1 \([0-9]\+\).*/\1/p" /etc/systemd/system/udpgw-7300.service 2>/dev/null | head -n1
@@ -1083,6 +1114,7 @@ op 1 "⚡" "PDirect (WebSocket)"
 op 2 "⚡" "BadVPN"
 op 3 "⚡" "BHTTP"
 op 4 "⚡" "HCR Server"
+op 5 "🧪" "PDirect v2 (pruebas, Cloudflare)"
 op 0 "◂" "Volver"
 echo -e "\n $L"; read -rp " Opción: " o
 case $o in
@@ -1090,6 +1122,7 @@ case $o in
 2) menu_badvpn ;;
 3) menu_bhttp ;;
 4) menu_hcr ;;
+5) menu_pdirect2 ;;
 0) return ;;
 *) msg_err "Opción inválida"; sleep 1 ;;
 esac
@@ -1241,6 +1274,7 @@ case "$1" in
 sshd|sshd-session) echo "SSH (conexiones)" ;;
 badvpn-udpgw) echo "BadVPN (UDP)" ;;
 pdirect-c) echo "PDirect (WebSocket)" ;;
+pdirect2-c) echo "PDirect v2 (WebSocket estándar)" ;;
 bhttp-server|bhttp-shim) echo "BHTTP" ;;
 bhttp-v2) echo "BHTTP v2" ;;
 hcr-server) echo "HCR Server" ;;

@@ -121,7 +121,7 @@ class Instaladores(unittest.TestCase):
     """Instalar desde el dominio: código de un solo uso -> pase -> archivos del repo."""
 
     ARCHIVOS = {"install.sh": "#!/bin/bash\necho INSTALADO-PANEL \"$ZUMO_BASE\" > \"$SALIDA\"\n", "panel.sh": "p",
-                "zumo-lib.sh": "l", "actualizar.sh": "#!/bin/bash\necho ACTUALIZADO \"$ZUMO_BASE\" > \"$SALIDA\"\n", "fuentes/zumo-limit.c": "int x;", "config/limit.conf": "c",
+                "zumo-lib.sh": "l", "actualizar.sh": "#!/bin/bash\necho ACTUALIZADO \"$ZUMO_BASE\" > \"$SALIDA\"\n", "fuentes/zumo-limit.c": "int x;", "fuentes/pdirect2.c": "int y;", "config/limit.conf": "c",
                 "binarios/hcr-server": "BIN", "scripts/zumo-datos.sh": "d",
                 "bot/instalar-bot.sh": "#!/bin/bash\necho INSTALADO-BOT > \"$SALIDA\"\n",
                 "bot/zumo-bot.py": "bot", "bot/test_bot.py": "t", "README.md": "r", ".git/config": "[remote]",
@@ -166,7 +166,7 @@ class Instaladores(unittest.TestCase):
     def test_con_pase_sirve_lo_que_bajan_los_instaladores(self):
         p, tipo = self.pase()
         self.assertEqual((len(p), tipo), (32, "panel"))
-        for rel in ("install.sh", "panel.sh", "zumo-lib.sh", "actualizar.sh?nocache=1", "fuentes/zumo-limit.c",
+        for rel in ("install.sh", "panel.sh", "zumo-lib.sh", "actualizar.sh?nocache=1", "fuentes/zumo-limit.c", "fuentes/pdirect2.c",
                     "config/limit.conf", "binarios/hcr-server", "scripts/zumo-datos.sh", "bot/instalar-bot.sh", "bot/zumo-bot.py"):
             self.assertEqual(self.pedir(f"/s/{p}/{rel}")[0], 200, rel)
         self.assertEqual(self.pedir(f"/s/{p}/binarios/hcr-server"), (200, b"BIN"))

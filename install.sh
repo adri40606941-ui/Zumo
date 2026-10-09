@@ -802,6 +802,113 @@ DESPDEOF
 chmod +x /etc/zumo/desactivar-pdirect.sh
 ok "desactivador de PDirect instalado"
 
+paso "Instalando PDirect v2 (pruebas, WebSocket estándar)"
+
+cat > /etc/zumo/activar-pdirect2.sh <<'ZUMOPDIRECT2ACT'
+#!/bin/bash
+# PDirect v2 (para pruebas): igual que PDirect pero contesta el handshake WebSocket
+# del estándar (Sec-WebSocket-Accept), que piden proxies estrictos como Cloudflare.
+# Es un servicio aparte (pdirect2): no toca ni reinicia a PDirect (pdirect-80).
+# Uso: activar-pdirect2.sh [PUERTO]   (por defecto 2052, o el último elegido)
+[ "$(id -u)" -eq 0 ] || { echo "Ejecutá como root"; exit 1; }
+if [ -n "${ZUMO_BASE:-}" ]; then case "$ZUMO_BASE" in https://*) mkdir -p /etc/zumo; printf '%s' "${ZUMO_BASE%/}" > /etc/zumo/base.url ;; esac; fi
+export DEBIAN_FRONTEND=noninteractive
+mkdir -p /etc/zumo
+PUERTO="${1:-}"
+[ -n "$PUERTO" ] || PUERTO=$(grep -m1 '^PDIRECT2_PORT=' /etc/zumo/pdirect2.env 2>/dev/null | cut -d= -f2-)
+PUERTO="${PUERTO:-2052}"
+case "$PUERTO" in ''|*[!0-9]*) echo "Puerto inválido"; exit 1 ;; esac
+{ [ "$PUERTO" -ge 1 ] && [ "$PUERTO" -le 65535 ]; } || { echo "Puerto inválido (1-65535)"; exit 1; }
+if [ "$PUERTO" = "80" ] && systemctl is-active --quiet pdirect-80 2>/dev/null; then
+echo "El puerto 80 lo usa PDirect. Usá otro para v2 (Cloudflare acepta 8080, 8880, 2052, 2082, 2086, 2095) o apagá PDirect antes."; exit 1
+fi
+EN_USO=$(ss -ltnpH "sport = :$PUERTO" 2>/dev/null | grep -v 'pdirect2-c' | head -1)
+[ -z "$EN_USO" ] || { echo "El puerto $PUERTO ya está en uso:"; echo "$EN_USO"; exit 1; }
+
+WORK=$(mktemp -d)
+echo "[1/3] Dependencias..."
+apt-get update -qq >/dev/null 2>&1
+apt-get install -y -qq --no-install-recommends ca-certificates curl gcc libc6-dev libevent-dev >/dev/null 2>&1 || { echo "No se pudieron instalar las dependencias (gcc/libevent-dev)"; exit 1; }
+echo "[2/3] Bajando y compilando PDirect v2..."
+BASE="${ZUMO_BASE:-$(cat /etc/zumo/base.url 2>/dev/null || echo https://raw.githubusercontent.com/adri40606941-ui/Zumo/main)}"
+curl -fsSL "$BASE/fuentes/pdirect2.c" -o "$WORK/pdirect2.c" && [ -s "$WORK/pdirect2.c" ] || { echo "No se pudo bajar fuentes/pdirect2.c de $BASE"; rm -rf "$WORK"; exit 1; }
+SHA=$(sha256sum "$WORK/pdirect2.c" | cut -d' ' -f1)
+# Para actualizaciones automáticas: si ya está activo, en el mismo puerto y con el mismo código, no se reinicia.
+if [ "${ZUMO_PD2_SOLO_SI_CAMBIO:-}" = "1" ] && systemctl is-active --quiet pdirect2 2>/dev/null \
+&& [ "$(cat /etc/zumo/.pdirect2.sha 2>/dev/null)" = "$SHA" ]; then
+echo "PDirect v2 sin cambios: no se reinicia."; rm -rf "$WORK"; exit 0
+fi
+gcc -O2 -o "$WORK/pdirect2-c" "$WORK/pdirect2.c" -levent_core || { echo "No compiló PDirect v2"; rm -rf "$WORK"; exit 1; }
+
+echo "[3/3] Instalando y activando..."
+systemctl stop pdirect2 2>/dev/null || true
+install -m 0755 "$WORK/pdirect2-c" /usr/local/bin/pdirect2-c
+echo "PDIRECT2_PORT=$PUERTO" > /etc/zumo/pdirect2.env
+chmod 644 /etc/zumo/pdirect2.env
+cat > /etc/systemd/system/pdirect2.service <<U1
+[Unit]
+Description=ZUMO - PDirect v2 (TCP $PUERTO -> SSH local, WebSocket estándar)
+After=network.target
+[Service]
+EnvironmentFile=-/etc/zumo/pdirect.env
+# El mapa puerto->IP real lo escribe este servicio y lo lee el limitador (root).
+ExecStartPre=+/bin/sh -c 'mkdir -p /run/zumo/pmap && chmod 1777 /run/zumo/pmap'
+ExecStart=/usr/local/bin/pdirect2-c 22 $PUERTO
+Restart=on-failure
+RestartSec=2
+DynamicUser=yes
+ReadWritePaths=/run/zumo
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+MemoryDenyWriteExecute=true
+LockPersonality=true
+SystemCallArchitectures=native
+LimitCORE=0
+LimitNOFILE=65536
+TasksMax=1024
+MemoryMax=256M
+[Install]
+WantedBy=multi-user.target
+U1
+rm -rf "$WORK"
+systemctl daemon-reload
+systemctl enable --now pdirect2
+sleep 1
+if systemctl is-active --quiet pdirect2; then
+echo "$SHA" > /etc/zumo/.pdirect2.sha
+echo "PDirect v2 activo en el puerto $PUERTO."
+exit 0
+fi
+echo "PDirect v2 no quedó activo. Mirá: journalctl -u pdirect2 -n 20"
+exit 1
+ZUMOPDIRECT2ACT
+
+chmod +x /etc/zumo/activar-pdirect2.sh
+ok "PDirect v2 instalado"
+
+paso "Instalando desactivador de PDirect v2"
+
+cat > /etc/zumo/desactivar-pdirect2.sh <<'DESPD2EOF'
+#!/bin/bash
+systemctl disable --now pdirect2 2>/dev/null
+rm -f /etc/systemd/system/pdirect2.service /etc/zumo/.pdirect2.sha
+systemctl daemon-reload
+systemctl reset-failed pdirect2 2>/dev/null
+DESPD2EOF
+
+chmod +x /etc/zumo/desactivar-pdirect2.sh
+ok "desactivador de PDirect v2 instalado"
+
 paso "Instalando BadVPN (UDP 7300)"
 
 cat > /etc/zumo/activar-badvpn.sh <<'ZUMOBADVPNACT'
