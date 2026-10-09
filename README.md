@@ -305,3 +305,12 @@ servidor. Si el servidor rechaza el token no insiste con sus otros hosts. Hay qu
 Los instaladores y actualizadores del dominio salen de la copia del repo de la central (`/opt/zumo-repo`). El bot la sincroniza con GitHub
 **cada hora** y **cada vez que le pides un código** de instalación o actualización; también a mano en 📱 App Android → Compilar en la VPS → 🔄 Sincronizar con GitHub.
 Para actualizar una VPS con panel: `zumo-actualizar` (o el código «actualizar» si todavía no está pasada al dominio).
+
+## PDirect v2 (pruebas, para Cloudflare)
+
+PDirect (puerto 80) queda **igual**. PDirect v2 es un servicio aparte (`pdirect2`, programa `fuentes/pdirect2.c`) que, cuando el pedido trae `Sec-WebSocket-Key`, contesta el handshake del estándar (RFC 6455): una sola respuesta `101 Switching Protocols` con `Upgrade`, `Connection` y `Sec-WebSocket-Accept` correcto. Sin esa cabecera contesta igual que PDirect. Sigue anotando la IP real para el limitador.
+
+- Activar: panel → Protocolos → **PDirect v2 (pruebas, Cloudflare)**. Puerto por defecto 2052 (Cloudflare acepta 80, 8080, 8880, 2052, 2082, 2086, 2095). El 80 solo si PDirect está apagado.
+- `zumo-actualizar` lo recompila solo si cambió el código y no lo reinicia si no hay cambios.
+- Para Cloudflare: el dominio en tu zona con la nube naranja, el payload con `Upgrade: websocket` y el puerto de v2.
+- Probarlo: `bash tests/prueba-pdirect2.sh` (necesita `libevent-dev`).
