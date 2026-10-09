@@ -107,6 +107,22 @@ if curl -fsSL "$BASE/fuentes/zumo-limit.c$NC" -o "$TMP/zumo-limit.c" && [ -s "$T
 	if gcc -O2 -o "$TMP/zumo-limit" "$TMP/zumo-limit.c" 2>"$TMP/err.log"; then
 		systemctl stop zumo-limit 2>/dev/null
 		install -m 0755 "$TMP/zumo-limit" /usr/local/bin/zumo-limit
+		# Si la VPS no tenía la unidad del limitador (instalación vieja o incompleta), se crea.
+		if [ ! -f /etc/systemd/system/zumo-limit.service ]; then
+			cat > /etc/systemd/system/zumo-limit.service <<'SVCEOF'
+[Unit]
+Description=ZUMO limitador de conexiones (1 sesion por usuario, revisa cada 3 s)
+After=network.target
+[Service]
+ExecStart=/usr/local/bin/zumo-limit
+Restart=always
+RestartSec=2
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+			systemctl daemon-reload 2>/dev/null
+			systemctl enable zumo-limit >/dev/null 2>&1
+		fi
 		# Unidad al día (reinicio rápido) y configuración, sin pisar la que ya tenés.
 		if [ -f /etc/systemd/system/zumo-limit.service ] && ! grep -q '^RestartSec=' /etc/systemd/system/zumo-limit.service; then
 			sed -i 's/^Restart=always$/Restart=always\nRestartSec=2/' /etc/systemd/system/zumo-limit.service
