@@ -527,6 +527,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
 
     # -- pantallas
     def mostrar(self, chat, mid, texto, botones):
+        self._viva_soltar(chat, mid)     # si ese mensaje era una máquina, ya no se refresca
         if mid:
             self.tg.editar(chat, mid, texto, botones)
         else:
@@ -1712,6 +1713,7 @@ def main():
             bot.publicar_en_vps(cargar_app())
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()
     threading.Thread(target=bot.sincronizar_diario, daemon=True).start()
+    threading.Thread(target=bot.refrescar_maquinas_loop, daemon=True).start()
     print("zumo-bot: listo, admins:", sorted(admins) or "ninguno (mandá /id al bot)", flush=True)
     offset = 0
     while True:

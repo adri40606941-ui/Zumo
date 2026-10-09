@@ -65,6 +65,31 @@ class Recursos(unittest.TestCase):
         self.assertEqual(r["activo"], "up 5 days, 3 hours")
         self.assertEqual(r["sesiones"], 14)
 
+    def test_formato_real_de_free_y_df_con_tres_valores(self):
+        # el script imprime "RAM total usada disponible" y "DISCO total usado libre"
+        r = mq.parsear_recursos("RAM 1982 842 1010\nDISCO 51200000 18432000 32768000\n")
+        self.assertEqual(r["ram"], (842, 1982))
+        self.assertEqual(r["disco"], (18000, 50000))
+        self.assertEqual(r["disco_libre"], 32000)
+
+    def test_disco_libre_si_df_no_lo_trae(self):
+        r = mq.parsear_recursos("DISCO 2048 1024\n")
+        self.assertEqual(r["disco_libre"], 1)
+
+    def test_velocidad_de_red(self):
+        r = mq.parsear_recursos("RED 1000 400 1250000 150400\n")
+        self.assertEqual(r["red"], (1249000, 150000))     # bytes por segundo: baja, sube
+        self.assertEqual(mq.parsear_recursos("RED 500 500 100 100\n")["red"], (0, 0))   # contador reiniciado: nunca negativo
+
+    def test_el_script_real_y_el_lector_hablan_el_mismo_formato(self):
+        import subprocess
+        if not os.path.exists("/proc/net/dev"):
+            self.skipTest("sin /proc")
+        out = subprocess.run(["sh", "-c", mq.COMANDO_RECURSOS], capture_output=True, text=True, timeout=30).stdout
+        r = mq.parsear_recursos(out)
+        for clave in ("cpu", "ram", "disco", "disco_libre", "red", "carga"):
+            self.assertIsNotNone(r[clave], f"{clave} no se pudo leer de: {out!r}")
+
     def test_salida_rota_no_rompe(self):
         r = mq.parsear_recursos("basura\nCPU x y\nRAM 1\n")
         self.assertIsNone(r["cpu"])
@@ -174,6 +199,77 @@ class Flujo(Tienda):
         b.pedir(1, "x", "m_host")
         self.assertTrue(b.texto_maquinas(1, b.estado[1], "m_host", "no es un host!!"))
         self.assertIn("m_host", b.estado[1]["paso"])
+
+
+class PantallaViva(Tienda):
+    """La pantalla de una máquina se refresca sola cada 5 minutos, mientras siga abierta."""
+
+    class Bot(mb.MaquinasMixin):
+        def __init__(self):
+            self.pantallas = []
+
+        def mostrar(self, chat, mid, texto, botones):
+            self._viva_soltar(chat, mid)        # igual que el Bot real
+            self.pantallas.append((chat, mid, texto))
+
+    def setUp(self):
+        super().setUp()
+        self.m = mq.agregar("app02", "203.0.113.10", 22, "root", "x", "")
+        self.viejo = mq.recursos
+        mq.recursos = lambda m: mq.parsear_recursos(
+            "CPU 1000 500 1600 550\nCORES 2\nRAM 2000 500 1400\nDISCO 51200000 18432000 32768000\n"
+            "RED 0 0 2500000 125000\nCARGA 0.1 0.1 0.1\nACTIVO up 1 day\nSESIONES 3\n")
+        self.addCleanup(setattr, mq, "recursos", self.viejo)
+        self.b = PantallaViva.Bot()
+
+    def test_muestra_cpu_ram_disco_libre_y_velocidad(self):
+        self.b.pantalla_maquina(1, 10, self.m["id"])
+        txt = self.b.pantallas[-1][2]
+        self.assertIn("CPU", txt)
+        self.assertIn("RAM", txt)
+        self.assertIn("25%", txt)                       # 500 de 2000 MB
+        self.assertIn("libre 31.2 GB de 48.8 GB", txt)
+        self.assertIn("⬇ 20.0 Mbps", txt)               # 2.5 MB/s
+        self.assertIn("⬆ 1.0 Mbps", txt)                # 125 kB/s
+        self.assertIn("cada 5 minutos", txt)
+
+    def test_no_refresca_antes_de_los_5_minutos(self):
+        self.b.pantalla_maquina(1, 10, self.m["id"])
+        t0 = self.b._vivas()[(1, 10)]["t"]
+        self.b.refrescar_vivas(ahora=t0 + 299)
+        self.assertEqual(len(self.b.pantallas), 1)
+
+    def test_refresca_a_los_5_minutos_y_sigue_viva(self):
+        self.b.pantalla_maquina(1, 10, self.m["id"])
+        t0 = self.b._vivas()[(1, 10)]["t"]
+        self.b.refrescar_vivas(ahora=t0 + 300)
+        self.assertEqual(len(self.b.pantallas), 2)
+        self.assertIn((1, 10), self.b._vivas())
+
+    def test_si_el_mensaje_pasa_a_otra_pantalla_deja_de_refrescar(self):
+        self.b.pantalla_maquina(1, 10, self.m["id"])
+        self.b.mostrar(1, 10, "🛡 Zumo VPN", [])        # el usuario tocó otro botón en ese mensaje
+        self.assertNotIn((1, 10), self.b._vivas())
+        t0 = 10 ** 9
+        self.b.refrescar_vivas(ahora=t0)
+        self.assertEqual(len(self.b.pantallas), 2)
+
+    def test_deja_de_refrescar_a_las_6_horas(self):
+        self.b.pantalla_maquina(1, 10, self.m["id"])
+        v = self.b._vivas()[(1, 10)]
+        self.b.refrescar_vivas(ahora=v["inicio"] + mb.VIDA_MAX_SEG + 1)
+        self.assertNotIn((1, 10), self.b._vivas())
+        self.assertEqual(len(self.b.pantallas), 1)
+
+    def test_el_refresco_no_estira_la_vida_maxima(self):
+        self.b.pantalla_maquina(1, 10, self.m["id"])
+        inicio = self.b._vivas()[(1, 10)]["inicio"]
+        self.b.refrescar_vivas(ahora=inicio + 300)
+        self.assertEqual(self.b._vivas()[(1, 10)]["inicio"], inicio)
+
+    def test_sin_mensaje_no_se_registra(self):
+        self.b.pantalla_maquina(1, None, self.m["id"])
+        self.assertEqual(self.b._vivas(), {})
 
 
 if __name__ == "__main__":
