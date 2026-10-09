@@ -112,8 +112,8 @@ object Transport {
         if (c.payload.isNotBlank()) {
             etapa("Enviando solicitud")
             s.soTimeout = 15000
-            for ((i, parte) in partir(expandir(c.payload, c)).withIndex()) {
-                if (i > 0) Thread.sleep(150)
+            for ((parte, espera) in partes(expandir(c.payload, c))) {
+                if (espera > 0) Thread.sleep(espera)
                 salida.write(parte.toByteArray(Charsets.ISO_8859_1))
                 salida.flush()
             }
@@ -139,20 +139,73 @@ object Transport {
         return sb.toString()
     }
 
-    /** Reemplaza los comodines del payload: [host] [port] [host_port] [crlf] [cr] [lf] [protocol]. */
-    fun expandir(p: String, c: Config): String = p
-        .replace("\\r", "\r").replace("\\n", "\n")
-        .replace("[crlf*2]", "\r\n\r\n")
-        .replace("[host_port]", "${c.host}:${c.sshPort}")
-        .replace("[ssh_host]", c.host).replace("[ssh_port]", c.sshPort.toString())
-        .replace("[host]", c.host)
-        .replace("[port]", c.sshPort.toString())
-        .replace("[protocol]", "HTTP/1.1")
-        .replace("[crlf]", "\r\n").replace("[cr]", "\r").replace("[lf]", "\n")
+    /** Cuenta de intentos: [rotate=a;b;c] toma el siguiente valor en cada conexión. */
+    private val rotador = java.util.concurrent.atomic.AtomicInteger(0)
+    private const val UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+    private val RE_ROTATE = Regex("\\[rotate=([^\\]]*)\\]", RegexOption.IGNORE_CASE)
+    private val RE_RANDOM = Regex("\\[(?:random|rand)=([^\\]]*)\\]", RegexOption.IGNORE_CASE)
+    private val RE_CRLF_N = Regex("\\[crlf\\*(\\d{1,2})\\]", RegexOption.IGNORE_CASE)
+    private val RE_LF_N = Regex("\\[lf\\*(\\d{1,2})\\]", RegexOption.IGNORE_CASE)
 
-    /** [split] y [instant_split] envían el payload en partes. */
-    fun partir(p: String): List<String> =
-        p.split("[split]", "[instant_split]").filter { it.isNotEmpty() }.ifEmpty { listOf(p) }
+    private fun opciones(s: String) = s.split(';', ',', '|').map { it.trim() }.filter { it.isNotEmpty() }
+
+    /**
+     * Reemplaza los comodines del payload (iguales a los de HTTP Custom / HTTP Injector):
+     *  [host] [port] [host_port] [ssh_host] [ssh_port] [sni] [protocol] [method] [ua]
+     *  [crlf] [cr] [lf] [lfcr] [tab] [crlf*N] [lf*N]
+     *  [rotate=a;b;c]  un valor distinto en cada conexión, en orden (a, b, c, a...)
+     *  [random=a;b;c]  un valor al azar
+     * Los separadores de partes ([split], [instant_split], [delay_split], [split_delay=ms]) los lee [partes].
+     * [vuelta] es el número de intento (para [rotate]); por defecto sube solo en cada conexión.
+     */
+    fun expandir(p: String, c: Config, vuelta: Int = rotador.getAndIncrement()): String {
+        val v = vuelta and Int.MAX_VALUE
+        return p
+            .replace("\\r", "\r").replace("\\n", "\n")
+            .let { RE_ROTATE.replace(it) { m -> opciones(m.groupValues[1]).let { o -> if (o.isEmpty()) "" else o[v % o.size] } } }
+            .let { RE_RANDOM.replace(it) { m -> opciones(m.groupValues[1]).let { o -> if (o.isEmpty()) "" else o[java.util.concurrent.ThreadLocalRandom.current().nextInt(o.size)] } } }
+            .let { RE_CRLF_N.replace(it) { m -> "\r\n".repeat(m.groupValues[1].toInt()) } }
+            .let { RE_LF_N.replace(it) { m -> "\n".repeat(m.groupValues[1].toInt()) } }
+            .replace("[host_port]", "${c.host}:${c.sshPort}")
+            .replace("[ssh_host]", c.host).replace("[ssh_port]", c.sshPort.toString())
+            .replace("[host]", c.host)
+            .replace("[port]", c.sshPort.toString())
+            .replace("[sni]", c.sni.ifBlank { c.host })
+            .replace("[protocol]", "HTTP/1.1")
+            .replace("[method]", "GET")
+            .replace("[ua]", UA)
+            .replace("[lfcr]", "\n\r")
+            .replace("[crlf]", "\r\n").replace("[cr]", "\r").replace("[lf]", "\n").replace("[tab]", "\t")
+    }
+
+    private val RE_SEPARADOR = Regex("\\[(instant_split|delay_split|split_delay=\\d{1,5}|split)\\]", RegexOption.IGNORE_CASE)
+    private const val ESPERA_SPLIT = 150L        // pausa normal entre partes
+    private const val ESPERA_DELAY_SPLIT = 1500L
+
+    /** Las partes del payload, cada una con cuánto esperar antes de mandarla (ms). La primera sale sin espera. */
+    fun partes(p: String): List<Pair<String, Long>> {
+        val out = ArrayList<Pair<String, Long>>()
+        var desde = 0
+        var espera = 0L
+        for (m in RE_SEPARADOR.findAll(p)) {
+            val trozo = p.substring(desde, m.range.first)
+            if (trozo.isNotEmpty()) { out.add(trozo to (if (out.isEmpty()) 0L else espera)) }
+            val k = m.groupValues[1].lowercase()
+            espera = when {
+                k == "instant_split" -> 0L
+                k == "delay_split" -> ESPERA_DELAY_SPLIT
+                k.startsWith("split_delay=") -> k.substringAfter('=').toLong().coerceIn(0L, 10000L)
+                else -> ESPERA_SPLIT
+            }
+            desde = m.range.last + 1
+        }
+        val resto = p.substring(desde)
+        if (resto.isNotEmpty()) out.add(resto to (if (out.isEmpty()) 0L else espera))
+        return if (out.isEmpty()) listOf(p to 0L) else out
+    }
+
+    /** [split] y compañía envían el payload en partes. */
+    fun partir(p: String): List<String> = partes(p).map { it.first }
 
     /**
      * Lee lo que el servidor conteste al payload. Es tolerante, como HTTP Custom: las respuestas HTTP

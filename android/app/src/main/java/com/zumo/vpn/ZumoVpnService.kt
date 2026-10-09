@@ -204,6 +204,7 @@ class ZumoVpnService : VpnService() {
             fallarEncendido("Tu cuenta venció el ${Perfil.fechaLinda(prefs.exp)}. Pedí la renovación."); return
         }
         Registro.add("Iniciando…")
+        listaBajada = false
         desde = System.currentTimeMillis()
         tomarBloqueos()
         try {
@@ -320,6 +321,26 @@ class ZumoVpnService : VpnService() {
         if (c.dnsServidores().isNotEmpty()) Registro.add("DNS: ${Dns.etiqueta(c.dns)}")
     }
 
+    @Volatile private var listaBajada = false     // ya se buscó la lista nueva en esta ronda de fallos
+
+    /**
+     * Si ningún servidor responde, antes de rendirse se baja la lista de servidores (la app está fuera de la VPN, así que
+     * la descarga sale por la red normal). Si el admin ya cambió el front o el payload, se devuelve la lista nueva para
+     * probar una vez más. null = no hay nada nuevo (o ya se probó).
+     */
+    private fun listaNueva(actuales: List<Config>): List<Config>? {
+        if (listaBajada) return null
+        listaBajada = true
+        Registro.add("Ningún servidor respondió; buscando la lista de servidores nueva…")
+        val r = try { Servidores.descargar(this) } catch (e: Exception) { return null }
+        if (r.estado != Servidores.Estado.OK) { Registro.add("No se pudo bajar la lista nueva"); return null }
+        val p = Prefs(this)
+        val nuevos = Servidores.candidatos(Servidores.lista(this), p.ultimoServidor, p.config, if (Servidores.MOSTRAR_SELECTOR) p.servidor else "")
+        if (nuevos.isEmpty() || nuevos == actuales) { Registro.add("La lista no cambió"); return null }
+        Registro.add("Lista nueva encontrada; probando de nuevo")
+        return nuevos
+    }
+
     private fun detenerPorError(motivo: String) {
         ultimoError = motivo
         Registro.add("✘ $motivo")
@@ -367,7 +388,10 @@ class ZumoVpnService : VpnService() {
                         else -> {}
                     }
                     // Nadie respondió y nunca se llegó a conectar: no se reintenta, queda desconectado con el error.
-                    if (!huboConexion && res.rechazados.isEmpty()) { detenerPorError(ERROR_SERVIDOR); return }
+                    if (!huboConexion && res.rechazados.isEmpty()) {
+                        listaNueva(candidatos)?.let { bucle(it, user, pass); return }
+                        detenerPorError(ERROR_SERVIDOR); return
+                    }
                     ultimoError = "Ningún servidor respondió"; Registro.add("✘ $ultimoError; reintentando…")
                     estado = "Reconectando…"; conectado = false; conectando = true; actualizarNoti()
                     if (!esperarReintento(espera)) break
@@ -380,6 +404,7 @@ class ZumoVpnService : VpnService() {
                     huboConexion = true
                     Prefs(this).ultimoServidor = cg.name
                     estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; espera = 2000L; actualizarNoti()
+                    listaBajada = false
                     Registro.add("✔ Conectado (${cg.name})")
                     avisarDns(cg)
                     while (activo && g.conectado) Thread.sleep(1000)
@@ -410,6 +435,7 @@ class ZumoVpnService : VpnService() {
                 huboConexion = true
                 Prefs(this).ultimoServidor = cfg.name          // el primero que se prueba la próxima vez
                 estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; espera = 2000L; actualizarNoti()
+                listaBajada = false
                 Registro.add("✔ Conectado")
                 avisarDns(cfg)
                 while (activo && t.conectado) Thread.sleep(1000)
@@ -425,7 +451,10 @@ class ZumoVpnService : VpnService() {
                     Busqueda.Paso.NINGUNO -> { detenerPorError("Token expirado. Pedí que te lo activen y volvé a intentar."); return }
                     Busqueda.Paso.SIGUIENTE -> { siguienteYa = true; Registro.add("Probando otro servidor…") }
                     // Se probaron todos, ninguno respondió y nunca se llegó a conectar: no se reintenta.
-                    Busqueda.Paso.REINTENTAR -> if (!huboConexion && !algunoRechazo) { detenerPorError(ERROR_SERVIDOR); return }
+                    Busqueda.Paso.REINTENTAR -> if (!huboConexion && !algunoRechazo) {
+                        listaNueva(candidatos)?.let { bucle(it, user, pass); return }
+                        detenerPorError(ERROR_SERVIDOR); return
+                    }
                 }
                 cayo = activo && Prefs(this).wanted && !siguienteYa
             } finally {
