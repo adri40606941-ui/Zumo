@@ -193,7 +193,7 @@ class Revendedores:
 
         def f(r, d):
             if r["monedas"].get(tipo, 0) < 1:
-                raise ErrorRevendedor(f"No te quedan monedas de {tipo} ({MONEDAS[tipo]} días).")
+                raise ErrorRevendedor(f"No disponés de esa moneda: no tenés monedas de {tipo} ({MONEDAS[tipo]} días).")
             r["monedas"][tipo] -= 1
         self._editar(rid, f)
         return tipo
