@@ -168,7 +168,8 @@ def datos(m, token, correr=None):
         if linea.startswith("G "):
             existe = True
             g = linea[2:].strip()
-            nombre = g[5:].strip() if g.startswith("hwid,") else None
+            # "hwid,<nombre>"; si en la VPS lo editaron sin el prefijo, vale lo que haya (hasta la primera coma)
+            nombre = (g[5:] if g.startswith("hwid,") else g.split(",")[0]).strip() or None
         elif linea.startswith("V "):
             try:
                 vence = date.fromisoformat(linea[2:].strip())
