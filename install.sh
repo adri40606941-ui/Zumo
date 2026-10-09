@@ -921,7 +921,11 @@ CONF="${ZUMO_EXTRA_CONF:-/etc/zumo/puertos-extra.conf}"
 UNIT=/etc/systemd/system/zumo-puertos-extra.service
 _num() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 aplicar() {
-command -v iptables >/dev/null 2>&1 || { echo "Falta iptables (apt install iptables)"; return 1; }
+if ! command -v iptables >/dev/null 2>&1; then
+echo "Instalando iptables..."
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables >/dev/null 2>&1
+command -v iptables >/dev/null 2>&1 || { echo "No se pudo instalar iptables (probá: apt install iptables)"; return 1; }
+fi
 local ipt p d
 for ipt in iptables ip6tables; do
 command -v "$ipt" >/dev/null 2>&1 || continue
