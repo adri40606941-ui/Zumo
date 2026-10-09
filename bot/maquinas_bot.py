@@ -4,6 +4,7 @@ Se mezcla en la clase Bot de zumo-bot.py (usa self.tg, self.estado, self.mostrar
 La lógica de SSH, cifrado y protocolos está en maquinas.py.
 """
 import re
+import time
 
 import maquinas as mq
 
@@ -25,6 +26,16 @@ def _gb(mb):
     return f"{mb / 1024:.1f}"
 
 
+def _vel(bytes_por_seg):
+    """Velocidad de red en bits por segundo (como se contratan los planes): Kbps o Mbps."""
+    bits = bytes_por_seg * 8
+    return f"{bits / 1e6:.1f} Mbps" if bits >= 1e6 else f"{bits / 1e3:.0f} Kbps"
+
+
+REFRESCO_SEG = 300          # la pantalla de una máquina se actualiza sola cada 5 minutos
+VIDA_MAX_SEG = 6 * 3600     # y deja de hacerlo a las 6 horas de abierta, por si quedó olvidada
+
+
 class MaquinasMixin:
 
     # ------------------------------------------------------------------ pantallas
@@ -43,7 +54,7 @@ class MaquinasMixin:
         botones.append([("◂ Menú", "menu")])
         self.mostrar(chat, mid, txt, botones)
 
-    def pantalla_maquina(self, chat, mid, mid_maq, aviso=""):
+    def pantalla_maquina(self, chat, mid, mid_maq, aviso="", inicio=None):
         try:
             m = mq.buscar(mid_maq)
         except mq.ErrorMaquina as e:
@@ -55,26 +66,74 @@ class MaquinasMixin:
             r = mq.recursos(m)
         except mq.ErrorMaquina as e:
             cab += f"\n⚠️ {e}"
-            return self.mostrar(chat, mid, cab, [[("🔄 Reintentar", f"maq:{m['id']}")],
-                                                 [("🗑 Quitar", f"maqq:{m['id']}")], [("◂ Máquinas", "maq")]])
+            self.mostrar(chat, mid, cab, [[("🔄 Reintentar", f"maq:{m['id']}")],
+                                          [("🗑 Quitar", f"maqq:{m['id']}")], [("◂ Máquinas", "maq")]])
+            return self._viva_registrar(chat, mid, m["id"], inicio)
         lineas = [cab, f"🕒 {r['activo'] or 'uptime desconocido'}"]
         if r["cpu"] is not None:
             cores = f" ({r['cores']} núcleos)" if r["cores"] else ""
             lineas.append(f"CPU    {_barra(r['cpu'], 100)}  {r['cpu']:.0f}%{cores}")
         if r["ram"]:
             usada, total = r["ram"]
-            lineas.append(f"RAM    {_barra(usada, total)}  {_gb(usada)} / {_gb(total)} GB")
+            pct = f"{100 * usada / total:.0f}%  " if total else ""
+            lineas.append(f"RAM    {_barra(usada, total)}  {pct}{_gb(usada)} / {_gb(total)} GB")
         if r["disco"]:
             usado, total = r["disco"]
-            lineas.append(f"Disco  {_barra(usado, total)}  {_gb(usado)} / {_gb(total)} GB")
+            libre = r["disco_libre"] if r["disco_libre"] is not None else max(0, total - usado)
+            lineas.append(f"Disco  {_barra(usado, total)}  libre {_gb(libre)} GB de {_gb(total)} GB")
+        if r["red"]:
+            baja, sube = r["red"]
+            lineas.append(f"Velocidad  ⬇ {_vel(baja)}  ⬆ {_vel(sube)}")
         if r["carga"]:
             lineas.append(f"Carga  {r['carga']}")
         if r["sesiones"] is not None:
             lineas.append(f"Sesiones SSH abiertas: {r['sesiones']}")
+        lineas.append("\n🔄 Se actualiza sola cada 5 minutos")
         botones = [[("🔄 Actualizar", f"maq:{m['id']}"), ("🔌 Protocolos", f"maqp:{m['id']}")],
                    [("🗑 Quitar", f"maqq:{m['id']}")],
                    [("◂ Máquinas", "maq")]]
         self.mostrar(chat, mid, "\n".join(lineas), botones)
+        self._viva_registrar(chat, mid, m["id"], inicio)
+
+    # ------------------------------------------------------------------ actualización automática
+    def _vivas(self):
+        """Pantallas de máquina abiertas que se refrescan solas: {(chat, mensaje): {...}}."""
+        v = self.__dict__.get("_viva")
+        if v is None:
+            v = self.__dict__["_viva"] = {}
+        return v
+
+    def _viva_registrar(self, chat, mid, id_maq, inicio=None):
+        if not mid:      # sin mensaje que editar (se mandó uno nuevo): no hay nada que refrescar
+            return
+        ahora = time.time()
+        self._vivas()[(chat, mid)] = {"maq": id_maq, "t": ahora, "inicio": inicio if inicio is not None else ahora}
+
+    def _viva_soltar(self, chat, mid):
+        """Ese mensaje ya muestra otra cosa: se deja de refrescar."""
+        self._vivas().pop((chat, mid), None)
+
+    def refrescar_vivas(self, ahora=None):
+        ahora = time.time() if ahora is None else ahora
+        for (chat, mid), info in list(self._vivas().items()):
+            if ahora - info["inicio"] > VIDA_MAX_SEG:
+                self._viva_soltar(chat, mid)
+                continue
+            if ahora - info["t"] < REFRESCO_SEG:
+                continue
+            info["t"] = ahora       # si algo falla, se reintenta en 5 minutos y no en cada vuelta
+            try:
+                self.pantalla_maquina(chat, mid, info["maq"], inicio=info["inicio"])
+            except Exception as e:
+                print("zumo-bot: no se pudo refrescar la máquina:", e, flush=True)
+
+    def refrescar_maquinas_loop(self):
+        while True:
+            time.sleep(30)
+            try:
+                self.refrescar_vivas()
+            except Exception as e:
+                print("zumo-bot: error al refrescar máquinas:", e, flush=True)
 
     def pantalla_protocolos(self, chat, mid, mid_maq, aviso=""):
         try:

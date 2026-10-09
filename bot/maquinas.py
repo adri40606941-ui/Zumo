@@ -159,12 +159,14 @@ def probar(host, puerto, usuario, clave):
 
 # ------------------------------------------------------------------ recursos
 COMANDO_RECURSOS = r"""
-a=$(awk '/^cpu /{print $2+$3+$4+$5+$6+$7+$8, $5}' /proc/stat); sleep 1
-b=$(awk '/^cpu /{print $2+$3+$4+$5+$6+$7+$8, $5}' /proc/stat)
+red() { awk -F: 'NR>2 { n=$1; gsub(/ /,"",n); if (n=="lo" || n ~ /^(veth|docker|br-)/) next; split($2,a," "); rx+=a[1]; tx+=a[9] } END { print rx+0, tx+0 }' /proc/net/dev; }
+a=$(awk '/^cpu /{print $2+$3+$4+$5+$6+$7+$8, $5}' /proc/stat); r1=$(red); sleep 1
+b=$(awk '/^cpu /{print $2+$3+$4+$5+$6+$7+$8, $5}' /proc/stat); r2=$(red)
 echo "CPU $a $b"
+echo "RED $r1 $r2"
 echo "CORES $(nproc)"
-free -m | awk '/^Mem:/{print "RAM", $2, $3}'
-df -k / | awk 'NR==2{print "DISCO", $2, $3}'
+free -m | awk '/^Mem:/{print "RAM", $2, $3, $7}'
+df -k / | awk 'NR==2{print "DISCO", $2, $3, $4}'
 echo "CARGA $(cut -d' ' -f1-3 /proc/loadavg)"
 echo "ACTIVO $(uptime -p 2>/dev/null)"
 echo "SESIONES $(who | wc -l)"
@@ -173,7 +175,8 @@ echo "SESIONES $(who | wc -l)"
 
 def parsear_recursos(texto):
     """Convierte la salida de COMANDO_RECURSOS en un dict. Lo que no se entienda queda en None."""
-    r = {"cpu": None, "cores": None, "ram": None, "disco": None, "carga": None, "activo": None, "sesiones": None}
+    r = {"cpu": None, "cores": None, "ram": None, "disco": None, "disco_libre": None, "red": None,
+         "carga": None, "activo": None, "sesiones": None}
     for linea in texto.splitlines():
         p = linea.split()
         if not p:
@@ -185,10 +188,15 @@ def parsear_recursos(texto):
                 r["cpu"] = round(100 * (dt - di) / dt, 1) if dt > 0 else 0.0
             elif p[0] == "CORES":
                 r["cores"] = int(p[1])
-            elif p[0] == "RAM" and len(p) == 4:
+            elif p[0] == "RAM" and len(p) >= 3:
                 r["ram"] = (int(p[2]), int(p[1]))            # (usada MB, total MB)
-            elif p[0] == "DISCO" and len(p) == 4:
+            elif p[0] == "DISCO" and len(p) >= 3:
                 r["disco"] = (int(p[2]) // 1024, int(p[1]) // 1024)   # (usado MB, total MB)
+                libre_kb = int(p[3]) if len(p) >= 4 else int(p[1]) - int(p[2])
+                r["disco_libre"] = max(0, libre_kb) // 1024            # libre MB
+            elif p[0] == "RED" and len(p) == 5:
+                # bytes por segundo en el último segundo (todas las placas menos lo y las de docker)
+                r["red"] = (max(0, int(p[3]) - int(p[1])), max(0, int(p[4]) - int(p[2])))   # (baja, sube)
             elif p[0] == "CARGA":
                 r["carga"] = " · ".join(p[1:4])
             elif p[0] == "ACTIVO":
