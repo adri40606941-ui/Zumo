@@ -423,8 +423,9 @@ class MainActivity : Activity() {
         val hayLista = servidores.isNotEmpty()
         cSinCuenta.visibility = if (!hayLista && !tieneCuenta) View.VISIBLE else View.GONE
         cCuenta.visibility = if (hayLista || tieneCuenta) View.VISIBLE else View.GONE
-        // Con lista de servidores la app busca sola dónde está el token (Busqueda): el cliente no elige ni ve servidores.
-        tvServidor.visibility = if (hayLista) View.GONE else View.VISIBLE
+        // El selector se ve siempre: "Automático" busca sola dónde está el token (Busqueda) y, si el cliente
+        // elige un servidor de la lista, se conecta solo a ese.
+        tvServidor.visibility = View.VISIBLE
 
         val con = ZumoVpnService.conectado
         val conectando = ZumoVpnService.conectando && !con
@@ -652,12 +653,14 @@ class MainActivity : Activity() {
         if (elegido != null && elegido != prefs.config) prefs.config = elegido   // payload nuevo tras actualizar la app
         val cfg = prefs.config
         val porArchivo = elegido == null && cfg?.valida() == true && prefs.user.isNotBlank()   // cuenta de un .zs
+        val automatico = elegido == null && !porArchivo && servidores.isNotEmpty()
         tvServidor.text = when {
             elegido != null -> "🌐  ${elegido.name}   ▾"
             porArchivo -> "📄  ${cfg?.name ?: "Zumo"}   ▾"
+            automatico -> "⚡  Automático   ▾"
             else -> "Elegí un servidor   ▾"
         }
-        tvServidor.setTextColor(if (elegido != null || porArchivo) TEXTO else NARANJA)
+        tvServidor.setTextColor(if (elegido != null || porArchivo || automatico) TEXTO else NARANJA)
         tvCuentaZs.visibility = if (porArchivo && !prefs.modoToken) View.VISIBLE else View.GONE
         cajaLogin.visibility = if (!prefs.modoToken && elegido != null) View.VISIBLE else View.GONE
         cargando = true
@@ -679,6 +682,14 @@ class MainActivity : Activity() {
         ocultarTeclado()
         val lista = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(4), dp(16), dp(4)) }
         lateinit var d: AlertDialog
+        // "Automático": la app prueba todos y entra al que tenga el token activo (como antes de poder elegir).
+        val esAuto = prefs.servidor.isBlank()
+        lista.addView(texto((if (esAuto) "✓  " else "⚡  ") + "Automático", 16f, if (esAuto) ACENTO else TEXTO, esAuto).apply {
+            background = redondo(conOpacidad(CAMPO), radio(0.6f), trazo = if (esAuto) 2 else 1, colorTrazo = if (esAuto) ACENTO else BORDE)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+            setOnClickListener { d.dismiss(); usarAutomatico() }
+        })
         for (sv in servidores) {
             val actual = sv.name == prefs.servidor
             val fila = texto((if (actual) "✓  " else "🌐  ") + sv.name, 16f, if (actual) ACENTO else TEXTO, actual).apply {
@@ -738,6 +749,15 @@ class MainActivity : Activity() {
                 refrescar()
             }
         }.start()
+    }
+
+    /** Vuelve al modo automático: no hay servidor fijo y la app busca sola dónde está el token. */
+    private fun usarAutomatico() {
+        if (prefs.servidor.isBlank() && prefs.config == null) return
+        prefs.servidor = ""; prefs.config = null; prefs.exp = ""
+        Registro.add("Servidor elegido: Automático")
+        cargarCuenta()
+        refrescar()
     }
 
     private fun usarServidor(s: Config) {
