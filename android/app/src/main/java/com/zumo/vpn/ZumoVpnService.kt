@@ -315,6 +315,11 @@ class ZumoVpnService : VpnService() {
     /** Corta la VPN para siempre (hasta que el usuario toque Conectar) y deja el motivo en pantalla. */
     private val ERROR_SERVIDOR = "Error de servidor. Ningún servidor respondió; probá de nuevo en un rato."
 
+    /** Si el servidor tiene un DNS elegido, se deja anotado en el registro. */
+    private fun avisarDns(c: Config) {
+        if (c.dnsServidores().isNotEmpty()) Registro.add("DNS: ${Dns.etiqueta(c.dns)}")
+    }
+
     private fun detenerPorError(motivo: String) {
         ultimoError = motivo
         Registro.add("✘ $motivo")
@@ -376,6 +381,7 @@ class ZumoVpnService : VpnService() {
                     Prefs(this).ultimoServidor = cg.name
                     estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; espera = 2000L; actualizarNoti()
                     Registro.add("✔ Conectado (${cg.name})")
+                    avisarDns(cg)
                     while (activo && g.conectado) Thread.sleep(1000)
                     cayoG = activo && Prefs(this).wanted
                 } catch (e: InterruptedException) {
@@ -405,6 +411,7 @@ class ZumoVpnService : VpnService() {
                 Prefs(this).ultimoServidor = cfg.name          // el primero que se prueba la próxima vez
                 estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; espera = 2000L; actualizarNoti()
                 Registro.add("✔ Conectado")
+                avisarDns(cfg)
                 while (activo && t.conectado) Thread.sleep(1000)
                 cayo = activo && Prefs(this).wanted      // se cortó sola, no la cortó el usuario
             } catch (e: InterruptedException) {

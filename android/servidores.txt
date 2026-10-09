@@ -13,6 +13,7 @@
 #  payload = todo en UNA sola línea. Comodines: [host] [port] [host_port] [crlf] [lf] [split]
 #  tls = no                   (si = envolver la conexión en TLS)
 #  sni =                      (solo con tls; vacío = el host)
+#  dns =                      (vacío = el del servidor | google | cloudflare | IP a mano, ej. 9.9.9.9, 1.1.1.1)
 #
 #  Ejemplo:
 #

@@ -44,6 +44,8 @@ class MainActivity : Activity() {
     private val h = Handler(Looper.getMainLooper())
     private lateinit var tvEstado: TextView
     private lateinit var tvError: TextView
+    private lateinit var tvDiagTitulo: TextView
+    private lateinit var tvDiagPorque: TextView
     private lateinit var btn: Button
     private var btnActualizar: TextView? = null
     @Volatile private var actualizando = false
@@ -370,6 +372,15 @@ class MainActivity : Activity() {
         cVence.addView(tvVence); cVence.addView(tvVenceDetalle)
         if (tema.verVencimiento) col.addView(cVence)
 
+        // diagnóstico: qué error dio y por qué no conectó
+        val cDiag = tarjeta().apply { setPadding(dp(16), dp(12), dp(16), dp(12)) }
+        tvDiagTitulo = texto("Sin errores", 15f, VERDE, true)
+        tvDiagPorque = texto("", 12.5f, TEXTO_SUAVE).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) }
+        }
+        cDiag.addView(tvDiagTitulo); cDiag.addView(tvDiagPorque)
+        col.addView(cDiag)
+
         // ajustes del teléfono que ayudan a conectar: DNS privado y batería
         val cTel = tarjeta()
         seccion(cTel, "📶", "Ajustes del teléfono")
@@ -449,12 +460,19 @@ class MainActivity : Activity() {
         puntoEstado.background = redondo(colorEstado, 10)
         tvError.text = when {
             con -> ""
-            // reconectando tras una caída: se muestra el motivo; en el primer intento, el paso actual
-            conectando && ZumoVpnService.estado == "Reconectando…" && ZumoVpnService.ultimoError.isNotBlank() -> ZumoVpnService.ultimoError
+            // el error y su motivo ahora se ven en el cuadro de diagnóstico, debajo
             conectando -> ZumoVpnService.etapaActual
-            ZumoVpnService.estado == "Error" -> ZumoVpnService.ultimoError
             else -> ""
         }
+        val diag = Diagnostico.de(con, conectando, ZumoVpnService.etapaActual,
+            if (ZumoVpnService.estado == "Error" || conectando) ZumoVpnService.ultimoError else "")
+        tvDiagTitulo.text = diag.titulo
+        tvDiagTitulo.setTextColor(when (diag.tipo) {
+            Diagnostico.Tipo.BIEN -> VERDE
+            Diagnostico.Tipo.EN_CURSO -> NARANJA
+            else -> ROJO
+        })
+        tvDiagPorque.text = diag.porque
         btn.text = when {
             con -> "◼  Desconectar"
             conectando -> "⏳  Conectando…  (tocá para cancelar)"

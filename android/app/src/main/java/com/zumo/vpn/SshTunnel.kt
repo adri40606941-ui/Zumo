@@ -88,6 +88,9 @@ class SshTunnel(
 
     val conectado: Boolean get() = session?.isConnected == true
 
+    /** DNS elegido para el servidor de esta sesión (vacío = el del servidor SSH). */
+    val dns: List<String> get() = cfg.dnsServidores()
+
     fun abrirCanal(host: String, port: Int): ChannelDirectTCPIP? {
         val s = session ?: return null
         if (!s.isConnected) return null

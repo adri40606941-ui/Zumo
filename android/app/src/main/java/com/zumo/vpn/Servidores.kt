@@ -24,6 +24,7 @@ import java.net.URL
  *   payload = GET / HTTP/1.1[crlf]Host: [host][crlf]Upgrade: websocket[crlf][crlf]
  *   tls = no
  *   sni =
+ *   dns =                  (vacío = el del servidor | google | cloudflare | 9.9.9.9, 1.1.1.1)
  */
 object Servidores {
     /** false = el cliente no ve ni elige servidores (siempre Automático). true = se muestra el selector. */
@@ -180,11 +181,12 @@ object Servidores {
         var payload = ""
         var tls = false
         var sni = ""
+        var dns = ""
 
         fun cerrar() {
             val n = nombre ?: return
             nombre = null
-            val c = Config(name = n, host = host, sshPort = puerto ?: if (tls) 443 else 80, payload = payload, tls = tls, sni = sni).limpiar()
+            val c = Config(name = n, host = host, sshPort = puerto ?: if (tls) 443 else 80, payload = payload, tls = tls, sni = sni, dns = dns).limpiar()
             if (!c.valida()) return
             // dos servidores con el mismo nombre: el segundo queda como "Nombre (2)"
             var unico = c.name
@@ -202,7 +204,7 @@ object Servidores {
                 if (dentro.isNotEmpty() && dentro.none { it == '[' || it == ']' || it == '=' }) {
                     cerrar()
                     nombre = dentro
-                    host = ""; puerto = null; payload = ""; tls = false; sni = ""
+                    host = ""; puerto = null; payload = ""; tls = false; sni = ""; dns = ""
                     continue
                 }
             }
@@ -217,6 +219,7 @@ object Servidores {
                 "payload" -> payload = valor
                 "tls", "ssl" -> tls = valor.lowercase() in SI
                 "sni" -> sni = valor
+                "dns" -> dns = valor
             }
         }
         cerrar()

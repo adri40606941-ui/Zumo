@@ -620,12 +620,14 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
             return self.pantalla_app(chat, mid, "Ese servidor ya no está.")
         s = l[i]
         txt = (f"📡 {s['name']}\nHost: {s['host'].replace(',', ', ')}\nPuerto: {s['port']}\n"
-               f"TLS: {'sí' if s.get('tls') else 'no'}{' · SNI ' + s['sni'] if s.get('sni') else ''}\n\n"
+               f"TLS: {'sí' if s.get('tls') else 'no'}{' · SNI ' + s['sni'] if s.get('sni') else ''}\n"
+               f"DNS: {srv.etiqueta_dns(s.get('dns', ''))}\n\n"
                f"Payload:\n{s.get('payload') or '(vacío)'}")
         self.mostrar(chat, mid, txt, [
             [("📝 Cambiar payload", f"ap:{i}")],
             [("🌐 Host y puerto", f"ah:{i}"), ("🏷 Nombre", f"an:{i}")],
             [(f"🔒 TLS: {'sí' if s.get('tls') else 'no'} (cambiar)", f"at:{i}"), ("SNI", f"as:{i}")],
+            [("🌐 DNS de este servidor", f"ad:{i}")],
             [("🗑 Borrar", f"ab:{i}")],
             [("◂ App Android", "app")]])
 
@@ -747,7 +749,7 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
             return self.pantalla_lista(chat, mid, 0)
         if acc == "t":
             return self.boton_tema(chat, mid, arg)
-        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "acompv", "acompv_si", "asinc", "asubir", "apub", "apub_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs", "asp", "aqp"):
+        if acc in ("app", "a", "aadd", "apegar", "acomp", "acomp_si", "acompv", "acompv_si", "asinc", "asubir", "apub", "apub_si", "aclave", "aclave_si", "ap", "ah", "an", "at", "as", "ab", "abs", "asp", "aqp", "ad", "adg", "adc", "ada", "adm"):
             return self.boton_app(chat, mid, acc, arg)
         return self.menu(chat, mid)      # botón de una versión anterior del bot
 
@@ -834,6 +836,22 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
             return self.pantalla_app_servidor(chat, mid, i)
         if acc == "as":
             return self.pedir(chat, "Escribí el SNI (o - para dejarlo vacío):", "a_sni", i=i)
+        if acc == "ad":
+            actual = srv.normalizar_dns(s.get("dns", "")) or ""
+            marca = lambda v, t: (("✓ " if actual == v else "") + t)
+            return self.mostrar(chat, mid, f"🌐 DNS de {s['name']}\n\nActual: {srv.etiqueta_dns(actual)}\n\n"
+                                "Es el DNS con el que la app resuelve los nombres cuando se conecta a este servidor "
+                                "(sale por el túnel). Si no contesta, la app usa el del servidor. El cliente puede cambiarlo en la app.",
+                                [[(marca("", "⚡ Automático"), f"ada:{i}")],
+                                 [(marca("google", "Google"), f"adg:{i}"), (marca("cloudflare", "Cloudflare"), f"adc:{i}")],
+                                 [("✍ Escribir DNS a mano", f"adm:{i}")],
+                                 [("◂ Servidor", f"a:{i}")]])
+        if acc in ("ada", "adg", "adc"):
+            l[i]["dns"] = {"ada": "", "adg": "google", "adc": "cloudflare"}[acc]
+            guardar_app(l)
+            return self.pantalla_app_servidor(chat, mid, i)
+        if acc == "adm":
+            return self.pedir(chat, "✍ Escribí la IP del DNS (hasta 4, separadas por coma o espacio), por ejemplo: 9.9.9.9, 149.112.112.112", "a_dns", i=i)
         if acc == "ab":
             return self.mostrar(chat, mid, f"🗑 ¿Borrar el servidor {s['name']} de la app?",
                                 [[("✅ Sí, borrar", f"abs:{i}"), ("✖ No", f"a:{i}")]])
@@ -944,6 +962,15 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
             return self.pantalla_app_servidor(chat, None, len(l) - 1)
         if paso == "a_payload":
             l[i]["payload"] = "" if t.strip() == "-" else srv.limpiar_linea(t)
+            guardar_app(l)
+            self.estado.pop(chat, None)
+            self.borrar_entrada(chat, e)
+            return self.pantalla_app_servidor(chat, None, i)
+        if paso == "a_dns":
+            d = srv.normalizar_dns(t)
+            if d is None:
+                return self.tg.mensaje(chat, "⚠️ No encontré ninguna IP válida. Escribí algo como 9.9.9.9, 149.112.112.112:", CANCELAR)
+            l[i]["dns"] = d
             guardar_app(l)
             self.estado.pop(chat, None)
             self.borrar_entrada(chat, e)
