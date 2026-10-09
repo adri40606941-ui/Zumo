@@ -313,6 +313,8 @@ class ZumoVpnService : VpnService() {
     }
 
     /** Corta la VPN para siempre (hasta que el usuario toque Conectar) y deja el motivo en pantalla. */
+    private val ERROR_SERVIDOR = "Error de servidor. Ningún servidor respondió; probá de nuevo en un rato."
+
     private fun detenerPorError(motivo: String) {
         ultimoError = motivo
         Registro.add("✘ $motivo")
@@ -336,6 +338,8 @@ class ZumoVpnService : VpnService() {
         // Con 2 o más servidores se prueban todos a la vez (el primero que deja entrar gana); con uno, el camino de siempre.
         val varios = candidatos.map { it.name }.distinct().size >= 2
         var siguienteYa = false
+        var huboConexion = false      // ya se conectó alguna vez en esta sesión: si después se cae, sí se reintenta
+        var algunoRechazo = false     // algún servidor respondió pero no conoce el token
         while (activo && Prefs(this).wanted) {
             if (Perfil.vencida(Prefs(this).exp)) {
                 detenerPorError("Tu cuenta venció el ${Perfil.fechaLinda(Prefs(this).exp)}. Pedí la renovación."); return
@@ -353,10 +357,12 @@ class ZumoVpnService : VpnService() {
                 val cg = res.cfg
                 if (g == null || cg == null) {
                     when (busq.resultadoRonda(res.rechazados, res.caidos)) {
-                        Busqueda.Paso.RECHAZADO -> { detenerPorError("Usuario o contraseña incorrectos. Pedí tu cuenta de nuevo."); return }
-                        Busqueda.Paso.NINGUNO -> { detenerPorError("Error de usuario: tu token no está activo en ningún servidor. Pedí que lo activen y volvé a intentar."); return }
+                        Busqueda.Paso.RECHAZADO -> { detenerPorError("Token expirado. Pedí que te lo activen y volvé a intentar."); return }
+                        Busqueda.Paso.NINGUNO -> { detenerPorError("Token expirado. Pedí que te lo activen y volvé a intentar."); return }
                         else -> {}
                     }
+                    // Nadie respondió y nunca se llegó a conectar: no se reintenta, queda desconectado con el error.
+                    if (!huboConexion && res.rechazados.isEmpty()) { detenerPorError(ERROR_SERVIDOR); return }
                     ultimoError = "Ningún servidor respondió"; Registro.add("✘ $ultimoError; reintentando…")
                     estado = "Reconectando…"; conectado = false; conectando = true; actualizarNoti()
                     if (!esperarReintento(espera)) break
@@ -366,6 +372,7 @@ class ZumoVpnService : VpnService() {
                 try {
                     cfgActual = cg; tunel = g
                     busq.exitoNombre(cg.name)
+                    huboConexion = true
                     Prefs(this).ultimoServidor = cg.name
                     estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; espera = 2000L; actualizarNoti()
                     Registro.add("✔ Conectado (${cg.name})")
@@ -394,6 +401,7 @@ class ZumoVpnService : VpnService() {
                 t.connect()
                 tunel = t
                 busq.exito()
+                huboConexion = true
                 Prefs(this).ultimoServidor = cfg.name          // el primero que se prueba la próxima vez
                 estado = "Conectado"; conectado = true; conectando = false; ultimoError = ""; espera = 2000L; actualizarNoti()
                 Registro.add("✔ Conectado")
@@ -403,12 +411,14 @@ class ZumoVpnService : VpnService() {
                 // el usuario tocó Desconectar, o la red volvió y queremos reintentar ya
             } catch (e: Exception) {
                 val rechazado = esFalloDeLogin(e)
+                if (rechazado) algunoRechazo = true
                 if (!rechazado) { ultimoError = mensaje(e); Registro.add("✘ $ultimoError") }
                 when (busq.fallo(rechazado)) {
-                    Busqueda.Paso.RECHAZADO -> { detenerPorError("Usuario o contraseña incorrectos. Pedí tu cuenta de nuevo."); return }
-                    Busqueda.Paso.NINGUNO -> { detenerPorError("Error de usuario: tu token no está activo en ningún servidor. Pedí que lo activen y volvé a intentar."); return }
+                    Busqueda.Paso.RECHAZADO -> { detenerPorError("Token expirado. Pedí que te lo activen y volvé a intentar."); return }
+                    Busqueda.Paso.NINGUNO -> { detenerPorError("Token expirado. Pedí que te lo activen y volvé a intentar."); return }
                     Busqueda.Paso.SIGUIENTE -> { siguienteYa = true; Registro.add("Probando otro servidor…") }
-                    Busqueda.Paso.REINTENTAR -> {}
+                    // Se probaron todos, ninguno respondió y nunca se llegó a conectar: no se reintenta.
+                    Busqueda.Paso.REINTENTAR -> if (!huboConexion && !algunoRechazo) { detenerPorError(ERROR_SERVIDOR); return }
                 }
                 cayo = activo && Prefs(this).wanted && !siguienteYa
             } finally {
@@ -516,7 +526,7 @@ class ZumoVpnService : VpnService() {
             e is java.net.ConnectException -> "No se pudo conectar (puerto cerrado o bloqueado)"
             e is java.net.SocketTimeoutException || m.contains("timeout", true) || m.contains("timed out", true) ->
                 "Tiempo agotado: el servidor no respondió"
-            esFalloDeLogin(e) -> "Usuario o contraseña incorrectos (o cuenta vencida)"
+            esFalloDeLogin(e) -> "Token expirado"
             m.contains("Connection reset", true) || m.contains("EOF", true) -> "El servidor cortó la conexión"
             else -> if (m.startsWith("El servidor ")) m else "Error de conexión (${e.javaClass.simpleName})"
         }
@@ -607,7 +617,7 @@ class ZumoVpnService : VpnService() {
             "$txt  ·  ${duracionDesde()}  ·  $velocidad  ·  Total ${datosUsados}"
         } else txt
         b.setContentTitle(Tema.actual(this).nombre).setContentText(cuerpo)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setSmallIcon(R.drawable.ic_cohete)
             .setContentIntent(abrir).setOngoing(true).setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_SERVICE)
             .addAction(Notification.Action.Builder(null, "Desconectar", parar).build())
