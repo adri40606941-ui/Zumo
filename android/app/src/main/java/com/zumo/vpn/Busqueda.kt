@@ -36,6 +36,27 @@ class Busqueda(candidatos: List<Config>) {
      * Un servidor con varios hosts son varios candidatos con el mismo nombre: si uno cae se prueba el
      * otro host; si el servidor rechaza el token, no se insiste con sus otros hosts.
      */
+    /** Entró el servidor [nombre] (búsqueda en paralelo): pasa a ser el primero y se reinician los conteos. */
+    fun exitoNombre(nombre: String) {
+        val primeros = orden.filter { it.name == nombre }
+        orden = primeros + orden.filter { it.name != nombre }
+        pos = 0; caidos.clear(); rechazados.clear(); rondasConRechazo = 0
+    }
+
+    /**
+     * Búsqueda en paralelo: se probaron TODOS los servidores a la vez y ninguno dejó entrar. [rechazados] = respondieron
+     * pero no conocen el token; [caidos] = no respondieron. Mismo criterio que [fallo] al terminar una vuelta.
+     */
+    fun resultadoRonda(rechazados: Set<String>, caidos: Set<String>): Paso {
+        val algunoCaido = caidos.any { it !in rechazados }
+        val servidores = orden.map { it.name }.distinct().size
+        if (rechazados.isNotEmpty()) rondasConRechazo++
+        val definitivo = !algunoCaido || rondasConRechazo >= 2
+        if (!definitivo) return Paso.REINTENTAR
+        rondasConRechazo = 0
+        return if (servidores == 1) Paso.RECHAZADO else Paso.NINGUNO
+    }
+
     fun fallo(tokenRechazado: Boolean): Paso {
         val nombre = orden[pos].name
         if (tokenRechazado) rechazados.add(nombre) else caidos.add(nombre)
