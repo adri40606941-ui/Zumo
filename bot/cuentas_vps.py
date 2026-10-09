@@ -88,14 +88,15 @@ def _vence_actual(m, t, correr):
     return True, None
 
 
-def renovar(m, token, dias, hoy=None, correr=None):
-    """Suma los días a su vencimiento (si ya venció, cuenta desde hoy). Devuelve la nueva fecha."""
+def renovar(m, token, dias, hoy=None, correr=None, exp=None):
+    """Suma los días a su vencimiento (si ya venció, cuenta desde hoy). Devuelve la nueva fecha.
+    Con `exp` (una fecha) la deja exactamente en ese día: así las VPS de un mismo revendedor quedan iguales."""
     t = _token(token)
     hoy = hoy or date.today()
     existe, actual = _vence_actual(m, t, correr)
     if not existe:
         raise ErrorCuenta("Ese usuario ya no existe en la VPS.")
-    exp = max(actual or hoy, hoy) + timedelta(days=int(dias))
+    exp = exp or max(actual or hoy, hoy) + timedelta(days=int(dias))
     script = (CABECERA +
               f'usermod -e {_cuenta_hasta(exp)} {t} || {{ echo ERROR; exit 0; }}\n'
               f'zumo_db_set {t} 3 {exp.isoformat()}\n'
@@ -107,6 +108,15 @@ def renovar(m, token, dias, hoy=None, correr=None):
     if "OK" not in r:
         raise ErrorCuenta("La VPS no pudo renovar el usuario.")
     return exp
+
+
+def fijar_vence(m, token, exp, correr=None):
+    """Pone ese vencimiento (date) sin tocar nada más. Para igualar las VPS de un revendedor."""
+    t = _token(token)
+    script = (CABECERA + f'usermod -e {_cuenta_hasta(exp)} {t} || {{ echo ERROR; exit 0; }}\n'
+              f'zumo_db_set {t} 3 {exp.isoformat()}\necho OK\n')
+    if "OK" not in _sh(m, script, correr):
+        raise ErrorCuenta("La VPS no pudo cambiar el vencimiento.")
 
 
 def eliminar(m, token, correr=None):

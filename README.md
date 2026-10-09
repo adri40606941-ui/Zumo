@@ -202,13 +202,28 @@ renovar, la moneda se devuelve sola.
 1. ➕ Agregar revendedor → escribís su usuario y su contraseña (o 🎲 para que el bot invente una) y elegís la VPS donde
    se van a crear sus usuarios (una de las de 🖥 Máquinas: el bot entra por SSH).
 2. Tocá al revendedor → 🥉 / 🥈 / 🥇 para agregarle monedas (botones +1 +5 +10 +20, o escribís el número; con un
-   número negativo se le quitan). También: cambiar contraseña, cambiar VPS, bloquear o activar su acceso, ver sus
-   movimientos y eliminarlo.
+   número negativo se le quitan). También: cambiar contraseña, **sumarle o quitarle VPS** (🖥 VPS), bloquear o activar su
+   acceso, ver sus movimientos, 📋 la lista de usuarios que creó y en qué VPS, y eliminarlo.
+3. En la pantalla de Revendedores: 📋 **Todos los usuarios** (quién creó qué y en qué VPS; si es larga te la manda como
+   archivo), 📊 **Resumen** del mes (monedas cargadas, gastadas y saldo por revendedor, y el mes anterior) y 🔒 **HTTPS del
+   panel** (comprueba el puerto 443 y explica cómo pasar Cloudflare a «Completo»).
 
 **El revendedor** entra a `https://TU-DOMINIO/r` (el mismo dominio de la lista de la app: `ZUMO_DOMINIO` en `bot.env`) con el
 usuario y la contraseña que le diste. Ahí ve sus monedas y puede **crear usuarios** (token + nombre + 7/15/30 días),
 **renovar** (suma los días al vencimiento; si ya venció, cuenta desde hoy), **bloquear / desbloquear** y **eliminar**.
-Solo ve y toca los usuarios que creó él.
+Solo ve y toca los usuarios que creó él. También tiene: un **buscador** y orden de la lista (más nuevos, los que vencen antes,
+por nombre), un aviso y una marca de **«Vence en N d»** para los que vencen en 3 días o menos, el punto 🟢 *en línea* / 🔴 *sin
+conexión*, el lápiz **Editar** (cambiar nombre, renovar, bloquear, eliminar), sus **movimientos** y **cambiar su contraseña**.
+
+**Varias VPS por revendedor:** si le asignás más de una, cada usuario nuevo se crea en todas, y renovar (mismo vencimiento en
+todas), bloquear, cambiar nombre y eliminar se aplican en todas. Si una VPS no contesta, la operación sigue en las demás, se
+le avisa al revendedor cuál falló y el bot completa solo lo que faltó en cuanto vuelve (revisa cada 5 minutos). Una VPS que se
+suma después también recibe los usuarios que ya existían.
+
+**Avisos por Telegram a los admins:** usuario creado por un revendedor (con la lista de VPS), revendedor sin monedas de un tipo,
+VPS de un revendedor que no contesta (y cuando vuelve), muchos intentos fallidos de contraseña en el panel, y usuarios completados
+en una VPS. **Copia:** una por día de `revendedores.json` en `/var/backups/zumo/` (las últimas 14) y, con contraseña de
+💾 Respaldo, la copia cifrada diaria que ya manda el bot también lo incluye; sin esa contraseña el bot avisa una vez por semana.
 
 Cosas a tener en cuenta:
 - La VPS asignada tiene que tener el panel instalado (`/etc/zumo/zumo-lib.sh`) y estar en 🖥 Máquinas.
@@ -217,8 +232,8 @@ Cosas a tener en cuenta:
 - Si el revendedor se equivoca de contraseña 8 veces seguidas queda frenado unos minutos. Para sacarle el acceso:
   ⏸ Bloquear acceso (sus usuarios siguen conectando). Los datos van en `/etc/zumo/revendedores.json` (sin contraseñas
   en claro) y entran en el respaldo del bot.
-- La app muestra «Nombre [dd/mm]» junto a «Conectado» también para estos usuarios: el bot lee el nombre y el vencimiento de la
-  VPS asignada (se guarda 60 s, así que un cambio de nombre o de fecha en la VPS aparece en un minuto). No hace falta recompilar la app.
+- La app muestra «Nombre [dd/mm] · N d» (con los días que faltan) junto a «Conectado» también para estos usuarios: el bot lee el nombre y el vencimiento de las
+  VPS asignadas (se guarda 60 s, así que un cambio de nombre o de fecha en la VPS aparece en un minuto). No hace falta recompilar la app.
 
 ## Archivos del repo
 

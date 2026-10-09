@@ -190,13 +190,164 @@ class Gestion(Base):
         self.btn(f"rvb:{rid}")
         self.assertIsNotNone(self.b.revs.verificar("juan", "secreto1"))
 
-    def test_cambiar_de_vps(self):
+    def test_agregar_y_quitar_vps(self):
         self.armar(maquinas=(MAQ, MAQ2))
         rid = self.alta()
         self.btn(f"rvmq:{rid}")
+        self.assertIn(f"rvmq+:{rid}", self.tg.datos_botones())
+        self.assertNotIn(f"rvmq-:{rid}:m1", self.tg.datos_botones(), "con una sola VPS no se puede quitar")
+        self.btn(f"rvmq+:{rid}")
         self.assertIn(f"rvmq2:{rid}:m2", self.tg.datos_botones())
+        self.assertNotIn(f"rvmq2:{rid}:m1", self.tg.datos_botones(), "la que ya tiene no se ofrece")
         self.btn(f"rvmq2:{rid}:m2")
-        self.assertEqual(self.b.revs.buscar(rid)["maquina"], "m2")
+        self.assertEqual(self.b.revs.buscar(rid)["maquinas"], ["m1", "m2"])
+        self.assertIn("app01", self.tg.mensajes[-1])
+        self.assertIn("app02", self.tg.mensajes[-1])
+        self.btn(f"rvmq-:{rid}:m1")
+        self.assertEqual(self.b.revs.buscar(rid)["maquinas"], ["m2"])
+        self.btn(f"rvmq-:{rid}:m2")
+        self.assertEqual(self.b.revs.buscar(rid)["maquinas"], ["m2"], "tiene que quedarle una")
+        self.assertIn("al menos una", self.tg.mensajes[-1])
+
+    def test_ficha_muestra_todas_las_vps(self):
+        self.armar(maquinas=(MAQ, MAQ2))
+        rid = self.alta()
+        self.b.revs.agregar_maquina(rid, "m2")
+        self.btn(f"rv:{rid}")
+        self.assertIn("app01", self.tg.mensajes[-1])
+        self.assertIn("app02", self.tg.mensajes[-1])
+        self.assertIn(f"rvu:{rid}", self.tg.datos_botones())
+
+    def test_lista_de_usuarios_con_su_vps(self):
+        self.armar(maquinas=(MAQ, MAQ2))
+        rid = self.alta()
+        self.b.revs.agregar_maquina(rid, "m2")
+        self.b.revs.registrar_cuenta("ABCD1234", rid, "Ana", 7, "bronce", maq=["m1", "m2"])
+        self.b.revs.registrar_cuenta("EFGH5678", rid, "Beto", 7, "bronce", maq=["m1"])
+        self.btn("rvu")
+        t = self.tg.mensajes[-1]
+        self.assertIn("juan", t)
+        self.assertIn("Ana · ABCD1234", t)
+        self.assertIn("app01, app02", t)
+        self.assertIn("Beto · EFGH5678", t)
+        self.btn(f"rvu:{rid}")
+        self.assertIn("Ana", self.tg.mensajes[-1])
+
+    def test_lista_larga_se_manda_como_archivo(self):
+        self.armar()
+        rid = self.alta()
+        for i in range(80):
+            self.b.revs.registrar_cuenta(f"TOKEN{i:05d}", rid, "Cliente número " + str(i), 7, "bronce", maq=["m1"])
+        self.btn("rvu")
+        self.assertEqual(self.tg.docs[-1][0], "usuarios-revendedores.txt")
+        self.assertIn(b"TOKEN00079", self.tg.docs[-1][1])
+
+    def test_lista_sin_usuarios(self):
+        self.armar()
+        self.btn("rvu")
+        self.assertIn("Todavía no hay usuarios", self.tg.mensajes[-1])
+
+    def test_resumen_del_mes(self):
+        self.armar()
+        rid = self.alta()
+        self.b.revs.agregar_monedas(rid, "oro", 5)
+        self.b.revs.agregar_monedas(rid, "bronce", 3)
+        self.b.revs.anotar(rid, "crear", "ABCD1234", 30, "oro")
+        self.b.revs.anotar(rid, "renovar", "ABCD1234", 30, "oro")
+        self.btn("rvs")
+        t = self.tg.mensajes[-1]
+        self.assertIn("juan", t)
+        self.assertIn("Cargadas 🥉3 🥈0 🥇5", t)
+        self.assertIn("Gastadas 🥉0 🥈0 🥇2", t)
+        self.assertIn("TOTAL", t)
+        self.assertIn("rvs:prev", self.tg.datos_botones())
+        self.btn("rvs:prev")
+        self.assertIn("Cargadas 🥉0 🥈0 🥇0", self.tg.mensajes[-1], "el mes pasado no tiene nada")
+
+    def test_pantalla_https_explica_cloudflare(self):
+        self.armar()
+        self.b.estado_https = lambda: (True, True)
+        self.btn("rvt")
+        t = self.tg.mensajes[-1]
+        self.assertIn("Completo", t)
+        self.assertIn("Flexible", t)
+        self.assertIn("✅ Puerto 443", t)
+        self.b.estado_https = lambda: (False, False)
+        self.btn("rvt")
+        self.assertIn("⚠️ Puerto 443", self.tg.mensajes[-1])
+
+    def test_avisar_admins_les_llega_a_todos(self):
+        self.armar()
+        import threading
+        self.b.admins = {7, 8}
+        enviados = []
+        self.tg.mensaje = lambda chat, texto, botones=None, md=False: enviados.append((chat, texto))
+        self.b.avisar_admins("hola")
+        for h in threading.enumerate():
+            if h is not threading.current_thread() and h.daemon:
+                h.join(2)
+        self.assertEqual(sorted(enviados), [(7, "hola"), (8, "hola")])
+
+    def test_copia_local_diaria_y_se_guardan_14(self):
+        tmp = self.armar()
+        rid = self.alta()
+        import revendedores_bot as rb
+        carpeta = os.path.join(tmp, "copias")
+        rb.RESPALDOS = carpeta
+        ruta = self.b.copia_local_revendedores()
+        self.assertTrue(os.path.exists(ruta))
+        self.assertEqual(oct(os.stat(ruta).st_mode)[-3:], "600")
+        for d in range(1, 20):
+            open(os.path.join(carpeta, f"revendedores-2020{d:04d}.json"), "w").close()
+        self.b.copia_local_revendedores()
+        n = [f for f in os.listdir(carpeta) if f.startswith("revendedores-")]
+        self.assertEqual(len(n), 14)
+        self.assertIn(os.path.basename(ruta), n, "la de hoy no se borra")
+
+    def test_vigilancia_avisa_cuando_cae_una_vps_y_cuando_vuelve(self):
+        self.armar(maquinas=(MAQ, MAQ2))
+        rid = self.alta()
+        self.b.revs.agregar_maquina(rid, "m2")
+        avisos = []
+        self.b.avisar_admins = avisos.append
+        viva = {"m2": False}
+
+        def correr(m, cmd, timeout=20):
+            if m["id"] == "m2" and not viva["m2"]:
+                raise OSError("sin red")
+            return ""
+        viejo = mq.correr
+        mq.correr = correr
+        self.addCleanup(lambda: setattr(mq, "correr", viejo))
+        self.b._vigilar_vps()
+        self.assertEqual(avisos, [], "una sola falla no alcanza")
+        self.b._vigilar_vps()
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("app02", avisos[0])
+        self.assertIn("juan", avisos[0])
+        self.b._vigilar_vps()
+        self.assertEqual(len(avisos), 1, "no repite el aviso")
+        viva["m2"] = True
+        self.b._vigilar_vps()
+        self.assertEqual(len(avisos), 2)
+        self.assertIn("volvió", avisos[1])
+
+    def test_aviso_sin_contrasena_de_respaldo_una_vez_por_semana(self):
+        tmp = self.armar()
+        import revendedores_bot as rb
+        rb.RESPALDOS = os.path.join(tmp, "copias2")
+        os.makedirs(rb.RESPALDOS)
+        avisos = []
+        self.b.avisar_admins = avisos.append
+        self.b.leer_env_fn = lambda: {}
+        self.b._aviso_sin_clave()
+        self.b._aviso_sin_clave()
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("contraseña de respaldo", avisos[0])
+        self.b.leer_env_fn = lambda: {"RESPALDO_PASS": "algo-largo"}
+        os.utime(os.path.join(rb.RESPALDOS, "aviso-sin-clave"), (0, 0))
+        self.b._aviso_sin_clave()
+        self.assertEqual(len(avisos), 1, "con contraseña no avisa")
 
     def test_eliminar_pide_confirmacion(self):
         self.armar()

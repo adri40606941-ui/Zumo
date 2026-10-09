@@ -174,6 +174,119 @@ class TestPanel(Base):
         self.assertIn("Nombre cambiado a «Ana Gómez»", p)
         self.assertEqual(self.f.us["ABCD1234"]["nombre"], "Ana Gómez")
 
+    def crear_varios(self):
+        self.r.agregar_monedas(self.a, "bronce", 5)
+        for tok, nom in (("AAAA1111", "Zeta"), ("BBBB2222", "Alfa"), ("CCCC3333", "Mario"), ("DDDD4444", "Beto"),
+                         ("EEEE5555", "Carla"), ("FFFF6666", "Dora")):
+            self.accion(self.c, a="crear", token=tok, nombre=nom, dias="7")
+        self.p.cache.clear()
+
+    def test_buscador_filtra_por_nombre_o_token(self):
+        self.crear_varios()
+        cod, _, cuerpo = self.p.manejar("GET", "/r", {"Host": "x", "Cookie": f"zr={self.c}"}, b"", "1.1.1.1", True, "q=mar")
+        p = cuerpo.decode()
+        self.assertIn("Mario", p)
+        self.assertNotIn("<b>Zeta</b>", p)
+        _, _, cuerpo = self.p.manejar("GET", "/r", {"Host": "x", "Cookie": f"zr={self.c}"}, b"", "1.1.1.1", True, "q=bbbb")
+        self.assertIn("<b>Alfa</b>", cuerpo.decode())
+        _, _, cuerpo = self.p.manejar("GET", "/r", {"Host": "x", "Cookie": f"zr={self.c}"}, b"", "1.1.1.1", True, "q=nadie")
+        self.assertIn("Ningún usuario coincide", cuerpo.decode())
+
+    def test_orden_por_nombre_y_por_vencimiento(self):
+        self.crear_varios()
+        self.f.us["DDDD4444"]["vence"] = date(2026, 10, 10)
+        self.p.cache.clear()
+        cab = {"Host": "x", "Cookie": f"zr={self.c}"}
+        _, _, c1 = self.p.manejar("GET", "/r", cab, b"", "1.1.1.1", True, "o=nombre")
+        t = c1.decode()
+        self.assertLess(t.index("<b>Alfa</b>"), t.index("<b>Beto</b>"))
+        self.assertLess(t.index("<b>Beto</b>"), t.index("<b>Zeta</b>"))
+        _, _, c2 = self.p.manejar("GET", "/r", cab, b"", "1.1.1.1", True, "o=venc")
+        t = c2.decode()
+        self.assertLess(t.index("<b>Beto</b>"), t.index("<b>Zeta</b>"), "el que vence antes va primero")
+
+    def test_buscador_con_valores_raros_no_rompe(self):
+        self.crear_varios()
+        cab = {"Host": "x", "Cookie": f"zr={self.c}"}
+        for q in ("q=%3Cscript%3E", "o=%00", "q=" + "a" * 5000, "q", "%%%"):
+            cod, _, cuerpo = self.p.manejar("GET", "/r", cab, b"", "1.1.1.1", True, q)
+            self.assertEqual(cod, 200)
+            self.assertNotIn("<script>alert", cuerpo.decode())
+        _, _, cuerpo = self.p.manejar("GET", "/r", cab, b"", "1.1.1.1", True, "q=%22%3E%3Cb%3E")
+        self.assertNotIn('"><b>', cuerpo.decode())
+
+    def test_marca_los_que_vencen_pronto(self):
+        self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana", dias="7")
+        self.f.us["ABCD1234"]["vence"] = date(2026, 10, 11)          # en 2 días
+        self.p.cache.clear()
+        _, p = self.pagina(self.c)
+        self.assertIn("Vence en 2 d", p)
+        self.assertIn("⏰ 1 vence en 3 días o menos", p)
+        self.f.us["ABCD1234"]["vence"] = date(2026, 10, 9)
+        self.p.cache.clear()
+        self.assertIn("Vence hoy", self.pagina(self.c)[1])
+        self.f.us["ABCD1234"]["vence"] = date(2026, 11, 9)
+        self.p.cache.clear()
+        _, p = self.pagina(self.c)
+        self.assertNotIn("⏰", p)
+        self.assertIn("Activo", p)
+
+    def test_historial_de_movimientos(self):
+        self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana", dias="7")
+        self.accion(self.c, a="r15", token="ABCD1234")
+        _, p = self.pagina(self.c)
+        self.assertIn("Mis movimientos", p)
+        self.assertIn("Creó a Ana (7 días)", p)
+        self.assertIn("Renovó a Ana (15 días)", p)
+        self.assertIn("gastó 1 de plata", p)
+        self.assertIn("Le cargaron 2 monedas de bronce", p)
+
+    def test_cambiar_contrasena_propia(self):
+        c2 = self.entrar()
+        self.assertIsNotNone(c2)
+        cod, _, _ = self.accion(self.c, a="clave", actual="secreto1", nueva="nueva-clave", repetir="nueva-clave")
+        self.assertEqual(cod, 303)
+        self.assertIn("Contraseña cambiada", self.pagina(self.c)[1])
+        self.assertIsNone(self.entrar(clave="secreto1"), "la vieja ya no sirve")
+        self.assertIsNotNone(self.entrar(clave="nueva-clave"))
+        self.assertNotIn(c2, self.p.sesiones, "las otras sesiones se cierran")
+        self.assertIn(self.c, self.p.sesiones, "la actual sigue")
+
+    def test_cambiar_contrasena_errores(self):
+        for datos, texto in ((dict(actual="mal", nueva="nueva-clave", repetir="nueva-clave"), "actual no es correcta"),
+                             (dict(actual="secreto1", nueva="nueva-clave", repetir="otra-cosa1"), "no coinciden"),
+                             (dict(actual="secreto1", nueva="secreto1", repetir="secreto1"), "distinta"),
+                             (dict(actual="secreto1", nueva="abc", repetir="abc"), "inválida")):
+            self.accion(self.c, a="clave", **datos)
+            self.assertIn(texto, self.pagina(self.c)[1], texto)
+        self.assertIsNotNone(self.entrar(clave="secreto1"), "ninguna cambió la contraseña")
+
+    def test_cambiar_contrasena_tiene_freno_de_intentos(self):
+        for _ in range(8):
+            self.accion(self.c, a="clave", actual="mal", nueva="nueva-clave", repetir="nueva-clave")
+        self.accion(self.c, a="clave", actual="secreto1", nueva="nueva-clave", repetir="nueva-clave")
+        self.assertIn("Demasiados intentos", self.pagina(self.c)[1])
+        self.assertIsNone(self.entrar(clave="nueva-clave"))
+
+    def test_muestra_las_vps_solo_si_tiene_varias(self):
+        self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana", dias="7")
+        self.p.cache.clear()
+        self.assertNotIn("🖥", self.pagina(self.c)[1])
+        self.r.agregar_maquina(self.a, "m2")
+        self.p.cache.clear()
+        self.assertIn(f"🖥 {M['nombre']}", self.pagina(self.c)[1])
+
+    def test_aviso_al_admin_por_muchos_intentos(self):
+        avisos = []
+        self.p.notificar = avisos.append
+        for _ in range(8):
+            self.pedir("POST", "/r/entrar", {"usuario": "juan", "clave": "mal"})
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("juan", avisos[0])
+        self.assertIn("1.1.1.1", avisos[0])
+        self.pedir("POST", "/r/entrar", {"usuario": "juan", "clave": "mal"})
+        self.assertEqual(len(avisos), 1, "no se repite")
+
     def test_modo_oscuro_con_un_boton_y_cookie(self):
         _, p = self.pagina(self.c)
         self.assertIn('name="t" value="oscuro"', p)

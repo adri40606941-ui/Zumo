@@ -124,9 +124,9 @@ def _handler(directorio, repo=None, accesos=None, dominio="", cuenta=None, reloj
                     or self.headers.get("X-Forwarded-Proto", "").lower() == "https"
                     or '"https"' in self.headers.get("CF-Visitor", ""))
 
-        def _web(self, ruta, cuerpo=b""):
+        def _web(self, ruta, cuerpo=b"", consulta=""):
             """Panel web de revendedores (/r): lo resuelve panel_web.PanelWeb."""
-            codigo, cab, datos = web.manejar(self.command, ruta, dict(self.headers.items()), cuerpo, self._ip(), self._https())
+            codigo, cab, datos = web.manejar(self.command, ruta, dict(self.headers.items()), cuerpo, self._ip(), self._https(), consulta)
             self.send_response(codigo)
             for k, v in cab.items():
                 self.send_header(k, v)
@@ -137,7 +137,7 @@ def _handler(directorio, repo=None, accesos=None, dominio="", cuenta=None, reloj
         def _responder(self, con_cuerpo):
             ruta, _, consulta = self.path.partition("?")
             if web and (ruta == "/r" or ruta.startswith("/r/")):
-                return self._web(ruta)
+                return self._web(ruta, b"", consulta)
             archivo, tipo, adjunto = None, "application/octet-stream", ""
             if ruta in PERMITIDOS:
                 nombre, tipo = PERMITIDOS[ruta]

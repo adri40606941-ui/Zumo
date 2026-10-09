@@ -29,11 +29,19 @@ object Cuenta {
         return if (nombre.isEmpty() && vence.isEmpty()) null else Datos(nombre, vence)
     }
 
-    /** "Adrián [09/11]": nombre y día/mes del vencimiento. Vacío si no hay nada que mostrar. */
-    fun etiqueta(nombre: String, vence: String): String {
+    /** "Adrián [09/11] · 12 d": nombre, día/mes del vencimiento y los días que faltan. Vacío si no hay nada que mostrar. */
+    fun etiqueta(nombre: String, vence: String, ahora: Long = System.currentTimeMillis()): String {
         val m = FECHA.find(vence)
         val f = if (m != null) "[${m.groupValues[3]}/${m.groupValues[2]}]" else ""
-        return listOf(nombre.trim(), f).filter { it.isNotEmpty() }.joinToString(" ")
+        val base = listOf(nombre.trim(), f).filter { it.isNotEmpty() }.joinToString(" ")
+        val dias = Perfil.diasRestantes(vence, ahora)
+        val resto = when {
+            dias == null -> ""
+            dias < 0 -> "vencida"
+            dias == 0 -> "vence hoy"
+            else -> "$dias d"
+        }
+        return if (base.isEmpty() || resto.isEmpty()) base else "$base · $resto"
     }
 
     /** Pregunta y guarda el resultado en [prefs]. true si se pudo leer. No va en el hilo principal. */

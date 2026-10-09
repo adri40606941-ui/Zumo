@@ -5,13 +5,23 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class CuentaTest {
+    /** Un "ahora" fijo: 09/10/2026 a las 10:00 (hora local del equipo que corre la prueba). */
+    private val hoy: Long = java.util.Calendar.getInstance().apply { clear(); set(2026, 9, 9, 10, 0, 0) }.timeInMillis
+
     @Test
-    fun etiqueta_con_nombre_y_dia_mes() {
-        assertEquals("Adrián [09/11]", Cuenta.etiqueta("Adrián", "2026-11-09"))
-        assertEquals("Adrián", Cuenta.etiqueta("Adrián", ""))
-        assertEquals("[09/11]", Cuenta.etiqueta("", "2026-11-09"))
-        assertEquals("", Cuenta.etiqueta("", ""))
-        assertEquals("Ana", Cuenta.etiqueta(" Ana ", "mañana"))
+    fun etiqueta_con_nombre_dia_mes_y_dias_que_faltan() {
+        assertEquals("Adrián [09/11] · 31 d", Cuenta.etiqueta("Adrián", "2026-11-09", hoy))
+        assertEquals("Adrián [16/10] · 7 d", Cuenta.etiqueta("Adrián", "2026-10-16", hoy))
+        assertEquals("Adrián [09/10] · vence hoy", Cuenta.etiqueta("Adrián", "2026-10-09", hoy))
+        assertEquals("Adrián [05/10] · vencida", Cuenta.etiqueta("Adrián", "2026-10-05", hoy))
+        assertEquals("[09/11] · 31 d", Cuenta.etiqueta("", "2026-11-09", hoy))
+    }
+
+    @Test
+    fun etiqueta_sin_fecha_es_solo_el_nombre() {
+        assertEquals("Adrián", Cuenta.etiqueta("Adrián", "", hoy))
+        assertEquals("", Cuenta.etiqueta("", "", hoy))
+        assertEquals("Ana", Cuenta.etiqueta(" Ana ", "mañana", hoy))
     }
 
     @Test
