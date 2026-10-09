@@ -190,6 +190,35 @@ Token de GitHub (una sola vez): github.com → Settings → Developer settings �
 instalador del bot lo pide (queda en `/etc/zumo/bot.env`, nunca en el repo). Para cargarlo en un bot ya
 instalado, volvé a correr `bot/instalar-bot.sh`.
 
+## Panel de revendedores (🧑‍💼 Revendedores)
+
+Para vender accesos sin darle el bot a nadie. Vos creás al revendedor desde el bot y él trabaja en una página web.
+
+**Monedas:** 🥉 bronce = 7 días · 🥈 plata = 15 días · 🥇 oro = 30 días. Crear o renovar un usuario por 7 / 15 / 30 días
+gasta una moneda de bronce / plata / oro. Bloquear, desbloquear y eliminar no gastan nada. Si la VPS falla al crear o
+renovar, la moneda se devuelve sola.
+
+**Desde el bot** (Menú → 🧑‍💼 Revendedores):
+1. ➕ Agregar revendedor → escribís su usuario y su contraseña (o 🎲 para que el bot invente una) y elegís la VPS donde
+   se van a crear sus usuarios (una de las de 🖥 Máquinas: el bot entra por SSH).
+2. Tocá al revendedor → 🥉 / 🥈 / 🥇 para agregarle monedas (botones +1 +5 +10 +20, o escribís el número; con un
+   número negativo se le quitan). También: cambiar contraseña, cambiar VPS, bloquear o activar su acceso, ver sus
+   movimientos y eliminarlo.
+
+**El revendedor** entra a `https://TU-DOMINIO/r` (el mismo dominio de la lista de la app: `ZUMO_DOMINIO` en `bot.env`) con el
+usuario y la contraseña que le diste. Ahí ve sus monedas y puede **crear usuarios** (token + nombre + 7/15/30 días),
+**renovar** (suma los días al vencimiento; si ya venció, cuenta desde hoy), **bloquear / desbloquear** y **eliminar**.
+Solo ve y toca los usuarios que creó él.
+
+Cosas a tener en cuenta:
+- La VPS asignada tiene que tener el panel instalado (`/etc/zumo/zumo-lib.sh`) y estar en 🖥 Máquinas.
+- Los usuarios son tokens (HWID), como los de «Crear usuario → Token»: el token es el usuario y la contraseña de Linux.
+- El panel solo funciona por **https** (por http redirige). Con Cloudflare en modo *Flexible* o *Full* andan los dos.
+- Si el revendedor se equivoca de contraseña 8 veces seguidas queda frenado unos minutos. Para sacarle el acceso:
+  ⏸ Bloquear acceso (sus usuarios siguen conectando). Los datos van en `/etc/zumo/revendedores.json` (sin contraseñas
+  en claro) y entran en el respaldo del bot.
+- La app todavía no muestra «Nombre [dd/mm]» para estos usuarios (solo para los de la VPS del bot).
+
 ## Archivos del repo
 
 | Archivo | Descripción |
@@ -211,6 +240,7 @@ instalado, volvé a correr `bot/instalar-bot.sh`.
 | `bot/publico.py` / `bot/accesos.py` / `bot/codigos_bot.py` | Servidor web mínimo del bot (lista de la app e instaladores desde el dominio) y los códigos de un solo uso para instalar en VPS nuevas. |
 | `bot/compilar_vps.py` / `bot/instalar-compilador.sh` | Compilar la app en la VPS del bot (sin GitHub) y el instalador de lo que hace falta. |
 | `bot/maquinas.py` / `bot/maquinas_bot.py` | Sección 🖥 Máquinas: las VPS que el bot maneja por SSH (recursos y protocolos). |
+| `bot/revendedores.py` / `bot/servicio_rev.py` / `bot/cuentas_vps.py` / `bot/panel_web.py` / `bot/revendedores_bot.py` | Sección 🧑‍💼 Revendedores: monedas, usuarios por SSH en la VPS asignada y el panel web `/r`. |
 | `scripts/diagnostico.sh` | Chequeos de estado. |
 
 ## Compilar la app (en GitHub o en la VPS del bot)

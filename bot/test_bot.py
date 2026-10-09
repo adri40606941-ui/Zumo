@@ -23,7 +23,7 @@ def cargar_bot(tmp):
                        "ZUMO_TEMPDB": f"{tmp}/temporales.db", "ZUMO_BORRADOR": f"{tmp}/borrar-temporal.sh",
                        "ZUMO_PDIRECT_ENV": f"{tmp}/pdirect.env",
                        "ZUMO_DB": f"{tmp}/usuarios.db", "ZUMO_CLAVES": f"{tmp}/claves.db",
-                       "ZUMO_ACCESOS": f"{tmp}/accesos.json", "ZUMO_APP_SERVIDORES": f"{tmp}/app-servidores.json", "ZUMO_APP_MARCA": f"{tmp}/app-marca"})
+                       "ZUMO_ACCESOS": f"{tmp}/accesos.json", "ZUMO_REVENDEDORES": f"{tmp}/revendedores.json", "ZUMO_APP_SERVIDORES": f"{tmp}/app-servidores.json", "ZUMO_APP_MARCA": f"{tmp}/app-marca"})
     spec = importlib.util.spec_from_file_location("zumo_bot", os.path.join(AQUI, "zumo-bot.py"))
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
@@ -112,7 +112,7 @@ class Pruebas(unittest.TestCase):
             self.assertIn("No autorizado", tg.mensajes[-1])
             # cualquier texto abre el menú con botones: gestión de usuarios + app/GitHub
             txt("hola")
-            self.assertEqual(tg.datos_botones(), ["crear", "lista:0", "app", "maq", "inst", "ghenl", "resp", "id"])
+            self.assertEqual(tg.datos_botones(), ["crear", "lista:0", "app", "maq", "rv", "inst", "ghenl", "resp", "id"])
             btn("ghenl"); self.assertIn("ghtok", tg.datos_botones())          # sin token: ofrece pegarlo
             b.gh = type("GH", (), {"repo": "o/r", "rama": "main"})()
             btn("ghenl"); self.assertIn("enlazado", tg.mensajes[-1]); self.assertIn("aclave", tg.datos_botones())
