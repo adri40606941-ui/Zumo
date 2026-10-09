@@ -22,7 +22,7 @@ for p in fonts-noto-color-emoji fonts-dejavu-extra; do
 	apt-get install -y --no-install-recommends "$p" >/dev/null 2>&1 || echo "Aviso: no se pudo instalar $p (la vista previa lo aproxima)."
 done
 
-ARCHIVOS="zs.py accesos.py codigos_bot.py publico.py servidores.py compilar.py compilar_vps.py tema.py vista.py marca.py respaldo.py centro.py maquinas.py maquinas_bot.py zumo-bot.py"
+ARCHIVOS="zs.py accesos.py codigos_bot.py publico.py servidores.py compilar.py compilar_vps.py tema.py vista.py marca.py respaldo.py centro.py maquinas.py maquinas_bot.py revendedores.py cuentas_vps.py servicio_rev.py panel_web.py revendedores_bot.py zumo-bot.py"
 # Si la dirección de descarga no responde (por ejemplo GitHub caído) se usa la copia del repo de esta misma VPS
 # (/opt/zumo-repo, la que el bot mantiene al día), así el bot se puede reinstalar sin GitHub.
 for f in $ARCHIVOS; do

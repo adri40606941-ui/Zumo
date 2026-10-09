@@ -6,6 +6,8 @@
    que da el bot (ver accesos.py): `/i` es el cargador, `/canje` cambia el código por un pase y
    `/s/<pase>/<archivo>` sirve los archivos del instalador, de la copia del repo en /opt/zumo-repo.
 
+3. Panel web de revendedores en /r (ver panel_web.py), solo si el bot lo activa.
+
 Todo sale de una lista fija de rutas; lo demás da 404 (no se listan carpetas ni se sigue ningún enlace que
 salga de la copia). Escucha en el puerto 80 (Cloudflare "Flexible") y, si hay certificado en /etc/zumo/web/,
 también en el 443 (Cloudflare "Full"). Si un puerto no se puede abrir el bot sigue andando."""
@@ -81,9 +83,10 @@ curl -fsSL "$ZUMO_BASE/$S" | bash
 
 TOKEN_RE = re.compile(r"^[A-Za-z0-9]{8,32}$")
 MAX_CUENTA_POR_MIN = 30          # consultas de /cuenta por IP y por minuto
+MAX_POST = 8192                  # tamaño máximo de un formulario del panel de revendedores (/r)
 
 
-def _handler(directorio, repo=None, accesos=None, dominio="", cuenta=None, reloj=time.time):
+def _handler(directorio, repo=None, accesos=None, dominio="", cuenta=None, reloj=time.time, web=None):
     pedidos = {}                 # ip -> [momentos] de las consultas de /cuenta del último minuto
 
     def _frenado(ip):
@@ -115,8 +118,26 @@ def _handler(directorio, repo=None, accesos=None, dominio="", cuenta=None, reloj
         def _ip(self):
             return self.headers.get("CF-Connecting-IP") or self.client_address[0]
 
+        def _https(self):
+            """¿El visitante llegó por https? (directo con TLS, o por Cloudflare que avisa con cabeceras)."""
+            return (isinstance(self.connection, ssl.SSLSocket)
+                    or self.headers.get("X-Forwarded-Proto", "").lower() == "https"
+                    or '"https"' in self.headers.get("CF-Visitor", ""))
+
+        def _web(self, ruta, cuerpo=b""):
+            """Panel web de revendedores (/r): lo resuelve panel_web.PanelWeb."""
+            codigo, cab, datos = web.manejar(self.command, ruta, dict(self.headers.items()), cuerpo, self._ip(), self._https())
+            self.send_response(codigo)
+            for k, v in cab.items():
+                self.send_header(k, v)
+            self.end_headers()
+            if datos and self.command != "HEAD":
+                self.wfile.write(datos)
+
         def _responder(self, con_cuerpo):
             ruta, _, consulta = self.path.partition("?")
+            if web and (ruta == "/r" or ruta.startswith("/r/")):
+                return self._web(ruta)
             archivo, tipo, adjunto = None, "application/octet-stream", ""
             if ruta in PERMITIDOS:
                 nombre, tipo = PERMITIDOS[ruta]
@@ -176,14 +197,30 @@ def _handler(directorio, repo=None, accesos=None, dominio="", cuenta=None, reloj
             self.send_header("Allow", "GET, HEAD")
             self.send_header("Content-Length", "0")
             self.end_headers()
-        do_POST = do_PUT = do_DELETE = do_PATCH = _no
+
+        def do_POST(self):
+            ruta = self.path.partition("?")[0]
+            if not (web and (ruta == "/r" or ruta.startswith("/r/"))):
+                return self._no()
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                n = -1
+            if not 0 <= n <= MAX_POST:
+                self.send_response(413)
+                self.send_header("Content-Length", "0")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                return
+            self._web(ruta, self.rfile.read(n))
+        do_PUT = do_DELETE = do_PATCH = _no
     return H
 
 
-def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=None, accesos=None, dominio="", cuenta=None):
+def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=None, accesos=None, dominio="", cuenta=None, web=None):
     """Abre un puerto en un hilo. Devuelve el servidor, o None si no se pudo abrir (nunca lanza)."""
     try:
-        s = ThreadingHTTPServer((host, puerto), _handler(directorio or DIR, repo, accesos, dominio, cuenta))
+        s = ThreadingHTTPServer((host, puerto), _handler(directorio or DIR, repo, accesos, dominio, cuenta, web=web))
         s.daemon_threads = True
         if cert:
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -196,9 +233,9 @@ def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=
         return None
 
 
-def iniciar(directorio=None, http=80, https=443, accesos=None, dominio="", cuenta=None):
+def iniciar(directorio=None, http=80, https=443, accesos=None, dominio="", cuenta=None, web=None):
     """Arranca los puertos que se puedan. Devuelve la lista de servidores abiertos."""
-    extra = dict(accesos=accesos, dominio=dominio, cuenta=cuenta)
+    extra = dict(accesos=accesos, dominio=dominio, cuenta=cuenta, web=web)
     abiertos = [servir(http, directorio, **extra)]
     if os.path.isfile(CERT) and os.path.isfile(CLAVE):
         abiertos.append(servir(https, directorio, CERT, CLAVE, **extra))

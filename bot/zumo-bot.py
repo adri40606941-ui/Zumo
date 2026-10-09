@@ -31,6 +31,10 @@ import codigos_bot  # noqa: E402
 import compilar  # noqa: E402
 import compilar_vps  # noqa: E402
 import maquinas_bot  # noqa: E402
+import panel_web  # noqa: E402
+import revendedores  # noqa: E402
+import revendedores_bot  # noqa: E402
+import servicio_rev  # noqa: E402
 import marca  # noqa: E402
 import publico  # noqa: E402
 import servidores as srv  # noqa: E402
@@ -536,6 +540,7 @@ class Telegram:
 POR_PAGINA = 20
 MENU = [[("➕ Crear usuario", "crear"), ("👥 Usuarios", "lista:0")],
         [("📱 App Android", "app"), ("🖥 Máquinas", "maq")],
+        [("🧑‍💼 Revendedores", "rv")],
         [("🔑 Instalar en VPS nueva", "inst")],
         [("🔗 Enlazar GitHub", "ghenl")],
         [("💾 Respaldo", "resp")],
@@ -561,13 +566,14 @@ def teclado_dias(prefijo):
             [("✖ Cancelar", "menu")]]
 
 
-class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMixin):
+class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMixin, revendedores_bot.RevendedoresMixin):
     def __init__(self, tg, admins, gh=None):
         self.tg, self.admins, self.gh = tg, admins, gh
         self.gh_pub = None    # workflow liviano para publicar la lista de servidores (botón ↻ de la app)
         self.estado = {}      # chat -> {"paso": ..., datos}
         self.compilando = threading.Lock()
         self.accesos = accesos.Accesos()   # códigos de un solo uso para instalar en VPS nuevas
+        self.revs = revendedores.Revendedores()   # revendedores, monedas y sus usuarios (panel web en /r)
 
     # -- pantallas
     def mostrar(self, chat, mid, texto, botones):
@@ -754,6 +760,8 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
         if self.boton_resp(chat, mid, acc):
             return
         if self.boton_maquinas(chat, mid, acc, arg):
+            return
+        if self.boton_revendedores(chat, mid, acc, arg):
             return
         if self.boton_codigos(chat, mid, acc, arg):
             return
@@ -981,6 +989,8 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
         if self.texto_resp(chat, e, paso, t):
             return
         if self.texto_maquinas(chat, e, paso, t):
+            return
+        if self.texto_revendedores(chat, e, paso, t):
             return
         if paso.startswith("a_"):
             return self.texto_app(chat, e, paso, t)
@@ -1812,7 +1822,8 @@ def main():
         bot.gh_pub = compilar.GitHub(env["GITHUB_TOKEN"], env.get("GITHUB_REPO") or "adri40606941-ui/Zumo",
                                      workflow="publicar-servidores.yml", rama=env.get("GITHUB_REF") or "main")
     if bot.dominio_lista():
-        publico.iniciar(accesos=bot.accesos, dominio=bot.dominio_lista(), cuenta=datos_cuenta)
+        web = panel_web.PanelWeb(bot.revs, servicio_rev.Servicio(bot.revs))   # panel de revendedores: https://dominio/r
+        publico.iniciar(accesos=bot.accesos, dominio=bot.dominio_lista(), cuenta=datos_cuenta, web=web)
         if not publico.hay_lista():
             bot.publicar_en_vps(cargar_app())
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()

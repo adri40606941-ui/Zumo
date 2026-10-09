@@ -27,6 +27,63 @@ def puerto_libre():
     return p
 
 
+class PanelRevendedores(unittest.TestCase):
+    """/r por un servidor de verdad: GET, POST, cookie y límites."""
+    def setUp(self):
+        import panel_web
+        import revendedores
+        from servicio_rev import Servicio
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        rev = revendedores.Revendedores(os.path.join(t.name, "r.json"))
+        rev.crear("juan", "secreto1", "m1")
+        self.web = panel_web.PanelWeb(rev, Servicio(rev, lambda _i: None))
+        self.puerto = puerto_libre()
+        self.s = publico.servir(self.puerto, t.name, host="127.0.0.1", web=self.web)
+        self.addCleanup(lambda: (self.s.shutdown(), self.s.server_close()))
+
+    def pedir(self, metodo, ruta, cuerpo=None, cab=None):
+        c = http.client.HTTPConnection("127.0.0.1", self.puerto, timeout=5)
+        c.request(metodo, ruta, body=cuerpo, headers=cab or {})
+        r = c.getresponse()
+        return r.status, dict(r.getheaders()), r.read()
+
+    def test_por_http_directo_redirige_a_https(self):
+        st, cab, _ = self.pedir("GET", "/r")
+        self.assertEqual((st, cab["Location"]), (308, f"https://127.0.0.1:{self.puerto}/r"))
+
+    def test_tras_cloudflare_muestra_el_login(self):
+        st, cab, cuerpo = self.pedir("GET", "/r", cab={"X-Forwarded-Proto": "https"})
+        self.assertEqual(st, 200)
+        self.assertIn(b'name="clave"', cuerpo)
+        self.assertIn("Content-Security-Policy", cab)
+
+    def test_login_por_post(self):
+        cab = {"X-Forwarded-Proto": "https", "Content-Type": "application/x-www-form-urlencoded"}
+        st, c, _ = self.pedir("POST", "/r/entrar", "usuario=juan&clave=secreto1", cab)
+        self.assertEqual(st, 303)
+        cookie = c["Set-Cookie"].split(";")[0]
+        st, _, cuerpo = self.pedir("GET", "/r", cab={"X-Forwarded-Proto": "https", "Cookie": cookie})
+        self.assertIn("Tus monedas".encode(), cuerpo)
+
+    def test_post_enorme_se_rechaza(self):
+        st, _, _ = self.pedir("POST", "/r/entrar", "x" * (publico.MAX_POST + 1), {"X-Forwarded-Proto": "https"})
+        self.assertEqual(st, 413)
+
+    def test_post_fuera_de_r_sigue_dando_405(self):
+        self.assertEqual(self.pedir("POST", "/servidores.bin", "a=1")[0], 405)
+
+    def test_sin_panel_no_existe_la_ruta(self):
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        puerto = puerto_libre()
+        s = publico.servir(puerto, t.name, host="127.0.0.1")
+        self.addCleanup(lambda: (s.shutdown(), s.server_close()))
+        c = http.client.HTTPConnection("127.0.0.1", puerto, timeout=5)
+        c.request("GET", "/r")
+        self.assertEqual(c.getresponse().status, 404)
+
+
 class Cuenta(unittest.TestCase):
     """/cuenta?t=<token>: nombre del cliente y vencimiento, solo con un token que existe."""
     def setUp(self):
