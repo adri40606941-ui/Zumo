@@ -372,12 +372,14 @@ class ZumoVpnService : VpnService() {
      */
     private fun bucle(candidatos: List<Config>, user: String, pass: String) {
         var espera = 2000L
-        val ordenados = try {
+        // Con 2 o más servidores se prueban todos a la vez (el primero que deja entrar gana); con uno, el camino de siempre.
+        val varios = candidatos.map { it.name }.distinct().size >= 2
+        // El sondeo previo solo sirve en el camino de uno: en la carrera cada servidor ordena sus hosts por su cuenta, y
+        // sondear acá antes hacía esperar hasta 3,5 s por cualquier host caído sin ganar nada.
+        val ordenados = if (varios) candidatos else try {
             Hosts.ordenarConUltimo(candidatos, Prefs(this).ultimoServidor, Prefs(this).ultimoHost) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } }
         } catch (e: Exception) { candidatos }       // si algo falla al ordenar, se usa el orden de la lista
         val busq = Busqueda(ordenados)
-        // Con 2 o más servidores se prueban todos a la vez (el primero que deja entrar gana); con uno, el camino de siempre.
-        val varios = candidatos.map { it.name }.distinct().size >= 2
         var siguienteYa = false
         var huboConexion = false      // ya se conectó alguna vez en esta sesión: si después se cae, sí se reintenta
         var algunoRechazo = false     // algún servidor respondió pero no conoce el token
