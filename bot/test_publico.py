@@ -66,6 +66,14 @@ class PanelRevendedores(unittest.TestCase):
         st, _, cuerpo = self.pedir("GET", "/r", cab={"X-Forwarded-Proto": "https", "Cookie": cookie})
         self.assertIn("Tus monedas".encode(), cuerpo)
 
+    def test_la_sesion_se_mantiene_aunque_el_proxy_mande_la_cookie_en_minuscula(self):
+        cab = {"X-Forwarded-Proto": "https", "Content-Type": "application/x-www-form-urlencoded"}
+        _, c, _ = self.pedir("POST", "/r/entrar", "usuario=juan&clave=secreto1", cab)
+        cookie = c["Set-Cookie"].split(";")[0]
+        for nombre in ("Cookie", "cookie", "COOKIE"):
+            _, _, cuerpo = self.pedir("GET", "/r", cab={"X-Forwarded-Proto": "https", nombre: cookie})
+            self.assertIn(b"Tus monedas", cuerpo, nombre)
+
     def test_post_enorme_se_rechaza(self):
         st, _, _ = self.pedir("POST", "/r/entrar", "x" * (publico.MAX_POST + 1), {"X-Forwarded-Proto": "https"})
         self.assertEqual(st, 413)
