@@ -66,6 +66,7 @@ button.icono svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-wid
 .fila b{word-break:break-all}.acciones{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .acciones button{display:inline-flex;align-items:center;gap:6px}
 .acciones svg{width:22px;height:22px}
+.punto.off{background:var(--mal);box-shadow:0 0 0 3px rgba(211,63,73,.25)}
 .punto{display:inline-block;width:11px;height:11px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(31,157,87,.25);vertical-align:middle;margin-right:6px}
 details.edit{margin-top:8px}details.edit>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--borde);border-radius:99px;font-size:14px;font-weight:600}
 details.edit>summary::-webkit-details-marker{display:none}details.edit[open]>summary{border-color:var(--acento)}
@@ -396,14 +397,20 @@ class PanelWeb:
                               f'Renovar {d}</button>' for t, d in MONEDAS.items())
             bloqueo = ('<button class="gris chico" name="a" value="desbloquear">▶ Desbloquear</button>' if f["bloqueado"]
                        else '<button class="gris chico" name="a" value="bloquear">🔒 Bloquear</button>')
-            punto = ('<span class="punto" role="img" aria-label="Conectado" title="Conectado ahora"></span>'
-                     if f.get("conectado") else "")
+            if f.get("sin_datos") or not f["existe"]:
+                punto, enlinea = "", ""
+            elif f.get("conectado"):
+                punto = '<span class="punto" role="img" aria-label="En línea" title="En línea ahora"></span>'
+                enlinea = ' <span class="suave">· en línea</span>'
+            else:
+                punto = '<span class="punto off" role="img" aria-label="Sin conexión" title="Sin conexión"></span>'
+                enlinea = ' <span class="suave">· sin conexión</span>'
             lapiz = ('<svg class="lapiz" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/>'
                      '<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>')
             out.append(f'<div class="fila"><form class="una" method="post" action="{BASE}/accion">'
                        f'<input type="hidden" name="csrf" value="{e(s["csrf"])}"><input type="hidden" name="token" value="{tok}">'
                        f'{punto}<b>{e(f["nombre"])}</b> <span class="etq {cls}">{estado}</span>'
-                       f'{" <span class=suave>· conectado</span>" if punto else ""}<br>'
+                       f'{enlinea}<br>'
                        f'<span class="suave">{tok} · {vence}</span>'
                        f'<details class="edit"><summary>{lapiz} Editar</summary>'
                        f'<div class="nom"><input type="text" name="nombre" value="{e(f["nombre"])}" maxlength="48" '
