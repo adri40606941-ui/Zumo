@@ -365,7 +365,7 @@ class _Pantalla:
         # barra de estado del teléfono
         self.texto(18, 14, "12:30", 12, t["texto"], True, "lm")
         self.caja(self.ancho - 40, 9, 22, 10, t["texto"], 3)
-        self.y = 40
+        self.y = 34
         # encabezado
         alto_logo = self.logo(self.ancho / 2, self.y)
         y = self.y + alto_logo
