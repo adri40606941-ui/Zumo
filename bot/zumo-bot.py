@@ -11,6 +11,7 @@ Apariencia de la app Android: /etc/zumo/app-marca/ (tema.json, icono.png, fondo.
 """
 import base64
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -416,6 +417,30 @@ def renovar_usuario(u, dias):
 
 
 # --------------------------------------------------------------------- Telegram
+class _ConexionRapida(http.client.HTTPSConnection):
+    """Si una de las direcciones de Telegram no responde (pasa en algunas VPS), no se espera todo el tiempo de la
+    llamada para probar la siguiente: conectar tiene su propio plazo corto (5 s)."""
+
+    def connect(self):
+        total = self.timeout
+        if isinstance(total, (int, float)):
+            self.timeout = min(total, 5)
+        try:
+            super().connect()
+        finally:
+            self.timeout = total
+        if isinstance(total, (int, float)):
+            self.sock.settimeout(total)
+
+
+class _HttpsRapido(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_ConexionRapida, req)
+
+
+_ABRIR_TG = urllib.request.build_opener(_HttpsRapido()).open
+
+
 class Telegram:
     def __init__(self, token):
         self.base = f"https://api.telegram.org/bot{token}/"
@@ -427,7 +452,7 @@ class Telegram:
         # se reintenta unas veces. Un error de Telegram (HTTPError) sí se devuelve en el acto.
         for intento in range(4):
             try:
-                with urllib.request.urlopen(req, timeout=timeout) as r:
+                with _ABRIR_TG(req, timeout=timeout) as r:
                     return json.load(r)
             except urllib.error.HTTPError:
                 raise
@@ -487,7 +512,7 @@ class Telegram:
                    "Content-Type: application/octet-stream\r\n\r\n").encode() + datos + f"\r\n--{borde}--\r\n".encode()
         req = urllib.request.Request(self.base + metodo, data=cuerpo,
                                      headers={"Content-Type": f"multipart/form-data; boundary={borde}"})
-        urllib.request.urlopen(req, timeout=60).read()
+        _ABRIR_TG(req, timeout=60).read()
 
     def documento(self, chat, nombre, datos, leyenda=""):
         self._subir("sendDocument", "document", nombre, datos, (("chat_id", str(chat)), ("caption", leyenda)))
