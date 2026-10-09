@@ -134,14 +134,62 @@ class TestPanel(Base):
         super().setUp()
         self.c = self.entrar()
 
-    def test_muestra_las_monedas_con_su_numero(self):
+    def test_muestra_las_monedas_dibujadas_con_su_numero(self):
         _, p = self.pagina(self.c)
         self.assertIn("× 2", p)
-        for clase in ("bronce", "plata", "oro"):
-            self.assertIn(f'class="m {clase}"', p)
-        self.assertIn("<i>7</i>", p)
-        self.assertIn("<i>15</i>", p)
-        self.assertIn("<i>30</i>", p)
+        for t in ("bronce", "plata", "oro"):
+            self.assertIn(f'id="m-{t}"', p, "la moneda está dibujada")
+            self.assertIn(f'<use href="#m-{t}"/>', p, "y se usa")
+        for n in ("7", "15", "30"):
+            self.assertIn(f">{n}</text>", p, "el número va en la moneda")
+
+    def test_las_monedas_sin_stock_se_pueden_tocar_para_que_avise(self):
+        self.r.agregar_monedas(self.a, "plata", -2)
+        _, p = self.pagina(self.c)
+        self.assertIn('data-n="0" data-t="plata"', p)
+        self.assertNotIn("disabled", p, "no están deshabilitadas: así el aviso aparece al tocarlas")
+        self.assertIn("No disponés de la moneda de", p, "el aviso de la pantalla")
+        self.assertIn('id="sin-moneda"', p)
+
+    def test_modo_oscuro_con_un_boton_y_cookie(self):
+        _, p = self.pagina(self.c)
+        self.assertIn('name="t" value="oscuro"', p)
+        self.assertIn("<html lang=es>", p, "sin elegir, sigue al sistema")
+        cod, cab, _ = self.pedir("POST", "/r/tema", {"t": "oscuro"}, self.c)
+        self.assertEqual(cod, 303)
+        self.assertIn("zt=oscuro", cab["Set-Cookie"])
+        cab = {"Host": "x", "Cookie": f"zr={self.c}; zt=oscuro"}
+        _, _, cuerpo = self.p.manejar("GET", "/r", cab, b"", "1.1.1.1", True)
+        self.assertIn("<html lang=es data-tema=oscuro>", cuerpo.decode())
+        _, _, cuerpo = self.p.manejar("GET", "/r", {"Host": "x", "Cookie": f"zr={self.c}; zt=claro"}, b"", "1.1.1.1", True)
+        self.assertIn("<html lang=es data-tema=claro>", cuerpo.decode())
+
+    def test_el_modo_oscuro_tambien_se_elige_en_el_login(self):
+        cod, _, cuerpo = self.p.manejar("GET", "/r", {"Host": "x", "Cookie": "zt=oscuro"}, b"", "1.1.1.1", True)
+        self.assertIn("<html lang=es data-tema=oscuro>", cuerpo.decode())
+        self.assertIn('name="t" value="claro"', cuerpo.decode())
+
+    def test_tema_invalido_se_ignora(self):
+        cod, cab, _ = self.pedir("POST", "/r/tema", {"t": "<x>"})
+        self.assertIn("Max-Age=0", cab["Set-Cookie"])
+        _, _, cuerpo = self.p.manejar("GET", "/r", {"Host": "x", "Cookie": "zt=\"><script>"}, b"", "1.1.1.1", True)
+        self.assertNotIn("<script>", cuerpo.decode().split("<body>")[0])
+
+    def test_el_script_lleva_nonce_y_la_pagina_de_login_no_tiene_script(self):
+        _, cab, cuerpo = self.pedir("GET", "/r", cookie=self.c)
+        nonce = cab["Content-Security-Policy"].split("'nonce-")[1].split("'")[0]
+        self.assertIn(f'<script nonce="{nonce}">', cuerpo.decode())
+        _, cab, cuerpo = self.pedir("GET", "/r")
+        self.assertNotIn("<script", cuerpo.decode())
+
+    def test_crear_sin_elegir_duracion_avisa(self):
+        self.r.agregar_monedas(self.a, "bronce", -2)
+        self.r.agregar_monedas(self.a, "plata", -2)
+        self.r.agregar_monedas(self.a, "oro", -2)
+        _, p = self.pagina(self.c)
+        self.assertNotIn(" checked", p)
+        self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana")
+        self.assertIn("Elegí la duración", self.pagina(self.c)[1])
 
     def test_crear_usuario_gasta_moneda_y_aparece(self):
         cod, cab, _ = self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana", dias="15")
@@ -174,7 +222,7 @@ class TestPanel(Base):
     def test_sin_monedas_avisa_y_no_hace_nada(self):
         self.r.agregar_monedas(self.a, "bronce", -2)
         self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana", dias="7")
-        self.assertIn("No te quedan monedas de bronce", self.pagina(self.c)[1])
+        self.assertIn("No disponés de esa moneda", self.pagina(self.c)[1])
         self.assertEqual(self.f.us, {})
 
     def test_bloquear_desbloquear(self):
