@@ -262,5 +262,12 @@ if curl -fsSL "$BASE/scripts/zumo-baneo.sh$NC" -o "$_bn" && bash -n "$_bn" 2>/de
 fi
 rm -f "$_bn"
 
+# Registro del sistema limitado (200 MB / 2 semanas) para que no llene el disco.
+_jn=$(mktemp)
+if curl -fsSL "$BASE/scripts/zumo-journal.sh$NC" -o "$_jn" && bash -n "$_jn" 2>/dev/null; then
+	if _r=$(bash "$_jn" 2>&1); then ok "$_r"; else err "registro del sistema: $_r"; fi
+fi
+rm -f "$_jn"
+
 echo
 ok "Actualización terminada. Abrí el panel con: zumo"

@@ -280,5 +280,12 @@ chequear "baneo auto: puerto 22" "si" "$(grep -q '^port     = ' "$J2" && echo si
 echo "mio" > "$J2"; ZUMO_F2B_JAIL="$J2" bash "$(dirname "$0")/../scripts/zumo-baneo.sh" >/dev/null
 chequear "baneo auto: no pisa un jail existente" "mio" "$(cat "$J2")"
 
+J3="$T/journal.d"; mkdir -p "$J3"
+ZUMO_JOURNAL_DIR="$J3" bash "$(dirname "$0")/../scripts/zumo-journal.sh" >/dev/null </dev/null
+chequear "journald: límite de 200M" "si" "$(grep -q '^SystemMaxUse=200M' "$J3/zumo.conf" && echo si || echo no)"
+rm "$J3/zumo.conf"; printf '[Journal]\nSystemMaxUse=1G\n' > "$J3/propio.conf"
+ZUMO_JOURNAL_DIR="$J3" bash "$(dirname "$0")/../scripts/zumo-journal.sh" >/dev/null </dev/null
+chequear "journald: no pisa un límite propio" "no" "$([ -f "$J3/zumo.conf" ] && echo si || echo no)"
+
 echo
 if [ "$FALLOS" -eq 0 ]; then echo "TODO OK"; else echo "$FALLOS prueba(s) fallaron"; exit 1; fi
