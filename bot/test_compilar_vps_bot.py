@@ -47,7 +47,7 @@ class Base(unittest.TestCase):
 class Pantallas(Base):
     def test_la_app_ofrece_las_dos_opciones(self):
         self.armar()
-        self.btn("app")
+        self.btn("app"); self.btn("acx")        # las dos formas de compilar están juntas, en "Compilar"
         botones = self.tg.datos_botones()
         self.assertIn("acomp", botones)
         self.assertIn("acompv", botones)
