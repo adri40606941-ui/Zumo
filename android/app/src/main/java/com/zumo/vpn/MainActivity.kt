@@ -222,7 +222,7 @@ class MainActivity : Activity() {
         val root = ScrollView(this).apply { isFillViewport = true }
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(40), dp(18), dp(28))
+            setPadding(dp(18), dp(6), dp(18), dp(28))
             isFocusableInTouchMode = true   // que al abrir no salte el teclado por los campos de la cuenta
         }
         root.addView(col)
