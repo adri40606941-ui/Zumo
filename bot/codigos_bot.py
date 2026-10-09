@@ -44,13 +44,20 @@ class CodigosMixin:
     def nuevo_codigo(self, chat, mid, tipo):
         if tipo not in ac.TIPOS or not self.dominio_lista():
             return self.pantalla_instalar(chat, mid)
+        # Los instaladores salen de la copia del repo de esta VPS: se baja lo último de GitHub antes de dar el código,
+        # si no, la VPS nueva instalaría una versión vieja.
+        try:
+            sync = self.sincronizar_una_vez()
+        except Exception as ex:                      # pragma: no cover - nunca debe impedir dar el código
+            sync = (False, f"No pude sincronizar: {ex}")
         codigo = self.accesos.crear_codigo(tipo)
         donde = "En la VPS que ya tiene el panel" if tipo == "actualizar" else "En la VPS nueva"
         que = "para pasar una VPS al dominio" if tipo == "actualizar" else f"para instalar: {ac.TIPOS[tipo].lower()}"
         self.tg.mensaje(chat, f"🔑 Código {que}\n\n`{codigo}`\n\n"
                               f"Sirve una sola vez y vence en 15 minutos. {donde}, como root:\n\n"
                               f"`curl -fsSL https://{self.dominio_lista()}/i | bash`\n\n"
-                              "Cuando lo pida, pegá el código.", [[("◂ Instalar en VPS nueva", "inst")]], md=True)
+                              "Cuando lo pida, pegá el código."
+                              + (f"\n\n{'✅' if sync[0] else '⚠️'} {sync[1]}" if sync else ""), [[("◂ Instalar en VPS nueva", "inst")]], md=True)
 
     def pantalla_vps_instaladas(self, chat, mid):
         vps = self.accesos.listar()
