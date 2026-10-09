@@ -61,7 +61,8 @@ class VpsFalsa:
             u = self.us.get(tok)
             if not u:
                 return "NO\n"
-            return f"G hwid,{u['nombre']}\nV {u['vence'].isoformat()}\n"
+            pre = "" if u.get("sin_prefijo") else "hwid,"
+            return f"G {pre}{u['nombre']}\nV {u['vence'].isoformat()}\n"
         if "for u in" in c:
             lista = c.split("for u in ")[1].split(";")[0].split()
             out = ""
@@ -342,6 +343,12 @@ class TestNombreYFecha(TestServicio):
         self.assertEqual(self.s.datos_cuenta("ABCD1234")[0], "Ana", "dentro de los 60 s sale lo guardado")
         self.t[0] += 61
         self.assertEqual(self.s.datos_cuenta("ABCD1234"), ("Ana Gómez", "2026-12-25"))
+
+    def test_nombre_editado_en_la_vps_sin_el_prefijo_hwid(self):
+        self.s.crear(self.a, "ABCD1234", "Ssssss", 7)
+        self.f.us["ABCD1234"]["nombre"] = "adri"
+        self.f.us["ABCD1234"]["sin_prefijo"] = True
+        self.assertEqual(self.s.datos_cuenta("ABCD1234")[0], "adri")
 
     def test_guarda_el_resultado_para_no_entrar_por_ssh_cada_vez(self):
         self.s.crear(self.a, "ABCD1234", "Ana", 7)
