@@ -102,6 +102,7 @@ class ZumoVpnService : VpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        CrashLog.instalar(this)
         instancia = this
     }
 
@@ -166,7 +167,7 @@ class ZumoVpnService : VpnService() {
         try { startForeground(NOTI_ID, notificacion("Conectando...")) } catch (_: Exception) {}
         if (!activo) {
             activo = true; corriendo = true; conectando = true
-            trabajos.execute { encenderTrabajo() }
+            trabajos.execute { try { encenderTrabajo() } catch (e: Throwable) { errorInterno(e) } }
         }
         return START_NOT_STICKY   // si el sistema la mata, no se vuelve a encender sola
     }
@@ -215,8 +216,15 @@ class ZumoVpnService : VpnService() {
         }
         cfgActual = cfg
         vigilarRed()
-        hilo = Thread({ bucle(candidatos, user, pass) }, "zumo-ssh").also { it.start() }
+        hilo = Thread({ try { bucle(candidatos, user, pass) } catch (e: Throwable) { errorInterno(e) } }, "zumo-ssh").also { it.start() }
         monitor = Thread({ vigilar() }, "zumo-monitor").also { it.start() }
+    }
+
+    /** Un error inesperado: se guarda el motivo (se muestra al abrir la app) y se apaga la VPN sin cerrar la app. */
+    private fun errorInterno(e: Throwable) {
+        CrashLog.guardar(this, e)
+        Registro.add("✘ Error interno: ${e.javaClass.simpleName}")
+        detenerPorError("Error interno (${e.javaClass.simpleName}). Abrí la app de nuevo y mandá la captura del aviso.")
     }
 
     private fun fallarEncendido(motivo: String?) {
@@ -320,7 +328,10 @@ class ZumoVpnService : VpnService() {
      */
     private fun bucle(candidatos: List<Config>, user: String, pass: String) {
         var espera = 2000L
-        val busq = Busqueda(Hosts.ordenarCandidatos(candidatos) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } })
+        val ordenados = try {
+            Hosts.ordenarCandidatos(candidatos) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } }
+        } catch (e: Exception) { candidatos }       // si algo falla al ordenar, se usa el orden de la lista
+        val busq = Busqueda(ordenados)
         var siguienteYa = false
         while (activo && Prefs(this).wanted) {
             if (Perfil.vencida(Prefs(this).exp)) {
