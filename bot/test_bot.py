@@ -332,7 +332,8 @@ class Pruebas(unittest.TestCase):
     def test_app_agregar_y_cambiar_payload(self):
         with tempfile.TemporaryDirectory() as tmp:
             bot, tg, b, txt, btn = self.armar(tmp)
-            btn("app"); self.assertIn("aadd", tg.datos_botones())
+            btn("app"); self.assertEqual(tg.datos_botones(), ["asv", "t", "acx", "menu"])
+            btn("asv"); self.assertIn("aadd", tg.datos_botones())
             btn("aadd"); txt("APP 02"); txt("host:abc"); self.assertIn("inválido", tg.mensajes[-1])
             txt("vps.ejemplo.com:8080"); txt("GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]")
             self.assertEqual(bot.cargar_app(), [{"name": "APP 02", "host": "vps.ejemplo.com", "port": 8080,
@@ -404,7 +405,7 @@ class Pruebas(unittest.TestCase):
             bot, tg, b, txt, btn = self.armar(tmp, gh)
             b.gh_pub = GHpub()
             bot.guardar_app([{"name": "APP 02", "host": "h.com", "port": 80, "payload": "GET /", "tls": False, "sni": ""}])
-            btn("app"); self.assertIn("apub", tg.datos_botones())
+            btn("app"); btn("asv"); self.assertIn("apub", tg.datos_botones())
             btn("apub"); self.assertIn("apub_si", tg.datos_botones())
             btn("apub_si")
             for _ in range(100):
@@ -565,7 +566,8 @@ class Pruebas(unittest.TestCase):
             repo, rama = "o/r", "main"
         with tempfile.TemporaryDirectory() as tmp:
             bot, tg, b, txt, btn = self.armar(tmp, gh=GH())
-            btn("app")
+            btn("app"); btn("acx")
+            self.assertEqual(tg.datos_botones(), ["acomp", "acompv", "aclave", "app"])      # las dos formas de compilar, juntas
             self.assertIn("🔨 Compilar en GitHub y enviarme el APK", str(tg.botones[-1]))
             btn("acomp"); self.assertIn("Compilar en GitHub", str(tg.botones[-1]))
 
