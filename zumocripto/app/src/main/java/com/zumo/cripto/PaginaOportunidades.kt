@@ -18,7 +18,7 @@ import android.widget.Toast
 import java.util.Locale
 
 /** Pestaña "Oportunidades": lee los precios de varios exchanges y muestra dónde una misma cripto está más barata que en otro. */
-class PaginaOportunidades(private val act: Activity) {
+class PaginaOportunidades(private val act: Activity, private val almacen: AlmacenCuentas) {
     private val ui = Ui(act)
     private val principal = Handler(Looper.getMainLooper())
     private val candado = Any()
@@ -116,7 +116,12 @@ class PaginaOportunidades(private val act: Activity) {
         hubo = true
         buscando = true
         botonPrincipal.text = "⏹  DETENER"
-        val b = BuscadorExchanges({ url -> Red.pedir(url) })
+        val b = BuscadorExchanges(
+            pedir = { url -> Red.pedir(url) },
+            privadas = Privadas.FUENTES,
+            credenciales = { almacen.todas() },
+            pedirFirmado = { p -> Red.pedirFirmado(p) },
+        )
         buscador = b
         Thread({
             try {
@@ -133,9 +138,10 @@ class PaginaOportunidades(private val act: Activity) {
     }
 
     private fun armarInforme(r: BuscadorExchanges.Resultado): String {
-        val base = "Leí ${r.leidos} de ${Exchanges.TODAS.size} exchanges"
+        val base = "Leí ${r.leidos} de ${Exchanges.TODAS.size} exchanges" +
+            if (r.conCuenta.isEmpty()) "" else ". Envíos reales de tu cuenta: ${r.conCuenta.joinToString(", ")}"
         return if (r.fallaron.isEmpty()) base
-        else "$base. No pude leer: ${r.fallaron.joinToString(", ")}. Puede ser que no estén disponibles en tu país."
+        else "$base. No pude leer: ${r.fallaron.joinToString(", ")}. Si es un exchange, puede no estar disponible en tu país; si es tu cuenta, revisá la clave en Cuentas."
     }
 
     private fun detener() { buscador?.cancelar(); mensaje = "Deteniendo…" }

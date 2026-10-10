@@ -335,3 +335,111 @@ class WhitebitBingxTest {
         assertTrue(Exchanges.BINGX.url.contains("?timestamp="))
     }
 }
+
+class CuentasTest {
+    private val binanciaJson = """[{"coin":"AAA","networkList":[
+        {"network":"TRX","withdrawEnable":true,"depositEnable":true,"withdrawFee":"1.5","memoRegex":""},
+        {"network":"BSC","withdrawEnable":false,"depositEnable":true,"withdrawFee":"0.2","memoRegex":""}]},
+        {"coin":"XRP","networkList":[{"network":"XRP","withdrawEnable":true,"depositEnable":true,"withdrawFee":"0.25","memoRegex":"^[0-9]{1,10}$"}]}]"""
+    private val okxJson = """{"code":"0","data":[
+        {"ccy":"AAA","chain":"AAA-TRC20","canDep":true,"canWd":true,"minFee":"1.2"},
+        {"ccy":"BTC","chain":"BTC-Bitcoin","canDep":true,"canWd":false,"minFee":"0.0002"}]}"""
+    private val bybitJson = """{"retCode":0,"result":{"rows":[{"coin":"AAA","chains":[
+        {"chain":"TRX","chainType":"Tron","withdrawFee":"2","chainDeposit":"1","chainWithdraw":"1"},
+        {"chain":"ETH","withdrawFee":"5","chainDeposit":"0","chainWithdraw":"0"}]}]}}"""
+
+    @Test fun hmac_coincide_con_el_vector_conocido() {
+        assertEquals("f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8",
+            Firmas.hmacHex("key", "The quick brown fox jumps over the lazy dog"))
+    }
+    @Test fun hmac_coincide_con_el_ejemplo_de_la_documentacion_de_binance() {
+        val q = "symbol=LTCBTC&side=BUY&type=LIMIT&timeInForce=GTC&quantity=1&price=0.1&recvWindow=5000&timestamp=1499827319559"
+        assertEquals("c8db56825ae71d6d79447849e617115f4a920fa2acdcab2b053c4b2838bd6b71",
+            Firmas.hmacHex("NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0j", q))
+    }
+    @Test fun base64_y_hex_son_correctos() {
+        for (n in 0..40) {
+            val b = ByteArray(n) { (it * 37 + n).toByte() }
+            assertEquals(java.util.Base64.getEncoder().encodeToString(b), Firmas.base64(b))
+            assertTrue(b.contentEquals(Firmas.deHex(Firmas.hex(b))))
+        }
+    }
+    @Test fun binance_firma_la_consulta_y_manda_la_clave_en_el_encabezado() {
+        val p = Privadas.BINANCE.pedido(Credencial("Binance", "K", "S"), 1000)
+        val q = "timestamp=1000&recvWindow=10000"
+        assertEquals("https://api.binance.com/sapi/v1/capital/config/getall?$q&signature=${Firmas.hmacHex("S", q)}", p.url)
+        assertEquals("K", p.cabeceras["X-MBX-APIKEY"])
+    }
+    @Test fun bybit_firma_hora_clave_ventana() {
+        val p = Privadas.BYBIT.pedido(Credencial("Bybit", "K", "S"), 1000)
+        assertEquals(Firmas.hmacHex("S", "1000K10000"), p.cabeceras["X-BAPI-SIGN"])
+        assertEquals("1000", p.cabeceras["X-BAPI-TIMESTAMP"]); assertEquals("K", p.cabeceras["X-BAPI-API-KEY"])
+    }
+    @Test fun okx_firma_con_hora_iso_metodo_y_ruta_y_manda_la_frase() {
+        assertEquals("1970-01-01T00:00:00.000Z", Privadas.horaOkx(0))
+        val p = Privadas.OKX.pedido(Credencial("OKX", "K", "S", "F"), 0)
+        assertEquals(Firmas.hmacBase64("S", "1970-01-01T00:00:00.000ZGET/api/v5/asset/currencies"), p.cabeceras["OK-ACCESS-SIGN"])
+        assertEquals("F", p.cabeceras["OK-ACCESS-PASSPHRASE"]); assertEquals("https://www.okx.com/api/v5/asset/currencies", p.url)
+    }
+    @Test fun la_credencial_no_muestra_el_secreto_al_imprimirse() {
+        assertFalse(Credencial("OKX", "claveXYZ", "secretoXYZ", "fraseXYZ").toString().contains("XYZ"))
+    }
+    @Test fun lee_las_redes_de_binance_con_comision_y_memo() {
+        val d = Privadas.binance(binanciaJson)
+        val trx = d.getValue("AAA").first { it.red == "TRX" }
+        assertTrue(trx.puedeRetirar); assertEquals(1.5, trx.comision!!, 1e-9)
+        assertFalse(d.getValue("AAA").first { it.red == "BSC" }.puedeRetirar)
+        assertTrue(d.getValue("XRP")[0].requiereTag)
+    }
+    @Test fun lee_las_redes_de_okx_cortando_el_prefijo_del_activo() {
+        val d = Privadas.okx(okxJson)
+        assertEquals("TRX", d.getValue("AAA")[0].red); assertTrue(d.getValue("AAA")[0].puedeRetirar)
+        assertEquals("BTC", d.getValue("BTC")[0].red); assertFalse(d.getValue("BTC")[0].puedeRetirar)
+    }
+    @Test fun lee_las_redes_de_bybit_con_1_y_0() {
+        val d = Privadas.bybit(bybitJson)
+        assertTrue(d.getValue("AAA").first { it.red == "TRX" }.puedeRetirar)
+        assertFalse(d.getValue("AAA").first { it.red == "ETH" }.puedeDepositar)
+    }
+    @Test fun un_json_roto_no_rompe_el_lector() {
+        assertTrue(Privadas.BINANCE.parsear("basura").isEmpty())
+        assertTrue(Privadas.OKX.parsear("{}").isEmpty())
+    }
+
+    private fun cotiz(ex: String, precio: Double) = Cotizacion(ex, "AAA", "USDT", precio, 50000.0, "u")
+    private fun fuentes() = listOf(
+        Fuente("Binance", "u://b") { listOf(cotiz("Binance", 1.0)) },
+        Fuente("OKX", "u://o") { listOf(cotiz("OKX", 1.05)) },
+    )
+
+    @Test fun el_buscador_usa_la_cuenta_para_saber_si_se_puede_enviar() {
+        val r = BuscadorExchanges(
+            pedir = { ResultadoPedido(200, "{}") }, fuentes = fuentes(), envios = emptyList(),
+            privadas = listOf(Privadas.BINANCE, Privadas.OKX),
+            credenciales = { mapOf("Binance" to Credencial("Binance", "k", "s"), "OKX" to Credencial("OKX", "k", "s", "f")) },
+            pedirFirmado = { p -> ResultadoPedido(200, if (p.url.contains("binance")) binanciaJson else okxJson) },
+        ).buscar { }
+        assertEquals(listOf("Binance", "OKX"), r.conCuenta)
+        val e = r.catalogo.estado("AAA", "Binance", "OKX")
+        assertTrue(e is Catalogo.Estado.Posible)
+        assertEquals("TRX", (e as Catalogo.Estado.Posible).red); assertEquals(1.5, e.comision!!, 1e-9)
+    }
+    @Test fun sin_clave_no_se_consulta_la_cuenta_y_el_envio_queda_no_verificable() {
+        var llamadas = 0
+        val r = BuscadorExchanges(
+            pedir = { ResultadoPedido(200, "{}") }, fuentes = fuentes(), envios = emptyList(),
+            privadas = Privadas.FUENTES, credenciales = { emptyMap() },
+            pedirFirmado = { llamadas++; ResultadoPedido(200, "") },
+        ).buscar { }
+        assertEquals(0, llamadas); assertTrue(r.conCuenta.isEmpty())
+        assertTrue(r.catalogo.estado("AAA", "Binance", "OKX") is Catalogo.Estado.NoVerificable)
+    }
+    @Test fun una_clave_rechazada_se_informa_y_no_rompe_la_busqueda() {
+        val r = BuscadorExchanges(
+            pedir = { ResultadoPedido(200, "{}") }, fuentes = fuentes(), envios = emptyList(),
+            privadas = listOf(Privadas.BINANCE), credenciales = { mapOf("Binance" to Credencial("Binance", "k", "s")) },
+            pedirFirmado = { ResultadoPedido(401, null) },
+        ).buscar { }
+        assertTrue(r.fallaron.contains("tu cuenta de Binance (código 401)")); assertEquals(1, r.oportunidades.size)
+    }
+}

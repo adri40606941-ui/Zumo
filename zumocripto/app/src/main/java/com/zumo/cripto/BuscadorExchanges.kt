@@ -24,11 +24,15 @@ object Agregador {
     }
 }
 
-/** Lee los precios de cada exchange, y después qué redes permite cada uno para enviar, y arma las oportunidades. */
+/** Lee los precios de cada exchange, después qué redes permite cada uno para enviar (público y, si hay clave, con la cuenta), y arma las oportunidades. */
 class BuscadorExchanges(
     private val pedir: (String) -> ResultadoPedido,
     private val fuentes: List<Fuente> = Exchanges.TODAS,
     private val envios: List<FuenteTransferencias> = Transferencias.FUENTES,
+    private val privadas: List<FuentePrivada> = emptyList(),
+    private val credenciales: () -> Map<String, Credencial> = { emptyMap() },
+    private val pedirFirmado: (PedidoFirmado) -> ResultadoPedido = { ResultadoPedido(0, null) },
+    private val ahora: () -> Long = { System.currentTimeMillis() },
 ) {
     private val cancelado = AtomicBoolean(false)
     fun cancelar() = cancelado.set(true)
@@ -40,6 +44,8 @@ class BuscadorExchanges(
         val fallaron: List<String>,
         val cancelado: Boolean,
         val catalogo: Catalogo,
+        /** Exchanges cuyos envíos se leyeron con la cuenta del usuario (clave API). */
+        val conCuenta: List<String> = emptyList(),
     )
 
     fun buscar(alEstado: (String) -> Unit): Resultado {
@@ -71,13 +77,27 @@ class BuscadorExchanges(
             val d = f.parsear(cuerpo)
             if (d.isEmpty()) fallaron.add("envíos de ${f.nombre} (formato no reconocido)") else datosEnvio[f.nombre] = d
         }
+
+        // Con la clave del usuario se leen los envíos reales; reemplazan a lo público del mismo exchange.
+        val conCuenta = ArrayList<String>()
+        val claves = if (privadas.isEmpty()) emptyMap() else credenciales()
+        for (f in privadas) {
+            val c = claves[f.nombre] ?: continue
+            if (cancelado.get()) return Resultado(emptyList(), leidos, fallaron, true, Catalogo(datosEnvio), conCuenta)
+            alEstado("Leyendo envíos de ${f.nombre} con tu cuenta…")
+            val r = pedirFirmado(f.pedido(c, ahora()))
+            val cuerpo = r.cuerpo
+            if (cuerpo == null) { fallaron.add("tu cuenta de ${f.nombre} (código ${r.codigo})"); continue }
+            val d = f.parsear(cuerpo)
+            if (d.isEmpty()) fallaron.add("tu cuenta de ${f.nombre} (formato no reconocido)") else { datosEnvio[f.nombre] = d; conCuenta.add(f.nombre) }
+        }
         val catalogo = Catalogo(datosEnvio)
 
         if (leidos == 0) {
             alEstado("No se pudo leer ningún exchange. ¿Estás sin internet?")
-            return Resultado(emptyList(), 0, fallaron, false, catalogo)
+            return Resultado(emptyList(), 0, fallaron, false, catalogo, conCuenta)
         }
         alEstado("Armando comparaciones…")
-        return Resultado(Agregador.construir(todas), leidos, fallaron, false, catalogo)
+        return Resultado(Agregador.construir(todas), leidos, fallaron, false, catalogo, conCuenta)
     }
 }

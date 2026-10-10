@@ -52,7 +52,7 @@ class Catalogo(private val datos: Map<String, Map<String, List<RedDe>>>) {
         val b = datos[hasta]
         if (a == null || b == null) {
             val sinDatos = listOfNotNull(if (a == null) desde else null, if (b == null) hasta else null)
-            return Estado.NoVerificable("sin datos públicos de ${sinDatos.joinToString(" ni ")} (necesitan clave)")
+            return Estado.NoVerificable("sin datos públicos de ${sinDatos.joinToString(" ni ")} (cargá su clave en Cuentas)")
         }
         val enDesde = a[activo] ?: return Estado.NoPosible("$activo no se opera para retiro en $desde")
         val enHasta = b[activo] ?: return Estado.NoPosible("$activo no está en $hasta")
