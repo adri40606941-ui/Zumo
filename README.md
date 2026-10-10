@@ -357,7 +357,7 @@ El instalador usa esa copia cuando GitHub y el dominio no responden. Después re
 ## Varios dominios o IP por servidor
 
 En el bot, al poner o cambiar el host de un servidor de la app se pueden escribir varios separados por coma, espacio o punto y coma
-(`a.com, b.com, 1.2.3.4:443`; hasta 8; el puerto es el del primero que lo traiga). La app los prueba todos a la vez con un TCP
+(`a.com, b.com, 1.2.3.4:443`; hasta 50; el puerto es el del primero que lo traiga). La app los prueba todos a la vez con un TCP
 (sin iniciar sesión, así no cuenta como intento fallido), usa el que responde primero y, si ese falla, sigue con los otros hosts del mismo
 servidor. Si el servidor rechaza el token no insiste con sus otros hosts. Hay que compilar y repartir una app nueva: las apps viejas no entienden la lista.
 

@@ -56,7 +56,7 @@ def etiqueta_dns(dns):
             "cloudflare": "Cloudflare (1.1.1.1)"}.get(d, d.replace(",", ", "))
 
 
-MAX_HOSTS = 8
+MAX_HOSTS = 50
 
 
 def lista_hosts(host):
