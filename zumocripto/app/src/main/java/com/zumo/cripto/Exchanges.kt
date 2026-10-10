@@ -100,5 +100,63 @@ object Exchanges {
         cotizar(JSONArray(json), "MEXC", "symbol", "lastPrice", "quoteVolume", null) { b, q -> "https://www.mexc.com/exchange/${b}_$q" }
     }
 
-    val TODAS: List<Fuente> = listOf(BINANCE, BYBIT, OKX, KUCOIN, GATE, BITGET, MEXC)
+    private fun sumar(out: MutableList<Cotizacion>, ex: String, par: String, sep: String?, precio: Double, vol: Double, url: (String, String) -> String) {
+        val (b, q) = separar(par, sep) ?: return
+        if (precio.isNaN() || precio <= 0 || vol.isNaN()) return
+        out.add(Cotizacion(ex, b, q, precio, vol, url(b, q)))
+    }
+
+    private fun num(o: JSONObject, k: String): Double = o.optString(k).toDoubleOrNull() ?: Double.NaN
+
+    /** HTX: data[] con symbol ("btcusdt"), close y vol (volumen en la cotización). */
+    val HTX = Fuente("HTX", "https://api.huobi.pro/market/tickers") { json ->
+        val a = JSONObject(json).getJSONArray("data"); val out = ArrayList<Cotizacion>()
+        for (i in 0 until a.length()) { val o = a.optJSONObject(i) ?: continue
+            sumar(out, "HTX", o.optString("symbol"), null, num(o, "close"), num(o, "vol")) { b, q -> "https://www.htx.com/trade/${b.lowercase()}_${q.lowercase()}" } }
+        out
+    }
+
+    /** Crypto.com: result.data[] con i ("BTC_USDT"), a (último) y vv (volumen en la cotización). Los perpetuos ("-PERP") no encajan y se saltan. */
+    val CRYPTOCOM = Fuente("Crypto.com", "https://api.crypto.com/exchange/v1/public/get-tickers") { json ->
+        val a = JSONObject(json).getJSONObject("result").getJSONArray("data"); val out = ArrayList<Cotizacion>()
+        for (i in 0 until a.length()) { val o = a.optJSONObject(i) ?: continue
+            sumar(out, "Crypto.com", o.optString("i"), "_", num(o, "a"), num(o, "vv")) { b, q -> "https://crypto.com/exchange/trade/${b}_$q" } }
+        out
+    }
+
+    /** LBank: data[] con symbol ("vet_usdt") y ticker.latest / ticker.turnover. */
+    val LBANK = Fuente("LBank", "https://api.lbkex.com/v2/ticker/24hr.do?symbol=all") { json ->
+        val a = JSONObject(json).getJSONArray("data"); val out = ArrayList<Cotizacion>()
+        for (i in 0 until a.length()) { val o = a.optJSONObject(i) ?: continue
+            val t = o.optJSONObject("ticker") ?: continue
+            sumar(out, "LBank", o.optString("symbol"), "_", num(t, "latest"), num(t, "turnover")) { b, q -> "https://www.lbank.com/trade/${b.lowercase()}_${q.lowercase()}" } }
+        out
+    }
+
+    /** XT.com: result[] con s ("ape_usdt"), c (cierre) y v (volumen en la cotización). */
+    val XT = Fuente("XT.com", "https://sapi.xt.com/v4/public/ticker/24h") { json ->
+        val a = JSONObject(json).getJSONArray("result"); val out = ArrayList<Cotizacion>()
+        for (i in 0 until a.length()) { val o = a.optJSONObject(i) ?: continue
+            sumar(out, "XT.com", o.optString("s"), "_", num(o, "c"), num(o, "v")) { b, q -> "https://www.xt.com/en/trade/${b.lowercase()}_${q.lowercase()}" } }
+        out
+    }
+
+    /** Poloniex: [] con symbol ("BTC_USDT"), close y amount (volumen en la cotización). */
+    val POLONIEX = Fuente("Poloniex", "https://api.poloniex.com/markets/ticker24h") { json ->
+        val a = JSONArray(json); val out = ArrayList<Cotizacion>()
+        for (i in 0 until a.length()) { val o = a.optJSONObject(i) ?: continue
+            sumar(out, "Poloniex", o.optString("symbol"), "_", num(o, "close"), num(o, "amount")) { b, q -> "https://poloniex.com/trade/${b}_$q" } }
+        out
+    }
+
+    /** Bitstamp: [] con pair ("BTC/USD"), last y volume (en el activo: se multiplica por el precio para tenerlo en dólares). */
+    val BITSTAMP = Fuente("Bitstamp", "https://www.bitstamp.net/api/v2/ticker/") { json ->
+        val a = JSONArray(json); val out = ArrayList<Cotizacion>()
+        for (i in 0 until a.length()) { val o = a.optJSONObject(i) ?: continue
+            val precio = num(o, "last")
+            sumar(out, "Bitstamp", o.optString("pair"), "/", precio, num(o, "volume") * precio) { b, q -> "https://www.bitstamp.net/markets/${b.lowercase()}/${q.lowercase()}/" } }
+        out
+    }
+
+    val TODAS: List<Fuente> = listOf(BINANCE, BYBIT, OKX, KUCOIN, GATE, BITGET, MEXC, HTX, CRYPTOCOM, LBANK, XT, POLONIEX, BITSTAMP)
 }

@@ -295,3 +295,27 @@ class TransferenciasTest {
         assertTrue(catalogo().estado("ETH", "Bitget", "KuCoin") is Catalogo.Estado.NoPosible)
     }
 }
+
+class NuevosExchangesTest {
+    @Test fun htx_lee_symbol_en_minusculas() {
+        val r = Exchanges.HTX.parsear("""{"data":[{"symbol":"zigusdt","close":0.055314,"vol":10449.25},{"symbol":"ethbtc","close":0.03,"vol":99}]}""")
+        assertEquals(1, r.size); assertEquals("ZIG", r[0].base); assertEquals(0.055314, r[0].precio, 1e-9)
+    }
+    @Test fun cryptocom_salta_perpetuos() {
+        val r = Exchanges.CRYPTOCOM.parsear("""{"result":{"data":[{"i":"ACH_USD","a":"0.0058","vv":"3249.82"},{"i":"SHAZUSD-PERP","a":"38","vv":"26172"}]}}""")
+        assertEquals(listOf("ACH"), r.map { it.base })
+    }
+    @Test fun lbank_lee_el_ticker_anidado() {
+        val r = Exchanges.LBANK.parsear("""{"data":[{"symbol":"vet_usdt","ticker":{"latest":"0.007866","turnover":"287669.99"}}]}""")
+        assertEquals(1, r.size); assertEquals(287669.99, r[0].volumen, 1e-6)
+    }
+    @Test fun xt_y_poloniex_leen_guion_bajo() {
+        assertEquals("APE", Exchanges.XT.parsear("""{"result":[{"s":"ape_usdt","c":"0.1547","v":"483802.6"}]}""")[0].base)
+        assertEquals("BTC", Exchanges.POLONIEX.parsear("""[{"symbol":"BTC_USDT","close":"82000","amount":"1000000"},{"symbol":"DASH_BTC","close":"0.0006","amount":"1"}]""")[0].base)
+    }
+    @Test fun bitstamp_pasa_el_volumen_a_dolares() {
+        val r = Exchanges.BITSTAMP.parsear("""[{"pair":"BTC/USD","last":"80000","volume":"2"},{"pair":"BTC/EUR","last":"73000","volume":"9"}]""")
+        assertEquals(1, r.size); assertEquals(160000.0, r[0].volumen, 1e-6)
+    }
+    @Test fun hay_13_exchanges() { assertEquals(13, Exchanges.TODAS.size) }
+}
