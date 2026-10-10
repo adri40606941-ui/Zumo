@@ -3,9 +3,9 @@ package com.zumo.cripto
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Recorre el ranking de criptos de CoinGecko y, para cada una, compara su precio entre exchanges.
+ * Recorre el ranking de criptos de CoinGecko entre dos puestos y, para cada una, compara su precio entre exchanges.
  * Pide de a una (la API pública comparte un límite de pedidos por minuto entre todos: pedir en paralelo
- * solo lograría más códigos 429), con una pausa entre pedidos y reintentos con espera creciente si llega un 429.
+ * solo lograría más códigos 429), con una pausa que se adapta y reintentos con espera creciente si llega un 429.
  */
 class Escaneo(
     private val pedir: (String) -> ResultadoPedido,
@@ -14,8 +14,10 @@ class Escaneo(
     private val cancelado = AtomicBoolean(false)
     fun cancelar() = cancelado.set(true)
 
+    /** Compara las monedas de los puestos [desde] a [hasta] (inclusive). El rango se recorta a [MAX_RANGO] monedas. */
     fun buscar(
-        cantidadMonedas: Int,
+        desde: Int,
+        hasta: Int,
         margenMinimoPct: Double,
         pausaMs: Long,
         alEstado: (String) -> Unit,
@@ -23,14 +25,22 @@ class Escaneo(
         alAvanzar: (Int, Int) -> Unit,
     ) {
         cancelado.set(false)
-        alEstado("Consultando el ranking de criptos…")
-        val rm = pedirConReintentos(CoinGeckoApi.urlMercados(cantidadMonedas))
-        if (rm.cuerpo == null) {
-            alEstado(mensajeDeError(rm.codigo))
-            return
+        val d = desde.coerceAtLeast(1)
+        val h = hasta.coerceAtLeast(d).coerceAtMost(d + MAX_RANGO - 1)
+        alEstado("Consultando el ranking (puestos $d a $h)…")
+        val monedas = ArrayList<Moneda>()
+        for (pagina in CoinGeckoApi.paginaDe(d)..CoinGeckoApi.paginaDe(h)) {
+            if (cancelado.get()) return
+            val rm = pedirConReintentos(CoinGeckoApi.urlMercados(pagina))
+            if (rm.cuerpo == null) {
+                alEstado(mensajeDeError(rm.codigo))
+                return
+            }
+            val base = (pagina - 1) * CoinGeckoApi.POR_PAGINA
+            monedas.addAll(Parseo.monedas(rm.cuerpo, base).filter { it.puestoRanking in d..h })
         }
-        val monedas = Parseo.monedas(rm.cuerpo)
-        if (monedas.isEmpty()) { alEstado("CoinGecko no devolvió ninguna moneda."); return }
+        if (monedas.isEmpty()) { alEstado("CoinGecko no devolvió monedas en los puestos $d a $h."); return }
+
         // La pausa arranca en [pausaMs] y se adapta: se acorta mientras CoinGecko responde bien, y se alarga si llega un 429.
         var pausa = pausaMs.coerceIn(PAUSA_MIN_MS, PAUSA_MAX_MS)
         for ((i, m) in monedas.withIndex()) {
@@ -48,29 +58,22 @@ class Escaneo(
         }
     }
 
-    /** Un 429 duplica la pausa (con un empujón); cada respuesta buena la achica de a poco hasta el mínimo. */
-    internal fun ajustarPausa(actual: Long, codigo: Int): Long = when {
-        codigo == 429 -> (actual * 2 + 500).coerceAtMost(PAUSA_MAX_MS)
-        codigo in 200..299 -> (actual * 9 / 10).coerceAtLeast(PAUSA_MIN_MS)
-        else -> actual
-    }
-
     /**
-     * Busca una sola cripto por símbolo, id o nombre, entre las [entreTop] primeras del ranking, y compara sus precios.
+     * Busca una sola cripto por símbolo, id o nombre, entre las 250 primeras del ranking, y compara sus precios.
      * Devuelve null (y avisa por [alEstado]) si no se encontró, si CoinGecko no respondió o si no hay exchanges suficientes.
      */
-    fun buscarUna(consulta: String, alEstado: (String) -> Unit, entreTop: Int = 250): Oportunidad? {
+    fun buscarUna(consulta: String, alEstado: (String) -> Unit): Oportunidad? {
         cancelado.set(false)
         val q = consulta.trim().lowercase()
         if (q.isEmpty()) { alEstado("Escribí una cripto, por ejemplo BTC."); return null }
         alEstado("Buscando \"${consulta.trim()}\" en el ranking…")
-        val rm = pedirConReintentos(CoinGeckoApi.urlMercados(entreTop))
+        val rm = pedirConReintentos(CoinGeckoApi.urlMercados(1))
         if (rm.cuerpo == null) { alEstado(mensajeDeError(rm.codigo)); return null }
         val m = Parseo.monedas(rm.cuerpo).firstOrNull {
             it.simbolo.lowercase() == q || it.id.lowercase() == q || it.nombre.lowercase() == q
         }
         if (m == null) {
-            alEstado("No encontré \"${consulta.trim()}\" entre las $entreTop primeras del ranking.")
+            alEstado("No encontré \"${consulta.trim()}\" entre las ${CoinGeckoApi.POR_PAGINA} primeras del ranking.")
             return null
         }
         if (cancelado.get()) return null
@@ -80,6 +83,13 @@ class Escaneo(
         val op = Comparador.construir(m, Parseo.tickers(rt.cuerpo))
         if (op == null) alEstado("${m.nombre} no tiene suficientes exchanges con precio confiable para comparar.")
         return op
+    }
+
+    /** Un 429 duplica la pausa (con un empujón); cada respuesta buena la achica de a poco hasta el mínimo. */
+    internal fun ajustarPausa(actual: Long, codigo: Int): Long = when {
+        codigo == 429 -> (actual * 2 + 500).coerceAtMost(PAUSA_MAX_MS)
+        codigo in 200..299 -> (actual * 9 / 10).coerceAtLeast(PAUSA_MIN_MS)
+        else -> actual
     }
 
     private fun mensajeDeError(codigo: Int): String =
@@ -101,5 +111,7 @@ class Escaneo(
         const val PAUSA_429_MS = 4000L
         const val PAUSA_MIN_MS = 300L
         const val PAUSA_MAX_MS = 10000L
+        /** Tope de monedas por búsqueda: cada una son dos pedidos, así que más de esto tarda demasiado. */
+        const val MAX_RANGO = 1000
     }
 }
