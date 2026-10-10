@@ -21,6 +21,31 @@ object Cuenta {
             .map { it.substringBefore('?').removeSuffix("servidores.bin") + "cuenta?t=" + t }
     }
 
+    /**
+     * Para avisarle al bot por qué IP de un rango se conectó: /conecto?t=TOKEN&s=SERVIDOR&ip=IP&r=RANGO,
+     * en la misma VPS de donde se baja la lista (como /cuenta).
+     */
+    fun urlsConecto(actualizar: String, token: String, servidor: String, ip: String, rango: String): List<String> {
+        fun e(x: String) = URLEncoder.encode(x, "UTF-8")
+        return urls(actualizar, token).map {
+            it.replace("/cuenta?t=", "/conecto?t=") + "&s=" + e(servidor) + "&ip=" + e(ip) + "&r=" + e(rango)
+        }
+    }
+
+    /** Le avisa al bot (que se lo manda al admin por Telegram). true si alguna VPS lo recibió. No va en el hilo principal. */
+    fun avisarConexion(actualizar: String, token: String, servidor: String, ip: String, rango: String): Boolean {
+        for (u in urlsConecto(actualizar, token, servidor, ip, rango)) {
+            try {
+                val c = (URL(u).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 6000; readTimeout = 6000; useCaches = false
+                    setRequestProperty("User-Agent", "ZumoVPN")
+                }
+                try { if (c.responseCode == 200) return true } finally { c.disconnect() }
+            } catch (_: Exception) { }
+        }
+        return false
+    }
+
     /** La respuesta del bot: primera línea el nombre, segunda el vencimiento (AAAA-MM-DD, puede faltar). null si no sirve. */
     fun parsear(texto: String): Datos? {
         val l = texto.lines()

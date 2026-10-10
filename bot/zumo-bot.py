@@ -904,7 +904,8 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
                                     "Si cambiás solo el payload, no le cambies el nombre: así a los clientes les sigue andando al actualizar.\n"
                                     "Para quitarlo (conexión directa por IP y puerto) tocá el botón o escribí -", "a_payload", i=i, _extra=[[("🚫 Quitar payload", f"aqp:{i}")]])
         if acc == "ah":
-            return self.pedir(chat, "🌐 Escribí el dominio o IP, con el puerto si no es el 80.\nPodés poner varios separados por coma (la app prueba todos y usa el que responda): a.com, b.com, 1.2.3.4:443", "a_host", i=i)
+            return self.pedir(chat, "🌐 Escribí el dominio o IP, con el puerto si no es el 80.\nPodés poner varios separados por coma (la app prueba todos y usa el que responda): a.com, b.com, 1.2.3.4:443\n"
+                                   "O un rango de IP (la app busca la que conecta y te avisa cuál): 104.16.0.0/24  o  104.16.1.10-80", "a_host", i=i)
         if acc == "an":
             return self.pedir(chat, "🏷 Escribí el nombre nuevo (los clientes que ya lo usan tendrán que volver a elegir el servidor):", "a_nombre_edit", i=i)
         if acc == "at":
@@ -1017,11 +1018,11 @@ class Bot(centro.CentroMixin, maquinas_bot.MaquinasMixin, codigos_bot.CodigosMix
                 self.estado.pop(chat, None)
                 return self.pantalla_app_servidor(chat, None, i)
             e.update(paso="a_host", nombre=n)
-            return self.tg.mensaje(chat, f"Nombre: {n}\nAhora el dominio o IP, con el puerto si no es el 80.\nPodés poner varios separados por coma (si uno no responde, la app usa el otro): a.com, b.com, 1.2.3.4:443", CANCELAR)
+            return self.tg.mensaje(chat, f"Nombre: {n}\nAhora el dominio o IP, con el puerto si no es el 80.\nPodés poner varios separados por coma (si uno no responde, la app usa el otro): a.com, b.com, 1.2.3.4:443\nO un rango de IP (la app busca la que conecta y te avisa cuál): 104.16.0.0/24  o  104.16.1.10-80", CANCELAR)
         if paso == "a_host":
             host, puerto = srv.normalizar_hosts(t)
             if host is None:
-                return self.tg.mensaje(chat, "⚠️ Host o puerto inválido. Ej: vps.ejemplo.com:80  o varios: a.com, b.com, 1.2.3.4:80", CANCELAR)
+                return self.tg.mensaje(chat, "⚠️ Host o puerto inválido. Ej: vps.ejemplo.com:80  o varios: a.com, b.com, 1.2.3.4:80\nRango: 104.16.0.0/24 (de /16 a /32) o 104.16.1.10-80", CANCELAR)
             if i is not None:
                 l[i]["host"] = host
                 if puerto:
@@ -1826,8 +1827,10 @@ def main():
     if bot.dominio_lista():
         web = panel_web.PanelWeb(bot.revs, servicio, notificar=bot.avisar_admins)   # panel de revendedores: https://dominio/r
         # La app pide "Nombre [dd/mm]": primero la VPS del bot y, si el token es de un revendedor, sus VPS asignadas.
-        publico.iniciar(accesos=bot.accesos, dominio=bot.dominio_lista(),
-                        cuenta=lambda t: datos_cuenta(t) or servicio.datos_cuenta(t), web=web)
+        cuenta = lambda t: datos_cuenta(t) or servicio.datos_cuenta(t)
+        # Servidores con rango de IP: la app avisa por cuál IP entró y te llega por Telegram.
+        publico.iniciar(accesos=bot.accesos, dominio=bot.dominio_lista(), cuenta=cuenta, web=web,
+                        conecto=srv.AvisoConecto(cuenta, bot.avisar_admins))
         if not publico.hay_lista():
             bot.publicar_en_vps(cargar_app())
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()

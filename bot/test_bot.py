@@ -282,6 +282,24 @@ class Pruebas(unittest.TestCase):
         self.assertNotIn("\n", s["payload"])
         self.assertEqual(len(sv.desde_texto(sv.a_texto([s]))), 1)
 
+    def test_servidores_rango_de_ip(self):
+        import servidores as sv
+        self.assertEqual(sv.normalizar_hosts("104.16.0.0/24"), ("104.16.0.0/24", None))
+        self.assertEqual(sv.normalizar_hosts("104.16.0.0/24, a.com:443"), ("104.16.0.0/24,a.com", 443))
+        self.assertEqual(sv.normalizar_hosts("104.16.1.10-104.16.1.80"), ("104.16.1.10-104.16.1.80", None))
+        self.assertEqual(sv.tamano_rango("104.16.0.0/24"), 254)
+        self.assertEqual(sv.tamano_rango("104.16.1.10-80"), 71)
+        self.assertEqual(sv.tamano_rango("8.8.8.8/32"), 1)
+        for malo in ("1.2.3.0/8", "1.2.3.0/33", "1.2.3.80-10", "1.2.3.4-x", "a.com/24", "1.2.3.300/24"):
+            self.assertFalse(sv.es_rango(malo), malo)
+        self.assertIsNone(sv.error_host("104.16.0.0/24"))
+        self.assertIsNotNone(sv.error_host("1.2.3.0/8"))
+        # el texto que va a la app conserva el rango tal cual
+        s = sv.nuevo("Rango", "104.16.0.0/24", 80, "GET / HTTP/1.1[crlf]Host: f.com[crlf][crlf]")
+        self.assertTrue(sv.valido(s))
+        self.assertIn("host = 104.16.0.0/24\n", sv.a_texto([s]))
+        self.assertEqual(sv.desde_texto(sv.a_texto([s]))[0]["host"], "104.16.0.0/24")
+
     def test_servidores_varios_hosts(self):
         import servidores as sv
         self.assertEqual(sv.normalizar_hosts("a.com, b.com:443  1.2.3.4;https://c.com/x"), ("a.com,b.com,1.2.3.4,c.com", 443))

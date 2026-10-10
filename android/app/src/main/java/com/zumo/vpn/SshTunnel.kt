@@ -14,8 +14,14 @@ import java.net.Socket
 class SshTunnel(
     private val cfg: Config, private val user: String, private val pass: String,
     private val etapa: (String) -> Unit = {}, private val proteger: (Socket) -> Unit = {},
+    /** Elige el host real justo antes de conectar (un rango de IP → la IP que contesta, ver Rangos). */
+    private val resolver: (Config) -> Config = { it },
 ) {
     @Volatile var session: Session? = null
+        private set
+
+    /** La configuración con la que conectó de verdad (con un rango, host = la IP elegida). */
+    @Volatile var usada: Config = cfg
         private set
 
     fun connect() {
@@ -26,10 +32,12 @@ class SshTunnel(
             override fun isEnabled(level: Int) = true
             override fun log(level: Int, message: String?) { SshDebug.add(message ?: "") }
         })
-        val tr = Transport.connect(cfg, etapa, proteger)
+        val c = resolver(cfg)
+        usada = c
+        val tr = Transport.connect(c, etapa, proteger)
         try {
             etapa("Iniciando sesión")
-            val s = JSch().getSession(user, cfg.host, cfg.sshPort)
+            val s = JSch().getSession(user, c.host, c.sshPort)
             s.setPassword(pass)
             s.setConfig("StrictHostKeyChecking", "no")
             // keyboard-interactive primero: en paneles tipo SSHPlus el método "password" se rechaza

@@ -63,6 +63,10 @@ class Prefs(ctx: Context) {
         get() = sp.getLong("ultimo_chequeo_lista", 0)
         set(v) { sp.edit().putLong("ultimo_chequeo_lista", v).apply() }
 
+    /** La IP de un rango (host "104.16.0.0/24") con la que se conectó la última vez: se prueba primero. */
+    fun ipDeRango(rango: String): String = sp.getString("rango_ip:$rango", "") ?: ""
+    fun guardarIpDeRango(rango: String, ip: String) { sp.edit().putString("rango_ip:$rango", ip).apply() }
+
     /** El cliente entra siempre con el token de este celular (se quitó la opción de usuario y contraseña). */
     val modoToken: Boolean get() = true
 

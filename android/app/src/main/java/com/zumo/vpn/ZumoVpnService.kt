@@ -332,6 +332,42 @@ class ZumoVpnService : VpnService() {
         }, "zumo-cuenta").start()
     }
 
+    /**
+     * Si el host del servidor es un rango de IP (ver Rangos), busca la IP donde contesta el SSH: primero la que sirvió
+     * la vez pasada, después las del rango, varias a la vez. Devuelve la config con esa IP; si ninguna contesta, falla
+     * como un servidor caído. En el registro no se muestra la IP (el cliente no ve datos del servidor).
+     */
+    private fun resolverRango(c: Config, prefijo: String = ""): Config {
+        if (!Rangos.esRango(c.host)) return c
+        val p = Prefs(this)
+        val lista = Rangos.ips(c.host)
+        val anterior = p.ipDeRango(c.host).ifBlank { null }
+        Registro.add("${prefijo}Buscando IP en el rango (${lista.size})…")
+        val inicio = System.currentTimeMillis()
+        val ip = Rangos.buscar(
+            lista, anterior,
+            cancelado = { !activo || !Prefs(this).wanted },
+            progreso = { n, total -> if (n % 16 == 0 || n == total) { estado = "Buscando IP $n/$total"; actualizarNoti() } },
+        ) { x -> Rangos.sondaSsh(c.con(x), { sock -> protect(sock) }) }
+            ?: throw java.io.IOException("El servidor no respondió en ninguna IP del rango")
+        p.guardarIpDeRango(c.host, ip)
+        val seg = (System.currentTimeMillis() - inicio) / 1000
+        Registro.add("${prefijo}IP del rango encontrada" + if (ip == anterior) " (la de la vez pasada)" else " en ${seg}s")
+        estado = "Conectando..."; actualizarNoti()
+        return c.con(ip).copy(conTimeout = 8000)
+    }
+
+    /** Conectó por un rango de IP: le avisa al bot por cuál IP entró (el bot se lo manda al admin por Telegram). */
+    private fun avisarRango(candidato: Config, usada: Config, token: String) {
+        if (!Rangos.esRango(candidato.host) || usada.host == candidato.host) return
+        Thread({
+            val ok = try {
+                Cuenta.avisarConexion(Servidores.urlActualizar(this), token, candidato.name, usada.host, candidato.host)
+            } catch (_: Exception) { false }
+            Registro.add(if (ok) "IP del rango avisada al bot" else "No se pudo avisar la IP al bot (¿bot sin actualizar?)")
+        }, "zumo-aviso-rango").start()
+    }
+
     private fun avisarDns(c: Config) {
         if (c.dnsServidores().isNotEmpty()) Registro.add("DNS: ${Dns.etiqueta(c.dns)}")
     }
@@ -426,6 +462,7 @@ class ZumoVpnService : VpnService() {
                     Registro.add("✔ Conectado (${cg.name})")
                     avisarDns(cg)
                     cargarCuenta(user)
+                    avisarRango(cg, g.usada, user)
                     while (activo && g.conectado) Thread.sleep(1000)
                     cayoG = activo && Prefs(this).wanted
                 } catch (e: InterruptedException) {
@@ -443,7 +480,8 @@ class ZumoVpnService : VpnService() {
             }
             val cfg = busq.actual()
             cfgActual = cfg
-            val t = SshTunnel(cfg, user, pass, etapa = { etapaActual = it; Registro.add(it) }, proteger = { sock -> protect(sock) })
+            val t = SshTunnel(cfg, user, pass, etapa = { etapaActual = it; Registro.add(it) }, proteger = { sock -> protect(sock) },
+                resolver = { c -> resolverRango(c) })
             intentoActual = t
             var cayo = false
             try {
@@ -459,6 +497,7 @@ class ZumoVpnService : VpnService() {
                 Registro.add("✔ Conectado")
                 avisarDns(cfg)
                 cargarCuenta(user)
+                avisarRango(cfg, t.usada, user)
                 while (activo && t.conectado) Thread.sleep(1000)
                 cayo = activo && Prefs(this).wanted      // se cortó sola, no la cortó el usuario
             } catch (e: InterruptedException) {
@@ -541,7 +580,8 @@ class ZumoVpnService : VpnService() {
         val orden = try { Hosts.ordenarConUltimo(cands, nombre, Prefs(this).ultimoHost, 3500) { c -> Hosts.sondeoTcp(c) { sock -> protect(sock) } } } catch (e: Exception) { cands }
         for (cfg in orden) {
             if (ganador.get() != null || fin.get() || !activo) return
-            val t = SshTunnel(cfg, user, pass, etapa = { Registro.add("[$nombre] $it") }, proteger = { sock -> protect(sock) })
+            val t = SshTunnel(cfg, user, pass, etapa = { Registro.add("[$nombre] $it") }, proteger = { sock -> protect(sock) },
+                resolver = { c -> resolverRango(c, "[$nombre] ") })
             enCarrera.add(t)
             try {
                 t.connect()

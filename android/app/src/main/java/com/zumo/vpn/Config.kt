@@ -6,7 +6,7 @@ import org.json.JSONObject
 /** Configuración de conexión: SSH directo (dominio o IP) con payload opcional. Se comparte como zumo://... */
 data class Config(
     val name: String = "Zumo",
-    val host: String = "",          // dominio o IP del servidor SSH
+    val host: String = "",          // dominio, IP o rango de IP (104.16.0.0/24, 1.2.3.4-1.2.3.80) del servidor SSH
     val sshPort: Int = 22,          // puerto al que se conecta (22, 80, 443...)
     val payload: String = "",       // payload HTTP opcional (comodines: [host] [port] [host_port] [crlf] [lf] [split]...)
     val tls: Boolean = false,       // envolver la conexión en TLS (puerto 443)
@@ -30,6 +30,7 @@ data class Config(
         var p = sshPort
         var puertoTomado = false
         val limpios = hosts().map { crudo ->
+            if (Rangos.esRango(crudo)) return@map crudo.trim()      // 104.16.0.0/24 o 1.2.3.4-1.2.3.80: se deja tal cual
             var h = crudo.removePrefix("https://").removePrefix("http://").substringBefore("/").trim()
             if (h.count { it == ':' } == 1) {
                 val (a, b) = h.split(":")
