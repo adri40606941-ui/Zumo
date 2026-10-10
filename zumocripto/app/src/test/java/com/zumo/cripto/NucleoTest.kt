@@ -177,6 +177,34 @@ class EscaneoTest {
         assertTrue(estados.any { it.contains("No se pudo consultar") })
     }
 
+    @Test fun busca_una_sola_cripto_por_simbolo_sin_importar_mayusculas() {
+        val respuestas = mapOf(
+            CoinGeckoApi.urlMercados(250) to ResultadoPedido(200, mercados("a", "b")),
+            CoinGeckoApi.urlTickers("b") to ResultadoPedido(200, tickers(100.0, 103.0)),
+        )
+        val estados = CopyOnWriteArrayList<String>()
+        val op = Escaneo({ respuestas[it] ?: ResultadoPedido(404, null) }, dormir = {})
+            .buscarUna("B", { estados.add(it) })
+        assertEquals("b", op!!.moneda.id)
+        assertEquals(3.0, op.margenPct, 0.0001)
+    }
+
+    @Test fun busqueda_individual_sin_coincidencia_avisa_y_devuelve_null() {
+        val respuestas = mapOf(CoinGeckoApi.urlMercados(250) to ResultadoPedido(200, mercados("a")))
+        val estados = CopyOnWriteArrayList<String>()
+        val op = Escaneo({ respuestas[it] ?: ResultadoPedido(404, null) }, dormir = {})
+            .buscarUna("zzz", { estados.add(it) })
+        assertNull(op)
+        assertTrue(estados.any { it.contains("No encontré") })
+    }
+
+    @Test fun busqueda_individual_vacia_no_pide_nada() {
+        var pedidos = 0
+        val op = Escaneo({ pedidos++; ResultadoPedido(200, "[]") }, dormir = {}).buscarUna("   ", {})
+        assertNull(op)
+        assertEquals(0, pedidos)
+    }
+
     @Test fun cancelar_corta_entre_una_moneda_y_otra() {
         val ids = (1..50).map { "m$it" }.toTypedArray()
         val respuestas = mutableMapOf(CoinGeckoApi.urlMercados(50) to ResultadoPedido(200, mercados(*ids)))
@@ -187,5 +215,24 @@ class EscaneoTest {
         t.start(); t.join(10000)
         assertFalse(t.isAlive)
         assertTrue("se cortó antes de terminar las 50", hallados.size < 50)
+    }
+}
+
+class CalculadoraTest {
+    @Test fun sin_comisiones_el_neto_es_el_margen_bruto() {
+        assertEquals(10.0, Calculadora.netoPct(100.0, 110.0, 0.0, 0.0), 0.0001)
+    }
+
+    @Test fun con_comision_de_0_1_por_operacion_baja_el_neto() {
+        // compra: 100 * 1.001 = 100.1 ; venta: 110 * 0.999 = 109.89 ; neto = (109.89 - 100.1) / 100.1
+        assertEquals(9.7803, Calculadora.netoPct(100.0, 110.0, 0.1, 0.1), 0.001)
+    }
+
+    @Test fun una_comision_grande_puede_anular_el_margen() {
+        assertTrue(Calculadora.netoPct(100.0, 101.0, 0.5, 0.5) < 0)
+    }
+
+    @Test fun precio_barato_cero_da_cero() {
+        assertEquals(0.0, Calculadora.netoPct(0.0, 110.0, 0.1, 0.1), 0.0001)
     }
 }

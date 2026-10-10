@@ -26,7 +26,7 @@ class Escaneo(
         alEstado("Consultando el ranking de criptos…")
         val rm = pedirConReintentos(CoinGeckoApi.urlMercados(cantidadMonedas))
         if (rm.cuerpo == null) {
-            alEstado(if (rm.codigo == 429) "CoinGecko está limitando los pedidos; probá de nuevo en un minuto." else "No se pudo consultar CoinGecko (código ${rm.codigo}).")
+            alEstado(mensajeDeError(rm.codigo))
             return
         }
         val monedas = Parseo.monedas(rm.cuerpo)
@@ -44,6 +44,37 @@ class Escaneo(
             alAvanzar(i + 1, monedas.size)
         }
     }
+
+    /**
+     * Busca una sola cripto por símbolo, id o nombre, entre las [entreTop] primeras del ranking, y compara sus precios.
+     * Devuelve null (y avisa por [alEstado]) si no se encontró, si CoinGecko no respondió o si no hay exchanges suficientes.
+     */
+    fun buscarUna(consulta: String, alEstado: (String) -> Unit, entreTop: Int = 250): Oportunidad? {
+        cancelado.set(false)
+        val q = consulta.trim().lowercase()
+        if (q.isEmpty()) { alEstado("Escribí una cripto, por ejemplo BTC."); return null }
+        alEstado("Buscando \"${consulta.trim()}\" en el ranking…")
+        val rm = pedirConReintentos(CoinGeckoApi.urlMercados(entreTop))
+        if (rm.cuerpo == null) { alEstado(mensajeDeError(rm.codigo)); return null }
+        val m = Parseo.monedas(rm.cuerpo).firstOrNull {
+            it.simbolo.lowercase() == q || it.id.lowercase() == q || it.nombre.lowercase() == q
+        }
+        if (m == null) {
+            alEstado("No encontré \"${consulta.trim()}\" entre las $entreTop primeras del ranking.")
+            return null
+        }
+        if (cancelado.get()) return null
+        alEstado("Comparando ${m.nombre}…")
+        val rt = pedirConReintentos(CoinGeckoApi.urlTickers(m.id))
+        if (rt.cuerpo == null) { alEstado(mensajeDeError(rt.codigo)); return null }
+        val op = Comparador.construir(m, Parseo.tickers(rt.cuerpo))
+        if (op == null) alEstado("${m.nombre} no tiene suficientes exchanges con precio confiable para comparar.")
+        return op
+    }
+
+    private fun mensajeDeError(codigo: Int): String =
+        if (codigo == 429) "CoinGecko está limitando los pedidos; probá de nuevo en un minuto."
+        else "No se pudo consultar CoinGecko (código $codigo)."
 
     private fun pedirConReintentos(url: String): ResultadoPedido {
         var intento = 0
