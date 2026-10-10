@@ -1,0 +1,10 @@
+com.zumo.vpn.TemaTest > el_archivo_del_repo_es_el_tema_por_defecto FAILED
+    java.lang.AssertionError at TemaTest.kt:16
+91 tests completed, 1 failed
+> Task :app:testDebugUnitTest FAILED
+* Exception is:
+org.gradle.api.tasks.TaskExecutionException: Execution failed for task ':app:testDebugUnitTest'.
+	at org.gradle.api.internal.tasks.execution.CatchExceptionTaskExecuter.execute(CatchExceptionTaskExecuter.java:36)
+Caused by: org.gradle.api.internal.exceptions.MarkedVerificationException: There were failing tests. See the report at: file:///home/runner/work/Zumo/Zumo/android/app/build/reports/tests/testDebugUnitTest/index.html
+	at org.gradle.api.internal.tasks.execution.CatchExceptionTaskExecuter.execute(CatchExceptionTaskExecuter.java:36)
+BUILD FAILED in 1m 8s
