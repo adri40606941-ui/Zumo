@@ -37,6 +37,8 @@ class PaginaOportunidades(private val act: Activity) {
     private val campoMargen = ui.campo("Margen mínimo %, por ejemplo 1.0")
     private val campoComision = ui.campo("Comisión por operación %, por ejemplo 0.1")
     private val campoBuscar = ui.campo("BTC, ETH, solana…")
+    private val campoClave = ui.campo("Clave de CoinGecko (opcional)")
+    private var clave = ""
     private val botonPrincipal: TextView
     private val botonUna: TextView
     private val textoEstado = ui.texto("Listo para buscar", 14f, Paleta.APAGADO)
@@ -85,6 +87,8 @@ class PaginaOportunidades(private val act: Activity) {
         scrollC.addView(filaC)
         t1.addView(scrollC, ui.params(arriba = 10))
         t1.addView(ui.texto("Del ranking de CoinGecko por capitalización. Cuantas más, más tarda (pide de a una para no chocar con el límite de pedidos).", 12f, Paleta.APAGADO), ui.params(arriba = 8))
+        t1.addView(campoClave, ui.params(arriba = 12))
+        t1.addView(ui.texto("Opcional. Una clave gratuita de CoinGecko (demo) sube el límite de pedidos y la búsqueda va más rápido. No se guarda: pegala cada vez que abras la app.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
         col.addView(t1, ui.params(arriba = 12))
 
         // --- Margen mínimo y comisiones
@@ -136,6 +140,7 @@ class PaginaOportunidades(private val act: Activity) {
         comision = com
         ocultarTeclado()
         val n = cantidad
+        clave = campoClave.text.toString().trim()
         iniciar { e ->
             e.buscar(
                 cantidadMonedas = n,
@@ -155,6 +160,7 @@ class PaginaOportunidades(private val act: Activity) {
         if (com == null) { toast("Poné una comisión válida, por ejemplo 0.1"); return }
         comision = com
         ocultarTeclado()
+        clave = campoClave.text.toString().trim()
         iniciar { e ->
             val op = e.buscarUna(consulta, { mensaje = it })
             if (op != null) {
@@ -171,7 +177,8 @@ class PaginaOportunidades(private val act: Activity) {
         buscando = true
         botonPrincipal.text = "⏹  DETENER"
         botonUna.text = "⏹  DETENER"
-        val e = Escaneo({ url -> Red.pedir(url, "") })
+        val llave = clave
+        val e = Escaneo({ url -> Red.pedir(url, llave) })
         escaneo = e
         Thread({
             try {
@@ -276,7 +283,7 @@ class PaginaOportunidades(private val act: Activity) {
 
     companion object {
         const val MAX_FILAS = 200
-        const val PAUSA_MS = 1500L
+        const val PAUSA_MS = 700L
         val CANTIDADES = listOf(50, 100, 200, 500)
     }
 }
