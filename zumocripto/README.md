@@ -10,7 +10,7 @@ App Android para comparar el precio de cada criptomoneda entre distintos exchang
 - Para cada oportunidad, mira si podés **enviar** el activo del exchange barato al caro: busca una red en común donde el barato deje retirar y el caro reciba. Se confirma sin clave con KuCoin, Gate.io, Bitget, HTX, WhiteBIT, XT.com y Poloniex, que publican ese dato abierto; con Binance, Bybit, OKX, MEXC y BingX hace falta tu clave de solo lectura (pestaña Cuentas). Con Crypto.com, LBank y Bitstamp sale «no verificable».
 - En la pestaña **Cuentas** podés cargar una clave API **de solo lectura** de Binance, Bybit, OKX, MEXC o BingX (nunca usuario ni contraseña). Con ella la app lee las redes de retiro y depósito reales de tu cuenta y la comisión de retiro, y esos exchanges dejan de salir «no verificable». La clave se guarda cifrada en el teléfono (Android Keystore) y solo se usa para consultar al propio exchange.
 - Calcula el neto con una comisión fija de 0,1 % por operación (compra y venta). Tocando una fila, ves todos los exchanges y un enlace para operar.
-- Muestra solo oportunidades de al menos 1 % de margen, y un único filtro, «Solo las que se pueden enviar», que se aplica al instante sin volver a pedir nada.
+- Muestra todas las oportunidades, desde 0 % de margen, y un único filtro, «Solo las que se pueden enviar», que se aplica al instante sin volver a pedir nada.
 - Si un exchange no responde (por ejemplo, Binance y Bybit bloquean algunos países), la app lo informa y compara con los demás.
 
 **No es consejo financiero.** El margen es antes de comisiones, retiros y de mover el activo entre exchanges, y los precios cambian en segundos. La pestaña Info lo aclara.

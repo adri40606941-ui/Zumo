@@ -249,7 +249,7 @@ class PaginaOportunidades(private val act: Activity, private val almacen: Almace
     }
 
     companion object {
-        const val MARGEN_MINIMO_PCT = 1.0
+        const val MARGEN_MINIMO_PCT = 0.0
         const val MAX_FILAS = 200
     }
 }
