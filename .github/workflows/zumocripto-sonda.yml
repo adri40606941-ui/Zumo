@@ -21,12 +21,10 @@ jobs:
             rm -f /tmp/r.json
             printf '\n\n' >> out/sonda.txt
           }
+          probar "https://api.bitmart.com/spot/v1/ticker"
+          probar "https://api.bitmart.com/spot/v2/ticker"
           probar "https://api-cloud.bitmart.com/spot/quotation/v3/tickers"
-          probar "https://api-cloud.bitmart.com/spot/v2/ticker"
-          probar "https://whitebit.com/api/v4/public/ticker"
-          probar "https://whitebit.com/api/v1/public/tickers"
-          probar "https://open-api.bingx.com/openApi/spot/v1/ticker/24hr?timestamp=1791608870000"
-          probar "https://open-api.bingx.com/openApi/spot/v2/ticker/24hr?timestamp=1791608870000"
+          probar "https://api-cloud-v2.bitmart.com/spot/quotation/v3/tickers"
           exit 0
       - name: Publicar resultado
         run: |
