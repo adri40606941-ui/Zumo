@@ -20,7 +20,7 @@ jobs:
             "https://open-api.bingx.com/openApi/spot/v1/ticker/24hr?timestamp=1791608870000" \
             "https://open-api.bingx.com/openApi/spot/v2/ticker/24hr?timestamp=1791608870000" ; do
             echo "===== $u" >> out/sonda.txt
-            curl -s -m 60 -o /tmp/r.json -w "HTTP %{http_code} bytes %{size_download}\n" "$u" >> out/sonda.txt
+            curl -s -m 60 -o /tmp/r.json -w "HTTP %{http_code} bytes %{size_download}\n" "$u" >> out/sonda.txt || echo "curl falló: $?" >> out/sonda.txt
             head -c 800 /tmp/r.json >> out/sonda.txt; echo >> out/sonda.txt; echo >> out/sonda.txt
           done
       - name: Publicar resultado
