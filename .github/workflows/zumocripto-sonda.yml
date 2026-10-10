@@ -1,0 +1,29 @@
+name: Sonda pruebas
+on:
+  push:
+    branches: [zumocripto-sonda3]
+jobs:
+  sonda:
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - name: Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: 8.7 }
+      - name: Pruebas
+        shell: bash {0}
+        run: |
+          gradle -p zumocripto testDebugUnitTest --no-daemon > salida.txt 2>&1
+          echo "exit $?" >> salida.txt
+          mkdir -p out && grep -E "^e: |FAILED|Test.*>|AssertionError|Exception|exit |What went wrong" -A4 salida.txt | head -150 > out/sonda.txt
+          cd out && git init -q && git checkout -q -b sonda-salida && git add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm sonda
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" sonda-salida
+          exit 0
