@@ -62,21 +62,7 @@ jobs:
           echo "ZUMO_KS_PASS=$(cat ks-port/pass)" >> "$GITHUB_ENV"
 
       - name: Pruebas
-        run: |
-          mkdir -p out
-          set -o pipefail
-          gradle -p zumoport testDebugUnitTest --no-daemon --stacktrace 2>&1 | tee out/pruebas-completo.log | grep -E "^e: |^w: .*Asn|FAILED|tests completed|BUILD|Test.*>|AssertionError|Exception" | head -n 150 > out/pruebas.log
-
-      # TEMPORAL (solo en la rama de prueba): si fallan las pruebas, sube el registro para poder leer el error.
-      - name: Subir registro si fallaron las pruebas
-        if: failure()
-        run: |
-          cd out
-          git init -q
-          git checkout -q -b apk-port-prueba
-          git add -A
-          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Registro de pruebas ${{ github.run_number }}"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" apk-port-prueba
+        run: gradle -p zumoport testDebugUnitTest --no-daemon --stacktrace
 
       - name: Compilar
         run: |
