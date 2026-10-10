@@ -26,6 +26,7 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
 
     private var buscador: BuscadorSubdominios? = null
     private var buscando = false
+    private var detenido = false
     private var usarCert = true
     private var usarHt = true
     private var usarLista = true
@@ -159,6 +160,7 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
     }
 
     private fun arrancar(dominio: String, puertos: List<Int>) {
+        detenido = false
         pedidoAsn = verAsn
         pedidoPuertos = puertos.isNotEmpty()
         synchronized(candado) { encontrados.clear(); version++ }
@@ -170,27 +172,37 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
         buscador = b
         val m = Metodos(usarCert, usarHt, usarLista)
         val extras = Extras(pedidoAsn, puertos)
+        // Solo cuenta lo que llega de ESTA búsqueda: si se tocó Detener, lo que llegue tarde de hilos que siguen terminando se descarta.
         Thread({
             try {
-                b.buscar(dominio, m, { mensaje = it }, { s -> synchronized(candado) { encontrados.add(s); version++ } }, { h, t -> hechos = h; total = t },
-                    extras) { synchronized(candado) { version++ } }
+                b.buscar(dominio, m, { if (buscador === b) mensaje = it }, { s -> if (buscador === b) synchronized(candado) { encontrados.add(s); version++ } },
+                    { h, t -> if (buscador === b) { hechos = h; total = t } }, extras) { if (buscador === b) synchronized(candado) { version++ } }
             } catch (_: Exception) {
-                mensaje = "Hubo un error al buscar"
+                if (buscador === b) mensaje = "Hubo un error al buscar"
             }
-            principal.post { terminar() }
+            principal.post { if (buscador === b) terminar() }
         }, "zumoport-subdominios").start()
         principal.post(refresco)
     }
 
-    private fun detener() { buscador?.cancelar(); mensaje = "Deteniendo…" }
+    private fun detener() {
+        val b = buscador ?: return
+        detenido = true
+        b.cancelar()
+        mensaje = "Deteniendo…"
+        // La búsqueda vuelve sola en un instante; si por lo que sea no lo hiciera, a los 3 segundos se cierra igual para que no quede trabado.
+        principal.postDelayed({ if (buscador === b && buscando) terminar() }, 3000)
+    }
 
     private fun terminar() {
+        if (!buscando) return
+        buscador = null
         buscando = false
         red.soltar()
         botonPrincipal.text = "🔎  BUSCAR SUBDOMINIOS"
         act.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         segundos = (System.currentTimeMillis() - inicio) / 1000
-        mensaje = "✔ Terminó en $segundos s"
+        mensaje = if (detenido) "⏹ Detenido a los $segundos s" else "✔ Terminó en $segundos s"
         pintarEstado()
     }
 

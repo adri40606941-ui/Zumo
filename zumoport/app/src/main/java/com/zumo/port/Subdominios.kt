@@ -66,13 +66,15 @@ class BuscadorSubdominios(
         val candidatos = ConcurrentHashMap<String, String>()   // nombre -> fuente
         if (metodos.certificados && !cancelado.get()) {
             alEstado("Buscando en certificados públicos (crt.sh)…")
-            val t = bajar("https://crt.sh/?q=" + URLEncoder.encode("%." + dominio, "UTF-8") + "&output=json", 40000)
+            val t = cancelable { bajar("https://crt.sh/?q=" + URLEncoder.encode("%." + dominio, "UTF-8") + "&output=json", 40000) }
+            if (cancelado.get()) return
             if (t == null) alEstado("crt.sh no respondió (a veces está saturado)")
             else parsearCrtsh(t, dominio).forEach { candidatos.putIfAbsent(it, "certificados") }
         }
         if (metodos.hackertarget && !cancelado.get()) {
             alEstado("Buscando en HackerTarget…")
-            val t = bajar("https://api.hackertarget.com/hostsearch/?q=" + URLEncoder.encode(dominio, "UTF-8"), 20000)
+            val t = cancelable { bajar("https://api.hackertarget.com/hostsearch/?q=" + URLEncoder.encode(dominio, "UTF-8"), 20000) }
+            if (cancelado.get()) return
             if (t == null) alEstado("HackerTarget no respondió")
             else parsearHackertarget(t, dominio).forEach { candidatos.putIfAbsent(it, "HackerTarget") }
         }
@@ -83,12 +85,13 @@ class BuscadorSubdominios(
         if (cancelado.get()) return
 
         // DNS comodín: si un nombre inventado también resuelve, esas IP no cuentan como hallazgo
-        val comodin = resolver("zp-" + System.nanoTime().toString(36) + "." + dominio).toSet()
+        val comodin = cancelable { resolver("zp-" + System.nanoTime().toString(36) + "." + dominio).toSet() } ?: emptySet()
+        if (cancelado.get()) return
         if (comodin.isNotEmpty()) alEstado("Este dominio tiene DNS comodín: se ignoran los nombres que solo apuntan a ${comodin.joinToString(", ")}")
 
         val nombres = candidatos.keys.sorted()
         val hechos = AtomicInteger(0)
-        val pool = Executors.newFixedThreadPool(48)
+        val pool = hilos(48)
         alEstado("Resolviendo ${nombres.size} nombres…")
         try {
             for (n in nombres) {
@@ -99,7 +102,7 @@ class BuscadorSubdominios(
                             val ips = resolver(n).filter { it !in comodin }
                             val fuente = candidatos[n].orEmpty()
                             // los de la lista que no existen no se muestran; los de certificados sí (se marcan sin IP)
-                            if (ips.isNotEmpty() || fuente == "certificados" || fuente == "HackerTarget") {
+                            if (!cancelado.get() && (ips.isNotEmpty() || fuente == "certificados" || fuente == "HackerTarget")) {
                                 val sub = Subdominio(n, ips, fuente)
                                 halladas.add(sub)
                                 alHallar(sub)
@@ -113,8 +116,7 @@ class BuscadorSubdominios(
             }
         } finally {
             pool.shutdown()
-            if (cancelado.get()) pool.shutdownNow()
-            try { pool.awaitTermination(30, TimeUnit.MINUTES) } catch (_: InterruptedException) { pool.shutdownNow() }
+            esperar(pool, 30)
         }
         if (!cancelado.get() && (extras.asn || extras.puertos.isNotEmpty())) enriquecer(halladas.filter { it.resuelve }, extras, alEstado, alAvanzar, alActualizar)
     }
@@ -141,7 +143,7 @@ class BuscadorSubdominios(
         alActualizar()
         alEstado("Buscando el ASN de ${ips.size} IP…")
         alAvanzar(0, ips.size)
-        val pool = Executors.newFixedThreadPool(HILOS_ASN)
+        val pool = hilos(HILOS_ASN)
         try {
             for (ip in ips) {
                 pool.execute {
@@ -162,8 +164,7 @@ class BuscadorSubdominios(
             }
         } finally {
             pool.shutdown()
-            if (cancelado.get()) pool.shutdownNow()
-            try { pool.awaitTermination(10, TimeUnit.MINUTES) } catch (_: InterruptedException) { pool.shutdownNow() }
+            esperar(pool, 10)
         }
         if (cancelado.get()) return
         // las IP que no contestaron quedan sin dato: la fila deja de decir "buscando…"
@@ -195,13 +196,14 @@ class BuscadorSubdominios(
         alActualizar()
         alEstado("Probando ${puertos.size} puertos en ${ips.size} IP…")
         alAvanzar(0, total)
-        val pool = Executors.newFixedThreadPool(HILOS_PUERTOS)
+        val pool = hilos(HILOS_PUERTOS)
         val cupo = java.util.concurrent.Semaphore(HILOS_PUERTOS * 4)
         try {
             for (ip in ips) {
                 for (p in puertos) {
-                    if (cancelado.get()) break
-                    cupo.acquire()
+                    var tengo = false
+                    while (!cancelado.get() && !tengo) tengo = cupo.tryAcquire(100, TimeUnit.MILLISECONDS)
+                    if (!tengo) break
                     pool.execute {
                         try {
                             if (!cancelado.get() && abierto(ip, p)) abiertos[ip]!!.add(p)
@@ -221,9 +223,41 @@ class BuscadorSubdominios(
             }
         } finally {
             pool.shutdown()
-            if (cancelado.get()) pool.shutdownNow()
-            try { pool.awaitTermination(30, TimeUnit.MINUTES) } catch (_: InterruptedException) { pool.shutdownNow() }
+            esperar(pool, 30)
         }
+    }
+
+    /** Hilos que no impiden cerrar la app: si una consulta DNS se cuelga, nadie la espera. */
+    private fun hilos(n: Int) = Executors.newFixedThreadPool(n) { r -> Thread(r, "zumoport-sub").also { it.isDaemon = true } }
+
+    /**
+     * Espera a que el grupo de hilos termine, pero vuelve ya si se canceló. Una consulta DNS o una conexión en curso no se
+     * puede interrumpir desde afuera (puede tardar decenas de segundos): esos hilos quedan terminando solos y sus resultados
+     * se descartan, pero quien pidió detener no espera.
+     */
+    private fun esperar(pool: java.util.concurrent.ExecutorService, minutos: Long) {
+        val limite = System.currentTimeMillis() + minutos * 60_000
+        while (!pool.isTerminated && System.currentTimeMillis() < limite) {
+            if (cancelado.get()) { pool.shutdownNow(); return }
+            try { pool.awaitTermination(150, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { pool.shutdownNow(); return }
+        }
+        if (!pool.isTerminated) pool.shutdownNow()
+    }
+
+    /** Corre [tarea] en otro hilo y espera su resultado, pero vuelve con null apenas se cancela (sin esperar a que termine). */
+    private fun <T> cancelable(tarea: () -> T): T? {
+        val resultado = java.util.concurrent.atomic.AtomicReference<T?>(null)
+        val fin = AtomicBoolean(false)
+        val t = Thread({
+            try { resultado.set(tarea()) } catch (_: Exception) {} finally { fin.set(true) }
+        }, "zumoport-espera")
+        t.isDaemon = true
+        t.start()
+        while (!fin.get()) {
+            if (cancelado.get()) return null
+            try { Thread.sleep(50) } catch (_: InterruptedException) { return null }
+        }
+        return resultado.get()
     }
 
     companion object {
