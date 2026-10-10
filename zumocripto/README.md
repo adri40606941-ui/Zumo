@@ -1,32 +1,35 @@
 # Zumo Cripto
 
-App Android para comparar el precio de cada criptomoneda entre distintos exchanges y encontrar diferencias (margen) a partir de los datos de **CoinGecko**. Va aparte de Zumo VPN (`android/`) y Zumo Port (`zumoport/`): otro paquete (`com.zumo.cripto`), otra firma y otro flujo de compilación.
+App Android para comparar el precio de cada criptomoneda entre distintos exchanges y encontrar diferencias (margen) leyendo directamente las APIs públicas de los exchanges. Va aparte de Zumo VPN (`android/`) y Zumo Port (`zumoport/`): otro paquete (`com.zumo.cripto`), otra firma y otro flujo de compilación.
 
 ## Qué hace
 
-- Recorre el ranking de criptos de CoinGecko por capitalización (Top 50, 100, 200 o 500, a elección).
-- Para cada una, pide el precio en cada exchange donde se opera (`/coins/{id}/tickers`) y descarta los precios anómalos, desactualizados o de baja confianza que CoinGecko marca.
-- Calcula el margen entre el exchange más barato y el más caro, y muestra solo las que superan el margen mínimo elegido, ordenadas de mayor a menor diferencia.
-- Por cada oportunidad: toque para ver el precio completo en cada exchange, con un enlace para operar cuando CoinGecko lo informa, y copiar el resumen.
-- La API pública de CoinGecko comparte un límite de pedidos por minuto entre todos los que la usan sin clave, así que la búsqueda pide de a una cripto con una pausa entre cada una, y reintenta con espera creciente si llega un error 429 (demasiados pedidos).
+- Lee los precios de **7 exchanges** directamente desde sus APIs públicas, sin clave: Binance, Bybit, OKX, KuCoin, Gate.io, Bitget y MEXC. Cada uno devuelve todos sus pares en una sola llamada.
+- Se queda con los pares contra **USDT, USDC o USD** (todos ≈ 1 dólar) y deja afuera los que tienen menos de 20 000 USD de volumen en 24 h, porque sus precios no son confiables.
+- Arma cada activo que se opera en dos o más exchanges, y muestra dónde está más barato y dónde más caro, con la diferencia en porcentaje.
+- Calcula el neto con una comisión por operación (compra y venta). Tocando una fila, ves todos los exchanges y un enlace para operar.
+- Filtros sobre lo leído, sin volver a pedir nada: margen mínimo y nombre de la cripto.
+- Si un exchange no responde (por ejemplo, Binance y Bybit bloquean algunos países), la app lo informa y compara con los demás.
 
-**No es consejo financiero.** El margen mostrado es antes de comisiones, retiros y de mover la cripto entre exchanges, que pueden achicarlo o anularlo del todo; la app lo aclara en la pestaña Info.
+**No es consejo financiero.** El margen es antes de comisiones, retiros y de mover el activo entre exchanges, y los precios cambian en segundos. La pestaña Info lo aclara.
 
 ## Estructura
 
 | Archivo | Qué es |
 |---|---|
 | `Modelos.kt` | `Moneda`, `Ticker` y `Oportunidad` (con `margenPct`, `barato`, `caro`). |
-| `CoinGeckoApi.kt` | URLs de la API pública, el pedido HTTP real y el parseo del JSON a los modelos. |
+| `Exchanges.kt` | Las 7 fuentes: URL pública de cada exchange y cómo leer su respuesta. |
+| `BuscadorExchanges.kt` | Lee cada exchange, agrupa los pares por activo (`Agregador`) y arma las oportunidades. |
+| `Red.kt` | El pedido HTTP. |
+| `Calculadora.kt` | El neto después de comisiones. |
 | `Comparador.kt` | Las reglas de negocio: descarta anómalos/desactualizados/baja confianza, se queda con el de mayor volumen por exchange repetido, exige un mínimo de exchanges. |
-| `Escaneo.kt` | Recorre el ranking, pide de a una con pausa y reintentos ante 429, cancelable. |
 | `Ui.kt`, `PaginaOportunidades.kt`, `MainActivity.kt` | Pantalla en código (sin XML): cabecera, dos pestañas (Oportunidades, Info) y sus páginas. |
-| `app/src/test/…/NucleoTest.kt` | Pruebas del núcleo: parseo del JSON, reglas del comparador y el bucle de búsqueda (sin red real). |
+| `app/src/test/…/NucleoTest.kt` | Pruebas del núcleo: formato de cada exchange, separación de pares, agregado, comparador y búsqueda (sin red real). |
 
 ## Compilar el APK
 
-Lo compila GitHub: **Actions → Compilar Zumo Cripto → Run workflow** (también corre solo al subir cambios de `zumocripto/` a `main`). Corre las pruebas, compila y publica `zumo-cripto.apk` en la rama `apk-cripto` y como artefacto de la ejecución (`zumo-cripto-apk`). La firma se crea una vez y queda en el caché de GitHub, así cada APK nuevo se instala encima del anterior. El caché se borra tras 7 días sin compilar: para que la firma no cambie nunca, usa los mismos secretos fijos de Zumo VPN y Zumo Port (`ZUMO_KEYSTORE_B64` y `ZUMO_KS_PASS`) si ya los cargaste.
+Lo compila GitHub: **Actions → Compilar Zumo Cripto → Run workflow** (también corre solo al subir cambios de `zumocripto/` a `main`). Corre las pruebas, compila y publica `zumo-cripto.apk` en la rama `apk-cripto` y como artefacto de la ejecución (`zumo-cripto-apk`). La firma se crea una vez y queda en el caché de GitHub, así cada APK nuevo se instala encima del anterior. Para que la firma no cambie nunca, usa los mismos secretos fijos de Zumo VPN y Zumo Port (`ZUMO_KEYSTORE_B64` y `ZUMO_KS_PASS`).
 
-## Atribución
+## Fuentes
 
-Los precios y datos de mercado son de [CoinGecko](https://www.coingecko.com), usados a través de su API pública gratuita.
+Precios leídos de las APIs públicas de Binance, Bybit, OKX, KuCoin, Gate.io, Bitget y MEXC.

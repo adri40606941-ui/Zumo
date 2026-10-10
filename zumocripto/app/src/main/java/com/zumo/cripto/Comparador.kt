@@ -2,7 +2,7 @@ package com.zumo.cripto
 
 /** Arma una [Oportunidad] a partir de los tickers crudos de una moneda, o null si no hay suficiente para comparar. */
 object Comparador {
-    /** Confianza mínima para usar un precio. CoinGecko no siempre la informa: "" (vacío) se deja pasar. */
+    /** Confianza mínima para usar un precio. Los exchanges no la informan: "" (vacío) se deja pasar. */
     private val CONFIANZA_DESCARTADA = setOf("red")
 
     fun construir(moneda: Moneda, tickersCrudos: List<Ticker>, minExchanges: Int = 2): Oportunidad? {
