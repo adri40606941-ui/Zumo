@@ -2,7 +2,7 @@ name: Compilar Zumo Cripto
 
 on:
   push:
-    branches: [main]
+    branches: [main, zumocripto-app]
     paths: ['zumocripto/**', '.github/workflows/zumocripto.yml']
   workflow_dispatch:
 
