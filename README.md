@@ -6,6 +6,8 @@ etc.). Se maneja desde un panel de terminal.
 
 
 > **Zumo Port** (`zumoport/`): app Android aparte para escanear IP, rangos, puertos y subdominios. Ver `zumoport/README.md`.
+>
+> **Zumo Cripto** (`zumocripto/`): app Android aparte para comparar precios de criptos entre exchanges (datos de CoinGecko). Ver `zumocripto/README.md`.
 
 ## Instalación
 
