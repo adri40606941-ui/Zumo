@@ -203,6 +203,7 @@ class Gestion(Base):
         self.assertEqual(self.b.revs.buscar(rid)["maquinas"], ["m1", "m2"])
         self.assertIn("app01", self.tg.mensajes[-1])
         self.assertIn("app02", self.tg.mensajes[-1])
+        self.assertIn("UNA sola", self.tg.mensajes[-1], "explica que no se repite")
         self.btn(f"rvmq-:{rid}:m1")
         self.assertEqual(self.b.revs.buscar(rid)["maquinas"], ["m2"])
         self.btn(f"rvmq-:{rid}:m2")

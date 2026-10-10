@@ -276,6 +276,29 @@ class TestPanel(Base):
         self.p.cache.clear()
         self.assertIn(f"🖥 {M['nombre']}", self.pagina(self.c)[1])
 
+    def test_selector_de_vps_solo_con_varias(self):
+        _, p = self.pagina(self.c)
+        self.assertNotIn('name="vps"', p)
+        self.r.agregar_maquina(self.a, "m2")
+        _, p = self.pagina(self.c)
+        self.assertIn('name="vps"', p)
+        self.assertIn("Automática (la que tenga menos usuarios)", p)
+        self.assertIn('<option value="m1">vps · 0 usuarios</option>', p)
+        self.assertIn('<option value="m2">vps · 0 usuarios</option>', p)
+
+    def test_crear_eligiendo_la_vps(self):
+        self.r.agregar_maquina(self.a, "m2")
+        self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana", dias="7", vps="m2")
+        self.assertIn("Usuario creado en vps", self.pagina(self.c)[1])
+        self.assertEqual(self.r.cuentas_de(self.a)["ABCD1234"]["maq"], ["m2"])
+        self.assertIn('<option value="m2">vps · 1 usuario</option>', self.pagina(self.c)[1])
+
+    def test_crear_con_una_vps_ajena_se_rechaza(self):
+        self.r.agregar_maquina(self.a, "m2")
+        self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana", dias="7", vps="m9")
+        self.assertIn("no es una de las tuyas", self.pagina(self.c)[1])
+        self.assertIsNone(self.r.dueno("ABCD1234"))
+
     def test_aviso_al_admin_por_muchos_intentos(self):
         avisos = []
         self.p.notificar = avisos.append

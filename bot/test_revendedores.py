@@ -419,7 +419,7 @@ if __name__ == "__main__":
 
 
 class TestVariasVps(unittest.TestCase):
-    """Un revendedor con dos VPS: todo se hace en las dos, y si una cae se sigue con la otra."""
+    """Un revendedor con dos VPS: cada usuario vive en UNA sola, nunca repetido."""
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
@@ -438,7 +438,6 @@ class TestVariasVps(unittest.TestCase):
             estado = staticmethod(lambda m, *a, **k: cv.estado(m, *a, correr=corre(m), **k))
             datos = staticmethod(lambda m, *a, **k: cv.datos(m, *a, correr=corre(m), **k))
             renombrar = staticmethod(lambda m, *a, **k: cv.renombrar(m, *a, correr=corre(m), **k))
-            fijar_vence = staticmethod(lambda m, *a, **k: cv.fijar_vence(m, *a, correr=corre(m), **k))
         self.avisos = []
         self.t = [1000.0]
         self.s = Servicio(self.r, lambda i: self.m.get(i), Ops, hoy=lambda: date(2026, 10, 9), reloj=lambda: self.t[0],
@@ -446,32 +445,65 @@ class TestVariasVps(unittest.TestCase):
         for t in ("bronce", "plata", "oro"):
             self.r.agregar_monedas(self.a, t, 3)
 
-    def test_crear_en_las_dos_y_avisar_al_admin(self):
-        res = self.s.crear(self.a, "ABCD1234", "Ana", 7)
-        self.assertEqual(res["vps"], ["app01", "app02"])
-        self.assertIn("ABCD1234", self.f["m1"].us)
-        self.assertIn("ABCD1234", self.f["m2"].us)
-        self.assertEqual(self.r.cuentas_de(self.a)["ABCD1234"]["maq"], ["m1", "m2"])
-        self.assertEqual(self.r.buscar(self.a)["monedas"]["bronce"], 2, "gasta una sola moneda, no una por VPS")
+    def en(self, tok):
+        """En qué VPS está ese usuario (ids)."""
+        return [i for i in ("m1", "m2") if tok in self.f[i].us]
+
+    def test_cada_usuario_vive_en_una_sola_vps(self):
+        self.s.crear(self.a, "AAAA1111", "Ana", 7)
+        self.s.crear(self.a, "BBBB2222", "Beto", 7)
+        for tok in ("AAAA1111", "BBBB2222"):
+            self.assertEqual(len(self.en(tok)), 1, "nunca repetido")
+            self.assertEqual(len(self.r.cuentas_de(self.a)[tok]["maq"]), 1)
+
+    def test_automatica_reparte_a_la_que_tiene_menos_usuarios(self):
+        self.r.agregar_monedas(self.a, "bronce", 10)
+        for i in range(6):
+            self.s.crear(self.a, f"TOK0000{i}", f"u{i}", 7)
+        self.assertEqual((len(self.f["m1"].us), len(self.f["m2"].us)), (3, 3), "parejo")
+
+    def test_automatica_empieza_por_la_primera_y_luego_alterna(self):
+        self.s.crear(self.a, "AAAA1111", "a", 7)
+        self.s.crear(self.a, "BBBB2222", "b", 7)
+        self.assertEqual(self.en("AAAA1111"), ["m1"])
+        self.assertEqual(self.en("BBBB2222"), ["m2"])
+
+    def test_el_revendedor_elige_la_vps(self):
+        res = self.s.crear(self.a, "AAAA1111", "Ana", 7, vps="m2")
+        self.assertEqual(self.en("AAAA1111"), ["m2"])
+        self.assertEqual(res["vps"], ["app02"])
+        self.s.crear(self.a, "BBBB2222", "Beto", 7, vps="m2")
+        self.assertEqual(self.en("BBBB2222"), ["m2"], "aunque la otra esté más vacía")
+
+    def test_no_puede_elegir_una_vps_que_no_es_suya(self):
+        with self.assertRaises(rv.ErrorRevendedor):
+            self.s.crear(self.a, "AAAA1111", "Ana", 7, vps="m9")
+        self.assertEqual(self.r.buscar(self.a)["monedas"]["bronce"], 3, "no gastó nada")
+
+    def test_aviso_al_admin_con_la_vps(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7, vps="m2")
         self.assertEqual(len(self.avisos), 1)
         self.assertIn("juan creó a Ana", self.avisos[0])
-        self.assertIn("app01, app02", self.avisos[0])
+        self.assertIn("🖥 VPS: app02", self.avisos[0])
         self.assertIn("ABCD1234", self.avisos[0])
 
-    def test_si_una_vps_cae_se_crea_en_la_otra_y_se_completa_despues(self):
-        self.f["m2"].caida = True
+    def test_gasta_una_sola_moneda(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        self.assertEqual(self.r.buscar(self.a)["monedas"]["bronce"], 2)
+
+    def test_automatica_con_una_vps_caida_usa_la_otra(self):
+        self.f["m1"].caida = True
         res = self.s.crear(self.a, "ABCD1234", "Ana", 7)
-        self.assertEqual(res["vps"], ["app01"])
-        self.assertEqual(res["fallaron"], ["app02"])
-        self.assertIn("app02", self.avisos[0])
-        self.assertEqual(self.r.cuentas_de(self.a)["ABCD1234"]["maq"], ["m1"])
-        self.f["m2"].caida = False
-        hechos = self.s.reparar()
-        self.assertTrue(any("creado en app02" in h for h in hechos), hechos)
-        self.assertIn("ABCD1234", self.f["m2"].us)
-        self.assertEqual(self.f["m2"].us["ABCD1234"]["vence"], date(2026, 10, 16), "con el mismo vencimiento")
-        self.assertEqual(self.r.cuentas_de(self.a)["ABCD1234"]["maq"], ["m1", "m2"])
-        self.assertEqual(self.s.reparar(), [], "la segunda vez no hay nada que hacer")
+        self.assertEqual(self.en("ABCD1234"), ["m2"])
+        self.assertEqual(res["fallaron"], ["app01"])
+        self.assertIn("app01 no contestó", self.avisos[0])
+
+    def test_elegida_y_caida_da_error_y_no_gasta(self):
+        self.f["m2"].caida = True
+        with self.assertRaises(rv.ErrorRevendedor):
+            self.s.crear(self.a, "ABCD1234", "Ana", 7, vps="m2")
+        self.assertEqual(self.r.buscar(self.a)["monedas"]["bronce"], 3)
+        self.assertEqual((self.f["m1"].us, self.r.dueno("ABCD1234")), ({}, None), "tampoco lo crea en la otra")
 
     def test_si_caen_las_dos_no_gasta_moneda(self):
         self.f["m1"].caida = self.f["m2"].caida = True
@@ -480,88 +512,65 @@ class TestVariasVps(unittest.TestCase):
         self.assertEqual(self.r.buscar(self.a)["monedas"]["bronce"], 3)
         self.assertIsNone(self.r.dueno("ABCD1234"))
 
-    def test_renovar_deja_las_dos_en_la_misma_fecha(self):
-        self.s.crear(self.a, "ABCD1234", "Ana", 7)
-        self.f["m2"].us["ABCD1234"]["vence"] = date(2026, 10, 10)        # una quedó atrasada
+    def test_renovar_bloquear_nombre_y_eliminar_en_su_vps(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7, vps="m2")
         res = self.s.renovar(self.a, "ABCD1234", 15)
         self.assertEqual(res["vence"], date(2026, 10, 31))
-        self.assertEqual(self.f["m1"].us["ABCD1234"]["vence"], date(2026, 10, 31))
         self.assertEqual(self.f["m2"].us["ABCD1234"]["vence"], date(2026, 10, 31))
-        self.assertEqual(self.r.buscar(self.a)["monedas"]["plata"], 2)
-
-    def test_renovar_con_una_caida_avisa_y_la_repara_despues(self):
-        self.s.crear(self.a, "ABCD1234", "Ana", 7)
-        self.f["m2"].caida = True
-        res = self.s.renovar(self.a, "ABCD1234", 15)
-        self.assertEqual(res["fallaron"], ["app02"])
-        self.f["m2"].caida = False
-        hechos = self.s.reparar()
-        self.assertTrue(any("vencimiento igualado en app02" in h for h in hechos), hechos)
-        self.assertEqual(self.f["m2"].us["ABCD1234"]["vence"], res["vence"])
-
-    def test_bloquear_nombre_y_eliminar_en_todas(self):
-        self.s.crear(self.a, "ABCD1234", "Ana", 7)
         self.s.bloquear(self.a, "ABCD1234", True)
-        self.assertTrue(self.f["m1"].us["ABCD1234"]["bloq"] and self.f["m2"].us["ABCD1234"]["bloq"])
+        self.assertTrue(self.f["m2"].us["ABCD1234"]["bloq"])
         self.s.renombrar(self.a, "ABCD1234", "Ana Gómez")
         self.assertEqual(self.f["m2"].us["ABCD1234"]["nombre"], "Ana Gómez")
         self.s.eliminar(self.a, "ABCD1234")
         self.assertEqual((self.f["m1"].us, self.f["m2"].us), ({}, {}))
         self.assertIsNone(self.r.dueno("ABCD1234"))
 
-    def test_eliminar_con_una_caida_deja_pendiente_solo_esa(self):
-        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+    def test_agregar_una_vps_no_copia_usuarios_viejos(self):
+        r2 = self.r.crear("luis", "secreto2", "m1")["id"]
+        self.r.agregar_monedas(r2, "bronce", 2)
+        self.s.crear(r2, "ZZZZ9999", "Zeta", 7)
+        self.r.agregar_maquina(r2, "m2")
+        self.assertEqual(self.en("ZZZZ9999"), ["m1"])
+        self.assertEqual(self.r.cuentas_de(r2)["ZZZZ9999"]["maq"], ["m1"])
+
+    def test_listar_muestra_la_vps_de_cada_usuario(self):
+        self.s.crear(self.a, "AAAA1111", "Ana", 7, vps="m1")
+        self.s.crear(self.a, "BBBB2222", "Beto", 7, vps="m2")
+        self.f["m2"].us["BBBB2222"]["conectado"] = True
+        filas = {x["token"]: x for x in self.s.listar(self.a)}
+        self.assertEqual(filas["AAAA1111"]["maquinas"], ["app01"])
+        self.assertEqual(filas["BBBB2222"]["maquinas"], ["app02"])
+        self.assertTrue(filas["BBBB2222"]["conectado"])
+        self.assertFalse(filas["AAAA1111"]["conectado"])
+
+    def test_listar_con_una_vps_caida_solo_afecta_a_sus_usuarios(self):
+        self.s.crear(self.a, "AAAA1111", "Ana", 7, vps="m1")
+        self.s.crear(self.a, "BBBB2222", "Beto", 7, vps="m2")
         self.f["m2"].caida = True
-        with self.assertRaises(rv.ErrorRevendedor) as c:
+        filas = {x["token"]: x for x in self.s.listar(self.a)}
+        self.assertFalse(filas["AAAA1111"]["sin_datos"])
+        self.assertTrue(filas["BBBB2222"]["sin_datos"])
+
+    def test_cargas_para_el_formulario(self):
+        self.s.crear(self.a, "AAAA1111", "a", 7, vps="m2")
+        self.s.crear(self.a, "BBBB2222", "b", 7, vps="m2")
+        self.assertEqual(self.s.cargas(self.r.buscar(self.a)), {"m1": 0, "m2": 2})
+
+    def test_la_app_pregunta_en_la_vps_del_usuario(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7, vps="m2")
+        self.assertEqual(self.s.datos_cuenta("ABCD1234"), ("Ana", "2026-10-16"))
+
+    def test_eliminar_con_su_vps_caida_deja_el_usuario_anotado(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7, vps="m2")
+        self.f["m2"].caida = True
+        with self.assertRaises(rv.ErrorRevendedor):
             self.s.eliminar(self.a, "ABCD1234")
-        self.assertIn("app02", str(c.exception))
-        self.assertNotIn("ABCD1234", self.f["m1"].us)
-        self.assertEqual(self.r.cuentas_de(self.a)["ABCD1234"]["maq"], ["m2"], "queda anotado solo donde falta borrar")
+        self.assertEqual(self.r.dueno("ABCD1234"), self.a)
         self.f["m2"].caida = False
         self.s.eliminar(self.a, "ABCD1234")
         self.assertIsNone(self.r.dueno("ABCD1234"))
 
-    def test_listar_junta_las_vps_conectado_en_cualquiera(self):
-        self.s.crear(self.a, "ABCD1234", "Ana", 7)
-        self.f["m2"].us["ABCD1234"]["conectado"] = True
-        fila = self.s.listar(self.a)[0]
-        self.assertTrue(fila["conectado"])
-        self.assertEqual(fila["maquinas"], ["app01", "app02"])
-        self.assertFalse(fila["sin_datos"])
-
-    def test_listar_con_una_vps_caida_marca_sin_datos_pero_muestra_lo_de_la_otra(self):
-        self.s.crear(self.a, "ABCD1234", "Ana", 7)
-        self.f["m2"].caida = True
-        fila = self.s.listar(self.a)[0]
-        self.assertTrue(fila["sin_datos"])
-        self.assertEqual(fila["vence"], date(2026, 10, 16))
-
-    def test_la_app_pregunta_en_la_otra_si_una_cae(self):
-        self.s.crear(self.a, "ABCD1234", "Ana", 7)
-        self.f["m1"].caida = True
-        self.assertEqual(self.s.datos_cuenta("ABCD1234"), ("Ana", "2026-10-16"))
-
-    def test_vps_nueva_completa_los_usuarios_que_ya_tenia(self):
-        r2 = self.r.crear("luis", "secreto2", "m1")["id"]
-        for t in ("bronce",):
-            self.r.agregar_monedas(r2, t, 2)
-        self.s.crear(r2, "ZZZZ9999", "Zeta", 7)
-        self.assertNotIn("ZZZZ9999", self.f["m2"].us)
-        self.r.agregar_maquina(r2, "m2")
-        hechos = self.s.reparar()
-        self.assertTrue(any("Zeta: creado en app02" in h for h in hechos), hechos)
-        self.assertIn("ZZZZ9999", self.f["m2"].us)
-
-    def test_reparar_copia_el_bloqueo(self):
-        self.f["m2"].caida = True
-        self.s.crear(self.a, "ABCD1234", "Ana", 7)
-        self.s.bloquear(self.a, "ABCD1234", True)
-        self.f["m2"].caida = False
-        self.s.reparar()
-        self.assertTrue(self.f["m2"].us["ABCD1234"]["bloq"])
-
     def test_aviso_cuando_se_queda_sin_monedas(self):
-        r = self.r.buscar(self.a)
         self.r.agregar_monedas(self.a, "oro", -2)
         self.s.crear(self.a, "ABCD1234", "Ana", 30)
         self.assertTrue(any("se quedó sin monedas de oro" in a for a in self.avisos), self.avisos)
