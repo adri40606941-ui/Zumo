@@ -11,7 +11,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
-/** Zumo Cripto: compara el precio de cada cripto entre varios exchanges (datos de CoinGecko). Todo en código: cabecera, dos pestañas abajo y sus páginas. */
+/** Zumo Cripto: compara el precio de cada activo entre varios exchanges. Todo en código: cabecera, dos pestañas abajo y sus páginas. */
 class MainActivity : Activity() {
     private lateinit var ui: Ui
     private lateinit var oportunidades: PaginaOportunidades
@@ -110,13 +110,13 @@ class MainActivity : Activity() {
         }
 
         seccion("¿Qué hace Zumo Cripto?",
-            "• Recorre el ranking de criptomonedas de CoinGecko (podés elegir cuántas, de las 50 más grandes hasta las 500).\n" +
-            "• Para cada una, compara su precio en varios exchanges y calcula el margen entre el más barato y el más caro.\n" +
-            "• Te muestra solo las que superan el margen mínimo que pusiste, ordenadas de mayor a menor diferencia.\n" +
-            "• Tocando una, ves el precio en cada exchange y un enlace para operar si CoinGecko lo tiene.")
+            "• Lee los precios de 7 exchanges (Binance, Bybit, OKX, KuCoin, Gate.io, Bitget y MEXC) directamente desde sus APIs públicas.\n" +
+            "• Busca los activos que se operan en dos o más exchanges y compara su precio entre ellos.\n" +
+            "• Te muestra dónde está más barato y dónde más caro, y cuánto es la diferencia en porcentaje.\n" +
+            "• Con el campo de comisión ves cuánto te queda neto. Tocando una fila ves todos los exchanges y un enlace para operar.")
 
         seccion("Sobre los datos",
-            "Los precios vienen de la API pública de CoinGecko. Es gratuita pero tiene un límite de pedidos por minuto compartido por todos los que la usan sin clave; por eso la búsqueda pide de a una cripto y espera un poco entre cada una, y puede tardar varios minutos si elegís muchas.")
+            "Cada exchange publica sus precios en tiempo real sin clave. Algunos bloquean ciertos países: si no podés leer uno, la app lo dice en el resumen y compara con los demás. Solo se usan pares contra USDT, USDC o USD, y se ignoran los que tienen poco volumen, porque sus precios no son confiables.")
 
         seccion("Antes de operar con esto",
             "• Esto no es consejo financiero: es solo información para que decidas vos.\n" +
@@ -124,7 +124,7 @@ class MainActivity : Activity() {
             "• Los precios pueden cambiar en los segundos que tarda el pedido, y hay exchanges con poco volumen donde el precio no es confiable.\n" +
             "• Revisá siempre el precio real en cada exchange antes de mover dinero.")
 
-        seccion("Atribución", "Datos de precios y mercados de CoinGecko (www.coingecko.com).")
+        seccion("Fuentes", "Precios leídos de las APIs públicas de Binance, Bybit, OKX, KuCoin, Gate.io, Bitget y MEXC.")
 
         sv.addView(col)
         return sv

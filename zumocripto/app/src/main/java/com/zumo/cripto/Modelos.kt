@@ -1,6 +1,6 @@
 package com.zumo.cripto
 
-/** Una cripto en el ranking de CoinGecko (sin datos de exchanges todavía). */
+/** Un activo (por ejemplo BTC) con su precio de referencia: la mediana entre los exchanges donde se opera. */
 data class Moneda(val id: String, val simbolo: String, val nombre: String, val precioUsd: Double, val puestoRanking: Int)
 
 /** El precio de una cripto en un exchange puntual, ya convertido a dólares. */
@@ -9,7 +9,7 @@ data class Ticker(
     val par: String,          // "BTC/USDT", por ejemplo
     val precioUsd: Double,
     val volumenUsd: Double,
-    val confianza: String,    // "green", "yellow", "red" o "" si CoinGecko no lo informa
+    val confianza: String,    // "green", "yellow", "red" o "" si no se informa
     val urlOperar: String,
     val anomalo: Boolean,
     val desactualizado: Boolean,

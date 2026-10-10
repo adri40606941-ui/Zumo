@@ -17,33 +17,27 @@ import android.widget.TextView
 import android.widget.Toast
 import java.util.Locale
 
-/** Pestaña "Oportunidades": busca criptos con margen entre exchanges (en el ranking o una sola), y calcula el neto con comisiones. */
+/** Pestaña "Oportunidades": lee los precios de varios exchanges y muestra dónde una misma cripto está más barata que en otro. */
 class PaginaOportunidades(private val act: Activity) {
     private val ui = Ui(act)
     private val principal = Handler(Looper.getMainLooper())
     private val candado = Any()
-    private val hallados = ArrayList<Oportunidad>()
+    private var resultados: List<Oportunidad> = emptyList()
     private var version = 0
     private var versionPintada = -1
 
-    private var escaneo: Escaneo? = null
+    private var buscador: BuscadorExchanges? = null
     private var buscando = false
     private var hubo = false
-    @Volatile private var mensaje = "Listo para buscar"
-    private var inicio = 0L
+    @Volatile private var mensaje = "Listo para leer los exchanges"
+    @Volatile private var informe = ""
     private var comision = 0.1
 
     private val campoMargen = ui.campo("Margen mínimo %, por ejemplo 1.0")
     private val campoComision = ui.campo("Comisión por operación %, por ejemplo 0.1")
-    private val campoBuscar = ui.campo("BTC, ETH, solana…")
-    private val campoDesde = ui.campo("Desde el puesto")
-    private val campoHasta = ui.campo("Hasta el puesto")
-    private val campoClave = ui.campo("Clave de CoinGecko (opcional)")
-    private var clave = ""
+    private val campoFiltro = ui.campo("Filtrar por cripto: BTC, ETH…")
     private val botonPrincipal: TextView
-    private val botonUna: TextView
-    private val textoEstado = ui.texto("Listo para buscar", 14f, Paleta.APAGADO)
-    private val barra = Barra(act, ui)
+    private val textoEstado = ui.texto("Listo para leer los exchanges", 14f, Paleta.APAGADO)
     private val textoResumen = ui.texto("", 13f, Paleta.APAGADO)
     private val cajaResultados = ui.vertical()
 
@@ -59,68 +53,34 @@ class PaginaOportunidades(private val act: Activity) {
     init {
         campoMargen.setText("1.0")
         campoComision.setText("0.1")
-        campoDesde.setText("1")
-        campoHasta.setText("100")
-        campoDesde.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        campoHasta.inputType = android.text.InputType.TYPE_CLASS_NUMBER
         campoMargen.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         campoComision.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         val col = ui.vertical()
         col.setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(24))
 
-        // --- Buscar una cripto puntual
-        val tUna = ui.tarjeta()
-        tUna.addView(ui.texto("🔎  Buscar una cripto", 16f, Paleta.TEXTO, true))
-        tUna.addView(campoBuscar, ui.params(arriba = 10))
-        tUna.addView(ui.texto("Mira su precio en todos los exchanges sin escanear el ranking. Busca entre las 250 primeras.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
-        botonUna = ui.boton("BUSCAR ESTA", relleno = false) { if (buscando) detener() else empezarUna() }
-        tUna.addView(botonUna, ui.params(arriba = 10))
-        col.addView(tUna)
+        // --- Botón principal y estado
+        botonPrincipal = ui.boton("🔍  LEER EXCHANGES Y COMPARAR") { if (buscando) detener() else empezar() }
+        col.addView(botonPrincipal)
+        val tEstado = ui.tarjeta()
+        tEstado.addView(textoEstado)
+        tEstado.addView(textoResumen, ui.params(arriba = 8))
+        col.addView(tEstado, ui.params(arriba = 12))
 
-        // --- Qué puestos del ranking revisar
+        // --- Filtros (se aplican sobre lo leído, sin volver a pedir nada)
         val t1 = ui.tarjeta()
-        t1.addView(ui.texto("📊  Qué puestos del ranking revisar", 16f, Paleta.TEXTO, true))
-        val filaRango = ui.horizontal()
-        filaRango.addView(campoDesde, ui.params(ancho = 0, peso = 1f, der = 6))
-        filaRango.addView(campoHasta, ui.params(ancho = 0, peso = 1f))
-        t1.addView(filaRango, ui.params(arriba = 10))
-        val filaP = ui.horizontal()
-        for ((nombre, d, h) in PRESETS) {
-            val chip = ui.chip(nombre, false) { campoDesde.setText(d.toString()); campoHasta.setText(h.toString()) }
-            filaP.addView(chip, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, der = 6))
-        }
-        val scrollP = android.widget.HorizontalScrollView(act)
-        scrollP.isHorizontalScrollBarEnabled = false
-        scrollP.addView(filaP)
-        t1.addView(scrollP, ui.params(arriba = 10))
-        t1.addView(ui.texto("Puestos del ranking por capitalización de CoinGecko. Máximo ${Escaneo.MAX_RANGO} por búsqueda. Cuantos más, más tarda: pide de a una para no chocar con el límite de pedidos.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
-        t1.addView(campoClave, ui.params(arriba = 12))
-        t1.addView(ui.texto("Opcional. Una clave gratuita de CoinGecko (demo) sube el límite de pedidos y la búsqueda va más rápido. No se guarda: pegala cada vez que abras la app.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
+        t1.addView(ui.texto("🎛  Filtros", 16f, Paleta.TEXTO, true))
+        t1.addView(campoMargen, ui.params(arriba = 10))
+        t1.addView(campoFiltro, ui.params(arriba = 10))
+        t1.addView(campoComision, ui.params(arriba = 10))
+        t1.addView(ui.texto("La comisión se cobra en la compra y en la venta: cada fila muestra cuánto te queda neto con ese valor.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
+        t1.addView(ui.chip("✔ Aplicar filtros", false) { versionPintada = -1; pintarEstado() }, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, arriba = 10))
         col.addView(t1, ui.params(arriba = 12))
 
-        // --- Margen mínimo y comisiones
-        val t2 = ui.tarjeta()
-        t2.addView(ui.texto("💰  Margen y comisiones", 16f, Paleta.TEXTO, true))
-        t2.addView(campoMargen, ui.params(arriba = 10))
-        t2.addView(ui.texto("Solo se muestran las criptos donde la diferencia entre el exchange más caro y el más barato supera este porcentaje (antes de comisiones).", 12f, Paleta.APAGADO), ui.params(arriba = 8))
-        t2.addView(campoComision, ui.params(arriba = 12))
-        t2.addView(ui.texto("Se cobra en la compra y en la venta. Cada fila muestra cuánto te queda neto con esta comisión.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
-        col.addView(t2, ui.params(arriba = 12))
-
-        // --- Botón del ranking y progreso
-        botonPrincipal = ui.boton("🔍  BUSCAR OPORTUNIDADES") { if (buscando) detener() else empezar() }
-        col.addView(botonPrincipal, ui.params(arriba = 14))
-        val t3 = ui.tarjeta()
-        t3.addView(textoEstado)
-        t3.addView(barra, ui.params(arriba = 10))
-        t3.addView(textoResumen, ui.params(arriba = 8))
-        col.addView(t3, ui.params(arriba = 14))
-
         // --- Resultados
-        val t4 = ui.tarjeta()
-        t4.addView(ui.texto("💹  Oportunidades", 16f, Paleta.TEXTO, true))
-        t4.addView(cajaResultados, ui.params(arriba = 10))
-        col.addView(t4, ui.params(arriba = 14))
+        val t2 = ui.tarjeta()
+        t2.addView(ui.texto("💹  Oportunidades", 16f, Paleta.TEXTO, true))
+        t2.addView(cajaResultados, ui.params(arriba = 10))
+        col.addView(t2, ui.params(arriba = 12))
 
         vista.addView(col)
         pintarEstado()
@@ -137,121 +97,98 @@ class PaginaOportunidades(private val act: Activity) {
     }
 
     private fun empezar() {
-        val margen = parsePct(campoMargen.text.toString())
-        if (margen == null) { toast("Poné un margen mínimo válido, por ejemplo 1.0"); return }
         val com = parsePct(campoComision.text.toString())
         if (com == null) { toast("Poné una comisión válida, por ejemplo 0.1"); return }
         comision = com
         ocultarTeclado()
-        val rango = parseRango() ?: return
-        clave = campoClave.text.toString().trim()
-        iniciar { e ->
-            e.buscar(
-                desde = rango.first,
-                hasta = rango.second,
-                margenMinimoPct = margen,
-                pausaMs = PAUSA_MS,
-                alEstado = { mensaje = it },
-                alHallar = { agregar(it) },
-                alAvanzar = { _, _ -> },
-            )
-        }
-    }
-
-    /** Lee el rango de puestos; avisa y devuelve null si no es válido. */
-    private fun parseRango(): Pair<Int, Int>? {
-        val d = campoDesde.text.toString().trim().toIntOrNull()
-        val h = campoHasta.text.toString().trim().toIntOrNull()
-        if (d == null || h == null || d < 1) { toast("Poné los puestos desde y hasta, por ejemplo 1 y 100"); return null }
-        if (h < d) { toast("El puesto de «hasta» tiene que ser mayor o igual que «desde»"); return null }
-        if (h - d + 1 > Escaneo.MAX_RANGO) { toast("Como máximo ${Escaneo.MAX_RANGO} por búsqueda: achicá el rango"); return null }
-        return d to h
-    }
-
-    private fun empezarUna() {
-        val consulta = campoBuscar.text.toString()
-        if (consulta.isBlank()) { toast("Escribí una cripto, por ejemplo BTC"); return }
-        val com = parsePct(campoComision.text.toString())
-        if (com == null) { toast("Poné una comisión válida, por ejemplo 0.1"); return }
-        comision = com
-        ocultarTeclado()
-        clave = campoClave.text.toString().trim()
-        iniciar { e ->
-            val op = e.buscarUna(consulta, { mensaje = it })
-            if (op != null) {
-                agregar(op)
-                mensaje = "✔ Listo: ${op.moneda.nombre}"
-            }
-        }
-    }
-
-    /** Arranca una búsqueda (del ranking o de una sola cripto) en un hilo aparte y pinta los resultados a medida que llegan. */
-    private fun iniciar(tarea: (Escaneo) -> Unit) {
-        synchronized(candado) { hallados.clear(); version++ }
-        hubo = true; inicio = System.currentTimeMillis()
+        synchronized(candado) { resultados = emptyList(); version++ }
+        hubo = true
         buscando = true
         botonPrincipal.text = "⏹  DETENER"
-        botonUna.text = "⏹  DETENER"
-        val llave = clave
-        val e = Escaneo({ url -> Red.pedir(url, llave) })
-        escaneo = e
+        val b = BuscadorExchanges({ url -> Red.pedir(url) })
+        buscador = b
         Thread({
             try {
-                tarea(e)
+                val r = b.buscar { mensaje = it }
+                synchronized(candado) { resultados = r.oportunidades; version++ }
+                informe = armarInforme(r)
+                mensaje = if (r.cancelado) "Detenido" else "✔ Listo"
             } catch (_: Exception) {
-                mensaje = "Hubo un error al buscar"
+                mensaje = "Hubo un error al leer los exchanges"
             }
             principal.post { terminar() }
-        }, "zumocripto-busqueda").start()
+        }, "zumocripto-exchanges").start()
         principal.post(refresco)
     }
 
-    private fun agregar(op: Oportunidad) { synchronized(candado) { hallados.add(op); version++ } }
+    private fun armarInforme(r: BuscadorExchanges.Resultado): String {
+        val base = "Leí ${r.leidos} de ${Exchanges.TODAS.size} exchanges"
+        return if (r.fallaron.isEmpty()) base
+        else "$base. No pude leer: ${r.fallaron.joinToString(", ")}. Puede ser que no estén disponibles en tu país."
+    }
 
-    private fun detener() { escaneo?.cancelar(); mensaje = "Deteniendo…" }
+    private fun detener() { buscador?.cancelar(); mensaje = "Deteniendo…" }
 
     private fun terminar() {
         buscando = false
-        botonPrincipal.text = "🔍  BUSCAR OPORTUNIDADES"
-        botonUna.text = "BUSCAR ESTA"
+        botonPrincipal.text = "🔍  LEER EXCHANGES Y COMPARAR"
         pintarEstado()
     }
 
-    fun cerrar() { escaneo?.cancelar() }
+    fun cerrar() { buscador?.cancelar() }
+
+    /** Lo que se ve según los filtros: margen mínimo y nombre de cripto, ordenado de mayor a menor margen. */
+    private fun visibles(): List<Oportunidad> {
+        val margen = parsePct(campoMargen.text.toString()) ?: 0.0
+        val filtro = campoFiltro.text.toString().trim().lowercase()
+        val todas = synchronized(candado) { resultados }
+        return todas
+            .filter { it.margenPct >= margen }
+            .filter { filtro.isEmpty() || it.moneda.simbolo.lowercase().contains(filtro) }
+            .sortedByDescending { it.margenPct }
+    }
 
     private fun pintarEstado() {
         textoEstado.text = mensaje
         textoEstado.setTextColor(if (buscando) Paleta.CYAN else if (hubo) Paleta.VERDE else Paleta.APAGADO)
-        val n = synchronized(candado) { hallados.size }
-        textoResumen.text = if (!hubo) "" else "$n oportunidad(es) encontradas"
+        val total = synchronized(candado) { resultados.size }
+        textoResumen.text = when {
+            !hubo -> ""
+            buscando -> ""
+            else -> "${visibles().size} de $total activos en varios exchanges. $informe"
+        }
         if (versionPintada != version) { versionPintada = version; pintarResultados() }
     }
 
-    private fun copia(): List<Oportunidad> = synchronized(candado) { hallados.sortedByDescending { it.margenPct } }
-
     private fun pintarResultados() {
-        val todos = copia()
+        val lista = visibles()
         cajaResultados.removeAllViews()
-        if (todos.isEmpty()) {
-            cajaResultados.addView(ui.texto(if (!hubo) "Todavía no buscaste nada." else if (buscando) "Buscando…" else "No se encontró ninguna con ese margen mínimo.", 13f, Paleta.APAGADO))
+        if (lista.isEmpty()) {
+            val texto = when {
+                !hubo -> "Todavía no leíste los exchanges."
+                buscando -> "Leyendo…"
+                synchronized(candado) { resultados.isEmpty() } -> "No se encontró ningún activo en dos exchanges."
+                else -> "Ninguna con esos filtros. Bajá el margen mínimo o quitá el nombre de la cripto."
+            }
+            cajaResultados.addView(ui.texto(texto, 13f, Paleta.APAGADO))
             return
         }
-        for (op in todos.take(MAX_FILAS)) {
+        for (op in lista.take(MAX_FILAS)) {
             val fila = ui.vertical()
             fila.background = ui.fondo(Paleta.TARJETA_2, 12)
             fila.setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10))
             val cab = ui.horizontal()
-            cab.addView(ui.texto("${op.moneda.nombre} (${op.moneda.simbolo})", 15f, Paleta.CYAN, true), ui.params(ancho = 0, peso = 1f))
+            cab.addView(ui.texto(op.moneda.simbolo, 15f, Paleta.CYAN, true), ui.params(ancho = 0, peso = 1f))
             cab.addView(ui.insignia("+" + formatoPct(op.margenPct) + "%", colorMargen(op.margenPct)))
             fila.addView(cab)
             fila.addView(ui.texto("${op.barato.exchange}: \$${formatoUsd(op.barato.precioUsd)}  →  ${op.caro.exchange}: \$${formatoUsd(op.caro.precioUsd)}", 13f, Paleta.TEXTO), ui.params(arriba = 6))
             val neto = Calculadora.netoPct(op, comision)
             fila.addView(ui.texto("Neto con comisiones: ${formatoPct(neto)}%", 12f, if (neto > 0) Paleta.VERDE else Paleta.ROJO, true), ui.params(arriba = 4))
-            fila.addView(ui.texto("${op.exchanges} exchanges comparados", 12f, Paleta.APAGADO), ui.params(arriba = 2))
+            fila.addView(ui.texto("${op.exchanges} exchanges", 12f, Paleta.APAGADO), ui.params(arriba = 2))
             fila.setOnClickListener { detalle(op) }
             cajaResultados.addView(fila, ui.params(abajo = 8))
         }
-        if (todos.size > MAX_FILAS) cajaResultados.addView(ui.texto("… y ${todos.size - MAX_FILAS} más.", 12f, Paleta.AMARILLO))
+        if (lista.size > MAX_FILAS) cajaResultados.addView(ui.texto("… y ${lista.size - MAX_FILAS} más. Usá el filtro para achicar la lista.", 12f, Paleta.AMARILLO))
     }
 
     private fun colorMargen(pct: Double): Int = when {
@@ -263,7 +200,7 @@ class PaginaOportunidades(private val act: Activity) {
     private fun formatoPct(v: Double): String = String.format(Locale.US, "%.2f", v)
     private fun formatoUsd(v: Double): String = if (v >= 1.0) String.format(Locale.US, "%,.2f", v) else String.format(Locale.US, "%.6f", v)
 
-    /** Un detalle con la tabla completa de exchanges, de más barato a más caro, con el enlace para operar si CoinGecko lo informa. */
+    /** Un detalle con la tabla de exchanges, de más barato a más caro, con el enlace para operar en cada uno. */
     private fun detalle(op: Oportunidad) {
         val cuerpo = LinearLayout(act)
         cuerpo.orientation = LinearLayout.VERTICAL
@@ -272,7 +209,7 @@ class PaginaOportunidades(private val act: Activity) {
         cuerpo.addView(ui.texto("Neto con comisiones de ${formatoPct(comision)}% por operación: ${formatoPct(neto)}%", 13f, if (neto > 0) Paleta.VERDE else Paleta.ROJO, true))
         for (t in op.tickers) {
             val f = ui.horizontal()
-            f.addView(ui.texto(t.exchange, 14f, Paleta.TEXTO, true), ui.params(ancho = 0, peso = 1f))
+            f.addView(ui.texto("${t.exchange}  (${t.par})", 14f, Paleta.TEXTO, true), ui.params(ancho = 0, peso = 1f))
             f.addView(ui.texto("\$${formatoUsd(t.precioUsd)}", 14f, Paleta.CYAN))
             cuerpo.addView(f, ui.params(arriba = 8))
             if (t.urlOperar.isNotBlank()) {
@@ -284,12 +221,12 @@ class PaginaOportunidades(private val act: Activity) {
             }
         }
         AlertDialog.Builder(act)
-            .setTitle("${op.moneda.nombre} (${op.moneda.simbolo}) — margen ${formatoPct(op.margenPct)}%")
+            .setTitle("${op.moneda.simbolo} — margen ${formatoPct(op.margenPct)}%")
             .setView(ScrollView(act).also { it.addView(cuerpo) })
             .setPositiveButton("Copiar resumen") { _, _ ->
-                val r = op.tickers.joinToString("\n") { "${it.exchange}: \$${formatoUsd(it.precioUsd)}" }
+                val r = op.tickers.joinToString("\n") { "${it.exchange} (${it.par}): \$${formatoUsd(it.precioUsd)}" }
                 val cm = act.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("Zumo Cripto", "${op.moneda.nombre}\n$r\nNeto con comisiones: ${formatoPct(neto)}%"))
+                cm.setPrimaryClip(ClipData.newPlainText("Zumo Cripto", "${op.moneda.simbolo}\n$r\nNeto con comisiones: ${formatoPct(neto)}%"))
                 toast("Copiado")
             }
             .setNegativeButton("Cerrar", null)
@@ -298,12 +235,5 @@ class PaginaOportunidades(private val act: Activity) {
 
     companion object {
         const val MAX_FILAS = 200
-        const val PAUSA_MS = 700L
-        /** Atajos: nombre, puesto desde y puesto hasta. */
-        val PRESETS = listOf(
-            Triple("Top 100", 1, 100),
-            Triple("Top 500", 1, 500),
-            Triple("5000 en adelante", 5000, 5999),
-        )
     }
 }
