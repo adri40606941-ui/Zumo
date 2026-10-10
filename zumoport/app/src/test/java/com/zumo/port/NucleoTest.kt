@@ -487,3 +487,202 @@ class SubdominiosCancelarTest {
         assertTrue(halladas.isEmpty())
     }
 }
+
+class FuentesTest {
+    private val dominio = "ejemplo.com"
+
+    /** Lo que contestaría cada fuente (cada una con su formato). */
+    private fun respuesta(u: String): String? = when {
+        "crt.sh" in u -> "[{\"name_value\":\"ct.ejemplo.com\\nct2.ejemplo.com\"}]"
+        "hackertarget" in u -> "ht.ejemplo.com,1.1.1.1\nus.ejemplo.com,1.1.1.1"
+        "otx.alienvault.com" in u -> "{\"passive_dns\":[{\"address\":\"1.1.1.1\",\"hostname\":\"otx.ejemplo.com\"}],\"count\":1}"
+        "certspotter" in u -> "[{\"id\":\"1\",\"dns_names\":[\"cs.ejemplo.com\",\"*.wild.ejemplo.com\"]}]"
+        "urlscan.io" in u -> "{\"results\":[{\"page\":{\"domain\":\"us.ejemplo.com\",\"url\":\"https://us.ejemplo.com/\"}}]}"
+        "jldc.me" in u -> "[\"an.ejemplo.com\"]"
+        "subdomain.center" in u -> "[\"sc.ejemplo.com\"]"
+        "web.archive.org" in u -> "http://wb.ejemplo.com/a\nhttps://wb.ejemplo.com:8443/b\nhttp://otro.net/x"
+        else -> null
+    }
+
+    private val webs = Fuente.ELEGIBLES.filter { it.web }.toSet()
+
+    @Test fun extrae_nombres_de_cualquier_texto() {
+        val t = "[\"a.ejemplo.com\",\"*.b.ejemplo.com\",\"notejemplo.com\",\"ejemplo.com.evil.net\",\"x.ejemplo.com.evil.net\",\"C.EJEMPLO.COM\"]\n" +
+            "https://d.ejemplo.com:8443/x\nhttp://user@e.ejemplo.com/y\n{\"u\":\"https:\\/\\/f.ejemplo.com\\/z\"}"
+        assertEquals(setOf("a.ejemplo.com", "b.ejemplo.com", "c.ejemplo.com", "d.ejemplo.com", "e.ejemplo.com", "f.ejemplo.com"),
+            BuscadorSubdominios.extraerNombres(t, dominio))
+        assertTrue(BuscadorSubdominios.extraerNombres("nada de nada", dominio).isEmpty())
+    }
+
+    @Test fun las_direcciones_de_cada_fuente_llevan_el_dominio() {
+        for (f in Fuente.ELEGIBLES.filter { it.web }) assertTrue(f.nombre, f.url(dominio).startsWith("https://") && "ejemplo.com" in f.url(dominio))
+        assertTrue("domain%3Aejemplo.com" in Fuente.URLSCAN.url(dominio))
+        assertTrue("url=*.ejemplo.com" in Fuente.WAYBACK.url(dominio))
+        assertEquals("", Fuente.LISTA.url(dominio))
+    }
+
+    @Test fun la_forma_corta_de_metodos_sigue_igual() {
+        assertEquals(setOf(Fuente.CRTSH, Fuente.HACKERTARGET, Fuente.LISTA), Metodos().fuentes)
+        assertEquals(setOf(Fuente.LISTA), Metodos(false, false, true).fuentes)
+        assertFalse(Fuente.DOMINIO in Fuente.ELEGIBLES)
+    }
+
+    private fun buscar(bajar: (String, Int) -> String?, fuentes: Set<Fuente> = webs, estados: MutableList<String> = CopyOnWriteArrayList(),
+                       resumen: MutableList<ResultadoFuente> = CopyOnWriteArrayList()): Map<String, Subdominio> {
+        val b = BuscadorSubdominios(resolver = { n -> if (n.startsWith("zp-")) emptyList() else listOf("1.1.1.1") }, bajar = bajar)
+        val out = CopyOnWriteArrayList<Subdominio>()
+        b.buscar(dominio, Metodos(fuentes), { estados.add(it) }, { out.add(it) }, { _, _ -> }, Extras(), { resumen.addAll(it) })
+        return out.associateBy { it.nombre }
+    }
+
+    @Test fun junta_los_nombres_de_todas_las_fuentes() {
+        val resumen = CopyOnWriteArrayList<ResultadoFuente>()
+        val por = buscar({ u, _ -> respuesta(u) }, resumen = resumen)
+        assertEquals(setOf("ct.ejemplo.com", "ct2.ejemplo.com", "ht.ejemplo.com", "otx.ejemplo.com", "cs.ejemplo.com", "wild.ejemplo.com", "us.ejemplo.com",
+            "an.ejemplo.com", "sc.ejemplo.com", "wb.ejemplo.com", "ejemplo.com"), por.keys)
+        assertEquals("HackerTarget", por["ht.ejemplo.com"]!!.fuente)
+        assertEquals("Wayback", por["wb.ejemplo.com"]!!.fuente)
+        assertEquals("un nombre que traen dos fuentes dice las dos", "HackerTarget + URLScan", por["us.ejemplo.com"]!!.fuente)
+        assertEquals(webs.size, resumen.size)
+        assertTrue(resumen.all { it.ok && it.cantidad >= 1 })
+    }
+
+    @Test fun avisa_cual_fuente_no_respondio_y_sigue_con_las_demas() {
+        val estados = CopyOnWriteArrayList<String>()
+        val resumen = CopyOnWriteArrayList<ResultadoFuente>()
+        val por = buscar({ u, _ -> if ("urlscan.io" in u) null else respuesta(u) }, estados = estados, resumen = resumen)
+        assertTrue(estados.any { it == "URLScan no respondió" })
+        assertFalse(resumen.first { it.fuente == Fuente.URLSCAN }.ok)
+        assertTrue(resumen.filter { it.fuente != Fuente.URLSCAN }.all { it.ok })
+        assertTrue("ct.ejemplo.com" in por && "sc.ejemplo.com" in por)
+        assertEquals("el que solo traía URLScan no aparece, el que también traía HackerTarget sí", "HackerTarget", por["us.ejemplo.com"]!!.fuente)
+    }
+
+    @Test fun las_fuentes_se_consultan_a_la_vez() {
+        val t0 = System.currentTimeMillis()
+        buscar({ _, _ -> Thread.sleep(600); "x" })
+        val ms = System.currentTimeMillis() - t0
+        assertTrue("tardó $ms ms: ${webs.size} fuentes de 600 ms cada una tienen que ir en paralelo", ms < 2500)
+    }
+
+    @Test fun solo_consulta_las_fuentes_elegidas() {
+        val pedidas = CopyOnWriteArrayList<String>()
+        buscar({ u, _ -> pedidas.add(u); respuesta(u) }, fuentes = setOf(Fuente.ALIENVAULT, Fuente.ANUBIS))
+        assertEquals(2, pedidas.size)
+        assertTrue(pedidas.any { "alienvault" in it } && pedidas.any { "jldc.me" in it })
+    }
+}
+
+class ProbadorHttpTest {
+    private fun sub(n: String, vararg pares: Pair<String, List<Int>>) = Subdominio(n, pares.map { it.first }, "x").also { it.puertosPorIp = pares.toMap() }
+
+    @Test fun prueba_cada_puerto_abierto_con_el_nombre_del_subdominio() {
+        val a = sub("a.ejemplo.com", "1.1.1.1" to listOf(80, 443))
+        val b = sub("b.ejemplo.com", "1.1.1.1" to listOf(80))
+        val sinPuertos = Subdominio("c.ejemplo.com", listOf("2.2.2.2"), "x")
+        val llamadas = Collections.synchronizedList(ArrayList<String>())
+        val p = ProbadorHttp { n, ip, puerto ->
+            llamadas.add("$n|$ip|$puerto")
+            when {
+                n == "a.ejemplo.com" && puerto == 80 -> Hallazgo(n, ip, 80, Hallazgo.Tipo.WEB, 301, "cloudflare → https://a.ejemplo.com/")
+                n == "a.ejemplo.com" && puerto == 443 -> Hallazgo(n, ip, 443, Hallazgo.Tipo.TLS_WEB, 200, "cloudflare")
+                else -> Hallazgo(n, ip, puerto, Hallazgo.Tipo.WEB, 403, "")
+            }
+        }
+        val avances = CopyOnWriteArrayList<Pair<Int, Int>>()
+        p.probar(listOf(a, b, sinPuertos), { h, t -> avances.add(h to t) }, {})
+        assertEquals(listOf(80, 443), a.pruebas.map { it.puerto }.sorted())
+        assertTrue(a.pruebas.all { it.ok })
+        assertEquals("HTTPS 200 · cloudflare", a.pruebas.first { it.puerto == 443 }.texto)
+        assertTrue(a.pruebas.first { it.puerto == 443 }.https)
+        assertEquals(403, b.pruebas.single().http); assertFalse(b.pruebas.single().ok)
+        assertTrue(sinPuertos.pruebas.isEmpty())
+        assertEquals(3, llamadas.size)
+        assertTrue("a.ejemplo.com|1.1.1.1|443" in llamadas)
+        assertFalse(a.probando || b.probando || sinPuertos.probando)
+        assertEquals(3 to 3, avances.last())
+    }
+
+    @Test fun un_puerto_que_ya_no_contesta_se_anota() {
+        val a = sub("a.ejemplo.com", "1.1.1.1" to listOf(8080))
+        ProbadorHttp { _, _, _ -> null }.probar(listOf(a), { _, _ -> }, {})
+        val r = a.pruebas.single()
+        assertEquals("sin respuesta", r.texto); assertNull(r.tipo); assertFalse(r.ok)
+    }
+
+    @Test fun probar_de_nuevo_borra_lo_anterior() {
+        val a = sub("a.ejemplo.com", "1.1.1.1" to listOf(80))
+        val p = ProbadorHttp { n, ip, puerto -> Hallazgo(n, ip, puerto, Hallazgo.Tipo.WEB, 200, "") }
+        p.probar(listOf(a), { _, _ -> }, {})
+        p.probar(listOf(a), { _, _ -> }, {})
+        assertEquals(1, a.pruebas.size)
+    }
+
+    @Test fun no_arma_mas_pruebas_que_el_tope() {
+        val a = sub("a.ejemplo.com", *(1..5).map { "1.1.1.$it" to (1..1000).toList() }.toTypedArray())
+        assertEquals(ProbadorHttp.MAX_PRUEBAS, ProbadorHttp().armar(listOf(a)).size)
+    }
+
+    @Test fun detener_vuelve_enseguida_aunque_una_conexion_se_cuelgue() {
+        val suelta = java.util.concurrent.CountDownLatch(1)
+        val a = sub("a.ejemplo.com", "1.1.1.1" to listOf(80, 443))
+        val p = ProbadorHttp { _, _, _ ->
+            var listo = false
+            while (!listo) { try { suelta.await(); listo = true } catch (_: InterruptedException) {} }
+            null
+        }
+        Thread { Thread.sleep(400); p.cancelar() }.also { it.isDaemon = true }.start()
+        val t0 = System.currentTimeMillis()
+        p.probar(listOf(a), { _, _ -> }, {})
+        val ms = System.currentTimeMillis() - t0
+        suelta.countDown()
+        assertTrue("tardó $ms ms", ms < 3000)
+        assertFalse(a.probando)
+    }
+}
+
+class EscanerProbarTest {
+    /** Un servidor de mentira: contesta [respuesta] a cada conexión y la cierra. */
+    private fun servidor(respuesta: String, veces: Int = 6): ServerSocket {
+        val ss = ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
+        Thread {
+            repeat(veces) {
+                try {
+                    ss.accept().use { s ->
+                        s.soTimeout = 500
+                        try { s.getInputStream().read(ByteArray(2048)) } catch (_: Exception) {}
+                        s.getOutputStream().write(respuesta.toByteArray(Charsets.ISO_8859_1))
+                        s.getOutputStream().flush()
+                    }
+                } catch (_: Exception) {}
+            }
+        }.also { it.isDaemon = true }.start()
+        return ss
+    }
+
+    @Test fun un_puerto_raro_que_habla_http_se_prueba_como_web() {
+        servidor("HTTP/1.1 200 OK\r\nServer: prueba\r\n\r\n").use { ss ->
+            val h = Escaner().probar("sub.ejemplo.com", "127.0.0.1", ss.localPort)!!
+            assertEquals(Hallazgo.Tipo.WEB, h.tipo); assertEquals(200, h.http); assertEquals("prueba", h.detalle)
+        }
+    }
+
+    @Test fun un_puerto_que_no_habla_web_no_se_confunde() {
+        servidor("hola\r\n").use { ss ->
+            val h = Escaner().probar("sub.ejemplo.com", "127.0.0.1", ss.localPort)!!
+            assertEquals(0, h.http)
+            assertTrue(h.tipo != Hallazgo.Tipo.WEB && h.tipo != Hallazgo.Tipo.TLS_WEB)
+        }
+    }
+
+    @Test fun un_puerto_cerrado_da_null() {
+        val libre = ServerSocket(0).use { it.localPort }
+        assertNull(Escaner().probar("sub.ejemplo.com", "127.0.0.1", libre))
+    }
+
+    @Test fun los_puertos_de_cloudflare_cuentan_como_web() {
+        for (p in listOf(2052, 2082, 2086, 2095, 8880, 2053, 2083, 2087, 2096)) assertTrue("$p", Puertos.esWeb(p))
+        for (p in listOf(2053, 2083, 2087, 2096)) assertTrue("$p", Puertos.esTls(p))
+        for (p in listOf(2052, 2082, 2086, 2095, 8880)) assertFalse("$p", Puertos.esTls(p))
+    }
+}

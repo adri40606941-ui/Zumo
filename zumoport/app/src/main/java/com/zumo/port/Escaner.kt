@@ -109,6 +109,36 @@ class Escaner(private val resolver: (String) -> String? = { n -> resolverIpv4(n)
         }
     }
 
+    /**
+     * Prueba UN puerto que ya se sabe abierto, para ver qué responde por HTTP: HEAD / con el nombre en Host (y en SNI si es
+     * HTTPS). Los puertos que no se reconocen como web (un puerto raro de un panel, por ejemplo) se prueban como HTTP y, si no
+     * contestan HTTP, como HTTPS; lo que no habla web devuelve su banner (SSH, FTP, SMTP…) o solo "abierto".
+     */
+    fun probar(equipo: String, ip: String, puerto: Int, opc: Opciones = Opciones()): Hallazgo? {
+        if (Puertos.esTls(puerto) || Puertos.esWeb(puerto) || puerto in PUERTOS_CON_SALUDO) return sondear(equipo, ip, puerto, opc)
+        try {
+            val s = Socket()
+            try {
+                s.tcpNoDelay = true
+                s.connect(InetSocketAddress(ip, puerto), opc.velocidad.esperaMs)
+                s.soTimeout = (opc.velocidad.esperaMs * 2).coerceIn(1000, 4000)
+                val r = pedirWeb(s, equipo)
+                if (r != null) return Hallazgo(equipo, ip, puerto, Hallazgo.Tipo.WEB, r.codigo, r.detalle)
+            } finally { try { s.close() } catch (_: Exception) {} }
+        } catch (_: Exception) { }
+        try {
+            val s = Socket()
+            try {
+                s.tcpNoDelay = true
+                s.connect(InetSocketAddress(ip, puerto), opc.velocidad.esperaMs)
+                s.soTimeout = (opc.velocidad.esperaMs * 2).coerceIn(1000, 4000)
+                val h = sondearTls(equipo, ip, puerto, s)
+                if (h.tipo == Hallazgo.Tipo.TLS_WEB || h.tipo == Hallazgo.Tipo.TLS_SIN_WEB) return h
+            } finally { try { s.close() } catch (_: Exception) {} }
+        } catch (_: Exception) { }
+        return sondear(equipo, ip, puerto, opc)
+    }
+
     private fun sondear(equipo: String, ip: String, puerto: Int, opc: Opciones): Hallazgo? {
         val s = Socket()
         try {

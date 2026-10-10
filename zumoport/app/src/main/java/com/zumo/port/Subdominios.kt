@@ -9,6 +9,7 @@ import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentSkipListSet
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -25,10 +26,74 @@ class Subdominio(val nombre: String, val ips: List<String>, val fuente: String) 
     /** Puertos abiertos (de los que se probaron) en sus IP. Se llena después; [puertosListo] dice si ya se terminó de probar. */
     @Volatile var puertos: List<Int> = emptyList()
     @Volatile var puertosListo: Boolean = false
+
+    /** Los puertos abiertos de cada una de sus IP (la unión de todos es [puertos]). */
+    @Volatile var puertosPorIp: Map<String, List<Int>> = emptyMap()
+
+    /** Lo que contestó cada puerto abierto cuando se probó por HTTP/HTTPS con el botón «Probar». Vacío si no se probó. */
+    val pruebas = CopyOnWriteArrayList<PruebaHttp>()
+    @Volatile var probando: Boolean = false
 }
 
-/** Cuáles métodos usar para buscar. */
-class Metodos(val certificados: Boolean = true, val hackertarget: Boolean = true, val lista: Boolean = true)
+/**
+ * De dónde salen los nombres. Las de internet ([web]) son fuentes públicas que guardan nombres que alguna vez existieron
+ * (certificados, DNS pasivo, páginas archivadas…); la lista de nombres comunes se prueba preguntando al DNS.
+ */
+enum class Fuente(val chip: String, val nombre: String, val esperaMs: Int, val web: Boolean = true) {
+    CRTSH("🔐 crt.sh (certificados)", "crt.sh", 40000),
+    HACKERTARGET("🛰 HackerTarget", "HackerTarget", 20000),
+    ALIENVAULT("👽 AlienVault OTX", "AlienVault", 20000),
+    CERTSPOTTER("📜 CertSpotter", "CertSpotter", 25000),
+    URLSCAN("🔎 URLScan", "URLScan", 20000),
+    ANUBIS("🐜 Anubis", "Anubis", 20000),
+    SUBDOMAINCENTER("🗺 Subdomain Center", "SubdomainCenter", 20000),
+    WAYBACK("🕰 Wayback Machine", "Wayback", 40000),
+    LISTA("📖 Lista de nombres comunes", "lista", 0, web = false),
+    DOMINIO("dominio", "dominio", 0, web = false);
+
+    /** La dirección que hay que pedir para [dominio] (vacía para las que no son de internet). */
+    fun url(dominio: String): String {
+        val d = URLEncoder.encode(dominio, "UTF-8")
+        return when (this) {
+            CRTSH -> "https://crt.sh/?q=" + URLEncoder.encode("%.$dominio", "UTF-8") + "&output=json"
+            HACKERTARGET -> "https://api.hackertarget.com/hostsearch/?q=$d"
+            ALIENVAULT -> "https://otx.alienvault.com/api/v1/indicators/domain/$d/passive_dns"
+            CERTSPOTTER -> "https://api.certspotter.com/v1/issuances?domain=$d&include_subdomains=true&expand=dns_names"
+            URLSCAN -> "https://urlscan.io/api/v1/search/?q=" + URLEncoder.encode("domain:$dominio", "UTF-8") + "&size=1000"
+            ANUBIS -> "https://jldc.me/anubis/subdomains/$d"
+            SUBDOMAINCENTER -> "https://api.subdomain.center/?domain=$d"
+            WAYBACK -> "https://web.archive.org/cdx/search/cdx?url=*.$d&fl=original&collapse=urlkey&limit=10000"
+            else -> ""
+        }
+    }
+
+    /** Los nombres de [dominio] que trae lo que contestó esta fuente. */
+    fun parsear(texto: String, dominio: String): Set<String> = when (this) {
+        CRTSH -> BuscadorSubdominios.parsearCrtsh(texto, dominio)
+        HACKERTARGET -> BuscadorSubdominios.parsearHackertarget(texto, dominio)
+        else -> BuscadorSubdominios.extraerNombres(texto, dominio)
+    }
+
+    companion object {
+        /** Las que se pueden marcar o desmarcar en pantalla, en este orden. */
+        val ELEGIBLES: List<Fuente> = values().filter { it != DOMINIO }
+    }
+}
+
+/** Qué pasó con una fuente de internet: [ok] si contestó, y cuántos nombres del dominio trajo. */
+class ResultadoFuente(val fuente: Fuente, val ok: Boolean, val cantidad: Int)
+
+/** Cuáles fuentes usar para buscar. */
+class Metodos(val fuentes: Set<Fuente>) {
+    /** Forma corta de las tres de siempre (crt.sh, HackerTarget y la lista). */
+    constructor(certificados: Boolean = true, hackertarget: Boolean = true, lista: Boolean = true) : this(
+        buildSet {
+            if (certificados) add(Fuente.CRTSH)
+            if (hackertarget) add(Fuente.HACKERTARGET)
+            if (lista) add(Fuente.LISTA)
+        }
+    )
+}
 
 /**
  * Lo que se averigua de cada subdominio que responde, después de encontrarlo: el [asn] al que pertenecen sus IP y cuáles de
@@ -37,11 +102,10 @@ class Metodos(val certificados: Boolean = true, val hackertarget: Boolean = true
 class Extras(val asn: Boolean = false, val puertos: List<Int> = emptyList())
 
 /**
- * Busca subdominios de un dominio por tres caminos que se suman:
- *  - certificados públicos (crt.sh): los nombres que alguna vez salieron en un certificado HTTPS,
- *  - HackerTarget: su base de nombres conocidos,
- *  - lista de nombres comunes (www, mail, api, cdn...): se prueba cada uno preguntando al DNS.
- * Después se resuelve cada nombre a IP y se descartan los que solo existen por un DNS "comodín" (*.dominio).
+ * Busca subdominios de un dominio por varios caminos que se suman (ver [Fuente]): fuentes públicas de internet, que se
+ * consultan todas a la vez (certificados, DNS pasivo, páginas archivadas…), y una lista de nombres comunes (www, mail, api,
+ * cdn...) que se prueba preguntando al DNS. Después se resuelve cada nombre a IP y se descartan los que solo existen por un
+ * DNS "comodín" (*.dominio).
  */
 class BuscadorSubdominios(
     private val resolver: (String) -> List<String> = { n -> resolverTodas(n) },
@@ -59,29 +123,25 @@ class BuscadorSubdominios(
         alHallar: (Subdominio) -> Unit,
         alAvanzar: (Int, Int) -> Unit,
         extras: Extras = Extras(),
+        alFuentes: (List<ResultadoFuente>) -> Unit = {},
         alActualizar: () -> Unit = {},
     ) {
         cancelado.set(false)
         val halladas = CopyOnWriteArrayList<Subdominio>()
-        val candidatos = ConcurrentHashMap<String, String>()   // nombre -> fuente
-        if (metodos.certificados && !cancelado.get()) {
-            alEstado("Buscando en certificados públicos (crt.sh)…")
-            val t = cancelable { bajar("https://crt.sh/?q=" + URLEncoder.encode("%." + dominio, "UTF-8") + "&output=json", 40000) }
-            if (cancelado.get()) return
-            if (t == null) alEstado("crt.sh no respondió (a veces está saturado)")
-            else parsearCrtsh(t, dominio).forEach { candidatos.putIfAbsent(it, "certificados") }
+        val candidatos = HashMap<String, java.util.EnumSet<Fuente>>()   // nombre -> fuentes donde apareció
+        fun anotar(n: String, f: Fuente) { candidatos.getOrPut(n) { java.util.EnumSet.noneOf(Fuente::class.java) }.add(f) }
+        val web = Fuente.ELEGIBLES.filter { it in metodos.fuentes && it.web }
+        if (web.isNotEmpty() && !cancelado.get()) {
+            val resultados = consultarFuentes(web, dominio, alEstado) ?: return
+            for ((f, nombres) in resultados) nombres?.forEach { anotar(it, f) }
+            val resumen = resultados.map { (f, nombres) -> ResultadoFuente(f, nombres != null, nombres?.size ?: 0) }
+            for (r in resumen) if (!r.ok) alEstado(r.fuente.nombre + " no respondió" + if (r.fuente == Fuente.CRTSH) " (a veces está saturado)" else "")
+            alFuentes(resumen)
         }
-        if (metodos.hackertarget && !cancelado.get()) {
-            alEstado("Buscando en HackerTarget…")
-            val t = cancelable { bajar("https://api.hackertarget.com/hostsearch/?q=" + URLEncoder.encode(dominio, "UTF-8"), 20000) }
-            if (cancelado.get()) return
-            if (t == null) alEstado("HackerTarget no respondió")
-            else parsearHackertarget(t, dominio).forEach { candidatos.putIfAbsent(it, "HackerTarget") }
+        if (Fuente.LISTA in metodos.fuentes && !cancelado.get()) {
+            for (p in PALABRAS) anotar("$p.$dominio", Fuente.LISTA)
         }
-        if (metodos.lista && !cancelado.get()) {
-            for (p in PALABRAS) candidatos.putIfAbsent("$p.$dominio", "lista")
-        }
-        candidatos.putIfAbsent(dominio, "dominio")
+        anotar(dominio, Fuente.DOMINIO)
         if (cancelado.get()) return
 
         // DNS comodín: si un nombre inventado también resuelve, esas IP no cuentan como hallazgo
@@ -100,10 +160,10 @@ class BuscadorSubdominios(
                     try {
                         if (!cancelado.get()) {
                             val ips = resolver(n).filter { it !in comodin }
-                            val fuente = candidatos[n].orEmpty()
-                            // los de la lista que no existen no se muestran; los de certificados sí (se marcan sin IP)
-                            if (!cancelado.get() && (ips.isNotEmpty() || fuente == "certificados" || fuente == "HackerTarget")) {
-                                val sub = Subdominio(n, ips, fuente)
+                            val fs = candidatos[n]!!
+                            // los de la lista que no existen no se muestran; los que trae alguna fuente de internet sí (se marcan sin IP)
+                            if (!cancelado.get() && (ips.isNotEmpty() || fs.any { it.web })) {
+                                val sub = Subdominio(n, ips, fs.joinToString(" + ") { it.nombre })
                                 halladas.add(sub)
                                 alHallar(sub)
                             }
@@ -119,6 +179,37 @@ class BuscadorSubdominios(
             esperar(pool, 30)
         }
         if (!cancelado.get() && (extras.asn || extras.puertos.isNotEmpty())) enriquecer(halladas.filter { it.resuelve }, extras, alEstado, alAvanzar, alActualizar)
+    }
+
+    /**
+     * Pide todas las fuentes de internet a la vez (no una tras otra) y espera a la última, hasta el tiempo de la más lenta.
+     * Devuelve, por fuente, los nombres que trajo (null = no contestó). null si se canceló.
+     */
+    private fun consultarFuentes(fuentes: List<Fuente>, dominio: String, alEstado: (String) -> Unit): Map<Fuente, Set<String>?>? {
+        val resultados = ConcurrentHashMap<Fuente, Set<String>>()
+        val pendientes = CountDownLatch(fuentes.size)
+        alEstado("Consultando ${fuentes.size} fuentes a la vez…")
+        for (f in fuentes) {
+            Thread({
+                try {
+                    val t = bajar(f.url(dominio), f.esperaMs)
+                    if (t != null) resultados[f] = f.parsear(t, dominio)
+                } catch (_: Exception) {
+                } finally {
+                    pendientes.countDown()
+                }
+            }, "zumoport-fuente").also { it.isDaemon = true }.start()
+        }
+        val limite = System.currentTimeMillis() + fuentes.maxOf { it.esperaMs } + 5000L
+        var avisadas = 0
+        while (pendientes.count > 0 && System.currentTimeMillis() < limite) {
+            if (cancelado.get()) return null
+            try { pendientes.await(100, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { return null }
+            val hechas = fuentes.size - pendientes.count.toInt()
+            if (hechas != avisadas && pendientes.count > 0) { avisadas = hechas; alEstado("Consultando fuentes: contestaron $hechas de ${fuentes.size}…") }
+        }
+        if (cancelado.get()) return null
+        return fuentes.associateWith { resultados[it] }
     }
 
     /**
@@ -190,6 +281,7 @@ class BuscadorSubdominios(
         fun completar(s: Subdominio) {
             if (s.ips.any { faltan[it]?.get()?.let { n -> n > 0 } == true }) return
             s.puertos = s.ips.flatMap { abiertos[it].orEmpty() }.distinct().sorted()
+            s.puertosPorIp = s.ips.associateWith { abiertos[it]?.toList().orEmpty() }.filterValues { it.isNotEmpty() }
             s.puertosListo = true
         }
         for (s in subs) if (s.ips.all { it in sinSondeo }) completar(s)
@@ -227,22 +319,9 @@ class BuscadorSubdominios(
         }
     }
 
-    /** Hilos que no impiden cerrar la app: si una consulta DNS se cuelga, nadie la espera. */
-    private fun hilos(n: Int) = Executors.newFixedThreadPool(n) { r -> Thread(r, "zumoport-sub").also { it.isDaemon = true } }
+    private fun hilos(n: Int) = Hilos.crear(n)
 
-    /**
-     * Espera a que el grupo de hilos termine, pero vuelve ya si se canceló. Una consulta DNS o una conexión en curso no se
-     * puede interrumpir desde afuera (puede tardar decenas de segundos): esos hilos quedan terminando solos y sus resultados
-     * se descartan, pero quien pidió detener no espera.
-     */
-    private fun esperar(pool: java.util.concurrent.ExecutorService, minutos: Long) {
-        val limite = System.currentTimeMillis() + minutos * 60_000
-        while (!pool.isTerminated && System.currentTimeMillis() < limite) {
-            if (cancelado.get()) { pool.shutdownNow(); return }
-            try { pool.awaitTermination(150, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { pool.shutdownNow(); return }
-        }
-        if (!pool.isTerminated) pool.shutdownNow()
-    }
+    private fun esperar(pool: java.util.concurrent.ExecutorService, minutos: Long) = Hilos.esperar(pool, minutos, cancelado)
 
     /** Corre [tarea] en otro hilo y espera su resultado, pero vuelve con null apenas se cancela (sin esperar a que termine). */
     private fun <T> cancelable(tarea: () -> T): T? {
@@ -319,6 +398,17 @@ class BuscadorSubdominios(
             if ((n == dominio || n.endsWith(".$dominio")) && RE_DOMINIO.matches(n)) out.add(n)
         }
 
+        /**
+         * Los nombres de [dominio] que aparecen en cualquier texto: una lista JSON, líneas con direcciones web, etc.
+         * Sirve para todas las fuentes que no tienen un formato propio. No toma "otrodominio.com" ni "dominio.com.otro.net".
+         */
+        fun extraerNombres(texto: String, dominio: String): Set<String> {
+            val re = Regex("(?<![A-Za-z0-9_.*-])((?:[A-Za-z0-9_*-]+\\.)*" + Regex.escape(dominio) + ")(?![A-Za-z0-9-]|\\.[A-Za-z0-9])", RegexOption.IGNORE_CASE)
+            val out = java.util.TreeSet<String>()
+            for (m in re.findAll(texto)) agregarSiEs(out, m.value, dominio)
+            return out
+        }
+
         fun resolverTodas(nombre: String): List<String> = try {
             InetAddress.getAllByName(nombre).mapNotNull { it.hostAddress }.distinct()
         } catch (_: Exception) { emptyList() }
@@ -328,8 +418,22 @@ class BuscadorSubdominios(
             c.connectTimeout = 15000
             c.readTimeout = esperaMs
             c.setRequestProperty("User-Agent", "ZumoPort/1.0")
-            if (c.responseCode != 200) null else c.inputStream.bufferedReader().use { it.readText() }
+            if (c.responseCode != 200) null else c.inputStream.bufferedReader().use { leerHasta(it, MAX_RESPUESTA) }
         } catch (_: Exception) { null }
+
+        /** Tope de lo que se lee de una fuente (la de páginas archivadas puede ser enorme). */
+        const val MAX_RESPUESTA = 6_000_000
+
+        private fun leerHasta(r: java.io.Reader, max: Int): String {
+            val sb = StringBuilder()
+            val buf = CharArray(8192)
+            while (sb.length < max) {
+                val n = r.read(buf)
+                if (n < 0) break
+                sb.append(buf, 0, n)
+            }
+            return sb.toString()
+        }
 
         val PALABRAS: List<String> = (
             "www www2 www3 web mail webmail smtp pop pop3 imap mx mx1 mx2 ns ns1 ns2 ns3 dns dns1 dns2 ftp sftp ssh vpn remote " +

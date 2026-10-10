@@ -151,6 +151,8 @@ object Puertos {
     }
 
     /** Puertos que hablan web (HTTP) y los que además van dentro de TLS (HTTPS). */
-    fun esWeb(p: Int): Boolean = p in setOf(80, 81, 443, 591, 3000, 5000, 8000, 8008, 8080, 8081, 8088, 8443, 8888, 9000, 9090, 9443, 4443)
-    fun esTls(p: Int): Boolean = p in setOf(443, 4443, 8443, 9443, 8883)
+    // 2052/2082/2086/2095/8880 son los puertos HTTP de Cloudflare y 2053/2083/2087/2096 los HTTPS
+    fun esWeb(p: Int): Boolean = p in setOf(80, 81, 443, 591, 3000, 5000, 8000, 8008, 8080, 8081, 8088, 8443, 8888, 9000, 9090, 9443, 4443,
+        2052, 2082, 2086, 2095, 8880, 2053, 2083, 2087, 2096)
+    fun esTls(p: Int): Boolean = p in setOf(443, 4443, 8443, 9443, 8883, 2053, 2083, 2087, 2096)
 }
