@@ -116,7 +116,7 @@ class MainActivity : Activity() {
             "• Lee los precios de 15 exchanges (Binance, Bybit, OKX, KuCoin, Gate.io, Bitget, MEXC, HTX, Crypto.com, LBank, XT.com, Poloniex, Bitstamp, WhiteBIT y BingX) directamente desde sus APIs públicas.\n" +
             "• Busca los activos que se operan en dos o más exchanges y compara su precio entre ellos.\n" +
             "• Te muestra dónde está más barato y dónde más caro, y cuánto es la diferencia en porcentaje.\n" +
-            "• Con el campo de comisión ves cuánto te queda neto. Tocando una fila ves todos los exchanges y un enlace para operar.")
+            "• Cada fila muestra cuánto te queda neto con una comisión de 0,1 % por operación. Tocando una fila ves todos los exchanges y un enlace para operar.")
 
         seccion("Cuentas (claves API)",
             "En la pestaña Cuentas podés cargar una clave API de solo lectura de Binance, Bybit, OKX, MEXC o BingX. Con ella la app lee las redes de retiro y depósito reales de tu cuenta y la comisión de retiro. KuCoin, Gate.io, Bitget, HTX, WhiteBIT, XT.com y Poloniex ya se leen sin clave; con eso la app sabe si podés mover cada cripto de un exchange a otro. Crypto.com, LBank y Bitstamp quedan «no verificable». Nunca pidas ni uses permisos de retiro o trading: no hacen falta. La clave queda cifrada en el teléfono.")
