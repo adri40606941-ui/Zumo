@@ -236,3 +236,37 @@ class CalculadoraTest {
         assertEquals(0.0, Calculadora.netoPct(0.0, 110.0, 0.1, 0.1), 0.0001)
     }
 }
+
+class PausaAdaptativaTest {
+    private val e = Escaneo({ ResultadoPedido(0, null) }, dormir = {})
+
+    @Test fun una_respuesta_buena_acorta_la_pausa_hasta_el_minimo() {
+        assertEquals(900L, e.ajustarPausa(1000L, 200))
+        assertEquals(Escaneo.PAUSA_MIN_MS, e.ajustarPausa(Escaneo.PAUSA_MIN_MS, 200))
+    }
+
+    @Test fun un_429_alarga_la_pausa_y_no_pasa_del_maximo() {
+        assertEquals(2500L, e.ajustarPausa(1000L, 429))
+        assertEquals(Escaneo.PAUSA_MAX_MS, e.ajustarPausa(Escaneo.PAUSA_MAX_MS, 429))
+    }
+
+    @Test fun un_error_que_no_es_429_deja_la_pausa_como_estaba() {
+        assertEquals(1000L, e.ajustarPausa(1000L, 500))
+    }
+
+    @Test fun el_escaneo_acorta_la_pausa_entre_monedas_si_todo_responde_bien() {
+        val ids = (1..6).map { "m$it" }
+        val respuestas = mutableMapOf(CoinGeckoApi.urlMercados(6) to ResultadoPedido(200,
+            "[" + ids.joinToString(",") { """{"id":"$it","symbol":"$it","name":"$it","current_price":100,"market_cap_rank":1}""" } + "]"))
+        for (id in ids) respuestas[CoinGeckoApi.urlTickers(id)] = ResultadoPedido(200,
+            """{"tickers":[{"base":"X","target":"USDT","market":{"name":"a"},"converted_last":{"usd":100},"converted_volume":{"usd":1},"trust_score":"green","is_anomaly":false,"is_stale":false},{"base":"X","target":"USDT","market":{"name":"b"},"converted_last":{"usd":101},"converted_volume":{"usd":1},"trust_score":"green","is_anomaly":false,"is_stale":false}]}""")
+        val pausas = CopyOnWriteArrayList<Long>()
+        Escaneo({ respuestas[it] ?: ResultadoPedido(404, null) }, dormir = { pausas.add(it) })
+            .buscar(6, 0.0, 2000L, {}, {}, { _, _ -> })
+        // 5 esperas entre 6 monedas: cada una más corta que la anterior, sin bajar del mínimo
+        assertEquals(5, pausas.size)
+        assertTrue(pausas.zipWithNext().all { (a, b) -> b <= a })
+        assertTrue(pausas.last() >= Escaneo.PAUSA_MIN_MS)
+        assertTrue(pausas.last() < 2000L)
+    }
+}
