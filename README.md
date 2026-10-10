@@ -213,7 +213,11 @@ usuario y la contraseña que le diste. Ahí ve sus monedas y puede **crear usuar
 **renovar** (suma los días al vencimiento; si ya venció, cuenta desde hoy), **bloquear / desbloquear** y **eliminar**.
 Solo ve y toca los usuarios que creó él. También tiene: un **buscador** y orden de la lista (más nuevos, los que vencen antes,
 por nombre), un aviso y una marca de **«Vence en N d»** para los que vencen en 3 días o menos, el punto 🟢 *en línea* / 🔴 *sin
-conexión*, el lápiz **Editar** (cambiar nombre, renovar, bloquear, eliminar), sus **movimientos** y **cambiar su contraseña**.
+conexión*, el lápiz **Editar** (cambiar nombre, renovar, bloquear, **♻️ recrear**, eliminar), sus **movimientos** y **cambiar su contraseña**.
+
+**Recrear** (lápiz → ♻️): borra al usuario de su VPS y lo vuelve a crear igual (mismo token, nombre, límite, bloqueo y fecha de
+vencimiento) en un solo paso en la VPS; no gasta monedas y, si estaba conectado, se desconecta unos segundos. Sirve cuando un
+usuario quedó trabado o con la cuenta rota.
 
 **Varias VPS por revendedor:** si le asignás más de una, **cada usuario vive en una sola VPS** (no se repite en las demás).
 Al crear, el revendedor elige en cuál (el formulario muestra cuántos usuarios tiene en cada una) o deja «Automática» y se usa

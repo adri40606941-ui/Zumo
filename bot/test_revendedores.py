@@ -18,6 +18,7 @@ class VpsFalsa:
         self.scripts = []
         self.caida = False
         self.sin_panel = False
+        self.recrear_falla = ""
 
     def __call__(self, m, comando, timeout=20):
         if self.caida:
@@ -26,6 +27,17 @@ class VpsFalsa:
         c = comando
         if self.sin_panel and "SINPANEL" in c:
             return "SINPANEL\n"
+        if "# recrear" in c:
+            script = shlex.split(c)[2]
+            tok = re.search(r"^t=(\w+)$", script, re.M).group(1)
+            u = self.us.get(tok)
+            if self.recrear_falla:
+                return self.recrear_falla
+            if not u:
+                return "SINFECHA\n"
+            u["recreado"] = u.get("recreado", 0) + 1
+            u["conectado"] = False
+            return f"OK {u['vence'].isoformat()}\n"
         if "useradd" in c:
             tok = next(k for k in self._tokens(c))
             if tok in self.us:
@@ -235,6 +247,41 @@ class TestCuentasVps(unittest.TestCase):
             cv.crear(self.M, "ABCD1234", "Ana", 7, correr=f)
 
 
+class TestRecrear(unittest.TestCase):
+    M = TestCuentasVps.M
+
+    def test_el_script_hace_todo_junto_y_conserva_lo_que_importa(self):
+        f = VpsFalsa()
+        guardado = []
+        corre = lambda m, c, timeout=20: (guardado.append(shlex.split(c)[2]), "OK 2026-11-09\n")[1]
+        v = cv.recrear(self.M, "ABCD1234", "Ana Pérez", correr=corre)
+        self.assertEqual(v, date(2026, 11, 9))
+        sc = guardado[0]
+        for esperado in ("userdel", "useradd", "chpasswd", "zumo_db_add", 'lim=$(echo "$linea"', "usermod -L", "hwid,Ana Pérez",
+                         "SINFECHA", "pkill -9"):
+            self.assertIn(esperado, sc)
+        self.assertLess(sc.index("userdel"), sc.index("useradd"), "primero borra y después crea")
+        self.assertLess(sc.index("useradd"), sc.index("zumo_db_del"), "la fila vieja se saca recién cuando ya se creó")
+
+    def test_errores_de_la_vps(self):
+        for salida, texto in (("SINPANEL\n", "no tiene el panel"), ("SINFECHA\n", "no se puede recrear"),
+                              ("QUEDA\n", "no se tocó nada"), ("ERROR\n", "Recrear lo vuelve a crear"), ("", "Recrear")):
+            with self.assertRaises(cv.ErrorCuenta) as c:
+                cv.recrear(self.M, "ABCD1234", "Ana", correr=lambda m, cmd, timeout=20: salida)
+            self.assertIn(texto, str(c.exception))
+
+    def test_token_invalido(self):
+        with self.assertRaises(cv.ErrorCuenta):
+            cv.recrear(self.M, "a b; rm", "Ana", correr=lambda *a, **k: "OK 2026-11-09")
+
+    def test_nombre_malicioso_va_entre_comillas(self):
+        guardado = []
+        corre = lambda m, c, timeout=20: (guardado.append(shlex.split(c)[2]), "OK 2026-11-09\n")[1]
+        cv.recrear(self.M, "ABCD1234", "x'; rm -rf / #", correr=corre)
+        self.assertNotIn("rm -rf / #\n", guardado[0])
+        self.assertIn("hwid,x'\"'\"'; rm -rf / #", guardado[0])
+
+
 class TestServicio(unittest.TestCase):
     M = TestCuentasVps.M
 
@@ -253,6 +300,7 @@ class TestServicio(unittest.TestCase):
             estado = staticmethod(lambda m, *a, **k: cv.estado(m, *a, correr=self.f, **k))
             datos = staticmethod(lambda m, *a, **k: cv.datos(m, *a, correr=self.f, **k))
             renombrar = staticmethod(lambda m, *a, **k: cv.renombrar(m, *a, correr=self.f, **k))
+            recrear = staticmethod(lambda m, *a, **k: cv.recrear(m, *a, correr=self.f, **k))
         self.t = [1000.0]
         self.s = Servicio(self.r, lambda _id: self.M, Ops, hoy=lambda: date(2026, 10, 9), reloj=lambda: self.t[0])
         for t in ("bronce", "plata", "oro"):
@@ -438,6 +486,7 @@ class TestVariasVps(unittest.TestCase):
             estado = staticmethod(lambda m, *a, **k: cv.estado(m, *a, correr=corre(m), **k))
             datos = staticmethod(lambda m, *a, **k: cv.datos(m, *a, correr=corre(m), **k))
             renombrar = staticmethod(lambda m, *a, **k: cv.renombrar(m, *a, correr=corre(m), **k))
+            recrear = staticmethod(lambda m, *a, **k: cv.recrear(m, *a, correr=corre(m), **k))
         self.avisos = []
         self.t = [1000.0]
         self.s = Servicio(self.r, lambda i: self.m.get(i), Ops, hoy=lambda: date(2026, 10, 9), reloj=lambda: self.t[0],
@@ -524,6 +573,33 @@ class TestVariasVps(unittest.TestCase):
         self.s.eliminar(self.a, "ABCD1234")
         self.assertEqual((self.f["m1"].us, self.f["m2"].us), ({}, {}))
         self.assertIsNone(self.r.dueno("ABCD1234"))
+
+    def test_recrear_en_su_vps_sin_gastar_monedas(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 15, vps="m2")
+        antes = dict(self.r.buscar(self.a)["monedas"])
+        self.f["m2"].us["ABCD1234"]["conectado"] = True
+        res = self.s.recrear(self.a, "ABCD1234")
+        self.assertEqual(res["vence"], date(2026, 10, 24), "la misma fecha")
+        self.assertEqual(self.f["m2"].us["ABCD1234"]["recreado"], 1)
+        self.assertNotIn("recreado", self.f["m1"].us.get("ABCD1234", {}))
+        self.assertEqual(self.r.buscar(self.a)["monedas"], antes)
+        self.assertEqual(self.r.dueno("ABCD1234"), self.a, "sigue siendo suyo")
+        self.assertEqual(self.r.movimientos(self.a, 1)[0]["que"], "recrear")
+
+    def test_recrear_usuario_ajeno_o_inexistente(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7)
+        b = self.r.crear("luis", "secreto2", "m1")["id"]
+        with self.assertRaises(rv.ErrorRevendedor):
+            self.s.recrear(b, "ABCD1234")
+        self.f["m1"].us.clear(); self.f["m2"].us.clear()
+        with self.assertRaises(rv.ErrorRevendedor):
+            self.s.recrear(self.a, "ABCD1234")
+
+    def test_recrear_con_la_vps_caida(self):
+        self.s.crear(self.a, "ABCD1234", "Ana", 7, vps="m1")
+        self.f["m1"].caida = True
+        with self.assertRaises(rv.ErrorRevendedor):
+            self.s.recrear(self.a, "ABCD1234")
 
     def test_agregar_una_vps_no_copia_usuarios_viejos(self):
         r2 = self.r.crear("luis", "secreto2", "m1")["id"]

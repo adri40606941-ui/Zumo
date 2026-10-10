@@ -31,6 +31,7 @@ class Base(unittest.TestCase):
             bloquear = staticmethod(lambda m, *a, **k: cv.bloquear(m, *a, correr=self.f, **k))
             estado = staticmethod(lambda m, *a, **k: cv.estado(m, *a, correr=self.f, **k))
             renombrar = staticmethod(lambda m, *a, **k: cv.renombrar(m, *a, correr=self.f, **k))
+            recrear = staticmethod(lambda m, *a, **k: cv.recrear(m, *a, correr=self.f, **k))
         hoy = lambda: date(2026, 10, 9)
         self.p = panel_web.PanelWeb(self.r, Servicio(self.r, lambda _i: M, Ops, hoy=hoy), reloj=lambda: self.t[0], hoy=hoy)
 
@@ -240,6 +241,30 @@ class TestPanel(Base):
         self.assertIn("Renovó a Ana (15 días)", p)
         self.assertIn("gastó 1 de plata", p)
         self.assertIn("Le cargaron 2 monedas de bronce", p)
+
+    def test_recrear_pide_confirmacion_y_no_gasta(self):
+        self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana", dias="15")
+        _, p = self.pagina(self.c)
+        self.assertIn('value="recrear"', p)
+        monedas = dict(self.r.buscar(self.a)["monedas"])
+        cod, _, cuerpo = self.accion(self.c, a="recrear", token="ABCD1234")
+        self.assertEqual(cod, 200)
+        self.assertIn("¿Recrear a Ana?", cuerpo.decode())
+        self.assertIn("No gasta monedas", cuerpo.decode())
+        self.assertIn('value="recrear_ok"', cuerpo.decode())
+        self.assertNotIn("recreado", self.f.us["ABCD1234"], "todavía no hizo nada")
+        cod, _, _ = self.accion(self.c, a="recrear_ok", token="ABCD1234")
+        self.assertEqual(cod, 303)
+        self.assertEqual(self.f.us["ABCD1234"]["recreado"], 1)
+        self.assertIn("Usuario recreado. Mismo token, vence el 24/10/2026", self.pagina(self.c)[1])
+        self.assertEqual(self.r.buscar(self.a)["monedas"], monedas)
+
+    def test_recrear_usuario_ajeno_no_hace_nada(self):
+        self.accion(self.c, a="crear", token="ABCD1234", nombre="Ana", dias="7")
+        c2 = self.entrar("luis", "secreto2")
+        self.accion(c2, a="recrear_ok", token="ABCD1234")
+        self.assertNotIn("recreado", self.f.us["ABCD1234"])
+        self.assertIn("no es tuyo", self.pagina(c2)[1])
 
     def test_cambiar_contrasena_propia(self):
         c2 = self.entrar()

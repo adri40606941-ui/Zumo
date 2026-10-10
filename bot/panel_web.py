@@ -291,6 +291,11 @@ class PanelWeb:
                 s["aviso"] = ("ok", f"✅ Nombre cambiado a «{res['nombre']}»." + self._falla(res))
             elif a == "clave":
                 self._cambiar_clave(s, d)
+            elif a == "recrear":
+                return self._pagina(self._confirmar(s, token, "recrear"), 200)
+            elif a == "recrear_ok":
+                res = self.srv.recrear(rid, token)
+                s["aviso"] = ("ok", f"✅ Usuario recreado. Mismo token, vence el {res['vence']:%d/%m/%Y}." + self._falla(res))
             elif a == "eliminar":
                 return self._pagina(self._confirmar(s, token), 200)
             elif a == "eliminar_ok":
@@ -505,6 +510,7 @@ class PanelWeb:
                        'autocomplete="off" aria-label="Nombre del usuario">'
                        '<button class="chico" name="a" value="renombrar">Guardar nombre</button></div>'
                        f'<div class="acciones">{botones}{bloqueo}'
+                       '<button class="gris chico" name="a" value="recrear">♻️ Recrear</button>'
                        '<button class="gris chico" name="a" value="eliminar">🗑 Eliminar</button></div></details></form></div>')
         out.append("</div>")
         return "".join(out)
@@ -543,13 +549,20 @@ class PanelWeb:
                 '<label>Repetí la nueva</label><input type="password" name="repetir" autocomplete="new-password" required>'
                 '<p><button type="submit">Cambiar contraseña</button></p></form></details>')
 
-    def _confirmar(self, s, token):
+    def _confirmar(self, s, token, que="eliminar"):
         propias = self.rev.cuentas_de(s["rid"])
         nombre = propias.get(token, {}).get("etq", token)
+        if que == "recrear":
+            titulo, texto, boton, clase = (f"♻️ ¿Recrear a {e(nombre)}?",
+                "Se borra de la VPS y se vuelve a crear igual: mismo token, mismo nombre y misma fecha de vencimiento. "
+                "No gasta monedas. Si está conectado, se desconecta unos segundos y tiene que volver a conectar.",
+                "Sí, recrear", "")
+        else:
+            titulo, texto, boton, clase = (f"🗑 ¿Eliminar a {e(nombre)}?",
+                "Se borra de la VPS y deja de poder conectar. Las monedas gastadas no se devuelven.", "Sí, eliminar", "rojo")
         return (f'<div class="tope">{self._boton_tema()}</div>'
-                f'<div class="centro"><div class="tarjeta"><h2>🗑 ¿Eliminar a {e(nombre)}?</h2>'
-                '<p>Se borra de la VPS y deja de poder conectar. Las monedas gastadas no se devuelven.</p>'
+                f'<div class="centro"><div class="tarjeta"><h2>{titulo}</h2><p>{texto}</p>'
                 f'<form class="una" method="post" action="{BASE}/accion"><input type="hidden" name="csrf" value="{e(s["csrf"])}">'
-                f'<input type="hidden" name="token" value="{e(token)}"><input type="hidden" name="a" value="eliminar_ok">'
-                '<button class="rojo">Sí, eliminar</button> '
+                f'<input type="hidden" name="token" value="{e(token)}"><input type="hidden" name="a" value="{que}_ok">'
+                f'<button class="{clase}">{boton}</button> '
                 f'</form><p><a href="{BASE}">No, volver</a></p></div></div>')
