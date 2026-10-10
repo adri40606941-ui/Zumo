@@ -779,40 +779,6 @@ p=$(cat /etc/zumo/bhttp.port 2>/dev/null)
 echo "$p"
 }
 
-# Manda la misma sonda que usa la app ("BHP1") y dice si ese puerto contesta como un servidor BHTTP.
-sonda_bhttp() {
-command -v python3 >/dev/null 2>&1 || return 2
-python3 - "$1" <<'PYSONDA'
-import hashlib, os, socket, struct, sys
-puerto = int(sys.argv[1])
-sid = os.urandom(16)
-def xor(modo, seq, resp, datos):
-    out = bytearray()
-    for i in range(0, len(datos), 32):
-        k = hashlib.sha256(sid + bytes([modo]) + struct.pack(">Q", seq) + bytes([1 if resp else 0]) + struct.pack(">I", i // 32)).digest()
-        out += bytes(a ^ b for a, b in zip(datos[i:i + 32], k))
-    return bytes(out)
-try:
-    s = socket.create_connection(("127.0.0.1", puerto), timeout=4)
-    cuerpo = b"BHP1\x01\x00\x00\x00\x00\x00"
-    s.sendall(bytes([0]) + sid + struct.pack(">Q", 0) + struct.pack(">I", len(cuerpo)) + xor(0, 0, False, cuerpo))
-    h = b""
-    while len(h) < 5:
-        c = s.recv(5 - len(h))
-        if not c: raise EOFError
-        h += c
-    n = struct.unpack(">I", h[1:])[0]
-    b = b""
-    while len(b) < n:
-        c = s.recv(n - len(b))
-        if not c: raise EOFError
-        b += c
-    sys.exit(0 if h[0] == 0 and xor(0, 0, True, b).startswith(b"BHP1") else 1)
-except Exception:
-    sys.exit(1)
-PYSONDA
-}
-
 diag_bhttp() {
 banner; echo -e " \e[1;38;5;141mDIAGNÓSTICO DE BHTTP${N}\n"
 local bp r n
@@ -820,14 +786,6 @@ bp=$(bhttp_port)
 if systemctl is-active --quiet bhttp-server && systemctl is-active --quiet bhttp-shim; then msg_ok "Servicio: activo (servidor + adaptador)"; else msg_err "Servicio: inactivo o incompleto (activalo con la opción 5)"; fi
 if ss -ltnH "sport = :$bp" 2>/dev/null | grep -q .; then msg_ok "Escuchando en el puerto $bp"; else msg_err "Nada escucha en el puerto $bp"; fi
 if timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/$bp" 2>/dev/null; then msg_ok "Acepta conexiones locales"; else msg_err "No acepta conexiones locales en $bp"; fi
-sonda_bhttp "$bp"; case $? in
-0) msg_ok "Contesta como BHTTP (la app lo detecta sola si no ponés payload)" ;;
-2) echo -e "   \e[2mSin python3: no se pudo probar el protocolo.${N}" ;;
-*) msg_err "El puerto $bp NO contesta como BHTTP (¿otro servicio, o recién reiniciado?)" ;;
-esac
-if [ -x /opt/bhttp-server/bhttp-shim ]; then
-if /opt/bhttp-server/bhttp-shim -h 2>&1 | grep -q -- "-espera-ms"; then msg_ok "Adaptador con espera larga (la app gasta mucho menos en reposo)"; else echo -e "   \e[1;38;5;214m⚠ Adaptador viejo: desactivá y volvé a activar BHTTP para actualizarlo.${N}"; fi
-fi
 n=$(ss -tnH state established "( sport = :$bp )" 2>/dev/null | wc -l)
 echo -e "   Conexiones establecidas ahora: \e[1;38;5;214m${n}${N}"
 if [ -x /opt/bhttp-server/bhttp-server ]; then
@@ -1141,11 +1099,6 @@ bash /etc/zumo/desactivar-bhttp2.sh
 msg_ok "BHTTP v2 desactivado; puerto liberado"; pausa ;;
 3) banner; echo -e " \e[1;38;5;141mBHTTP v2 · estado${N}\n"
 if systemctl is-active --quiet bhttp-v2; then msg_ok "Servicio: activo"; else msg_err "Servicio: inactivo"; fi
-sonda_bhttp "$(bhttp2_port)"; case $? in
-0) msg_ok "Contesta como BHTTP (la app lo detecta sola si no ponés payload)" ;;
-2) echo -e "   \e[2mSin python3: no se pudo probar el protocolo.${N}" ;;
-*) msg_err "El puerto $(bhttp2_port) NO contesta como BHTTP" ;;
-esac
 bp=$(bhttp2_port)
 if ss -ltnH "sport = :$bp" 2>/dev/null | grep -q .; then msg_ok "Escucha en el puerto $bp"; else msg_err "Nada escucha en el puerto $bp"; fi
 if ss -ltnH "sport = :22" 2>/dev/null | grep -q .; then msg_ok "sshd escucha en el puerto 22"; else msg_err "Nada escucha en el 22 (BHTTP v2 reenvía a 127.0.0.1:22)"; fi
