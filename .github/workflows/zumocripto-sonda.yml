@@ -1,0 +1,30 @@
+name: Sonda temporal 2
+on:
+  push:
+    branches: [zumocripto-sonda2]
+jobs:
+  sonda:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Pedir cada endpoint
+        run: |
+          mkdir -p out
+          : > out/sonda.txt
+          for u in \
+            "https://api-cloud.bitmart.com/spot/quotation/v3/tickers" \
+            "https://api-cloud.bitmart.com/spot/v2/ticker" \
+            "https://whitebit.com/api/v4/public/ticker" \
+            "https://whitebit.com/api/v1/public/tickers" \
+            "https://open-api.bingx.com/openApi/spot/v1/ticker/24hr?timestamp=1791608870000" \
+            "https://open-api.bingx.com/openApi/spot/v2/ticker/24hr?timestamp=1791608870000" ; do
+            echo "===== $u" >> out/sonda.txt
+            curl -s -m 60 -o /tmp/r.json -w "HTTP %{http_code} bytes %{size_download}\n" "$u" >> out/sonda.txt
+            head -c 800 /tmp/r.json >> out/sonda.txt; echo >> out/sonda.txt; echo >> out/sonda.txt
+          done
+      - name: Publicar resultado
+        run: |
+          cd out && git init -q && git checkout -q -b sonda-salida && git add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "sonda 2"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" sonda-salida
