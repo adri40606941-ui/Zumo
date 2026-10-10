@@ -7,6 +7,7 @@ App Android para comparar el precio de cada criptomoneda entre distintos exchang
 - Lee los precios de **7 exchanges** directamente desde sus APIs públicas, sin clave: Binance, Bybit, OKX, KuCoin, Gate.io, Bitget y MEXC. Cada uno devuelve todos sus pares en una sola llamada.
 - Se queda con los pares contra **USDT, USDC o USD** (todos ≈ 1 dólar) y deja afuera los que tienen menos de 20 000 USD de volumen en 24 h, porque sus precios no son confiables.
 - Arma cada activo que se opera en dos o más exchanges, y muestra dónde está más barato y dónde más caro, con la diferencia en porcentaje.
+- Para cada oportunidad, mira si podés **enviar** el activo del exchange barato al caro: busca una red en común donde el barato deje retirar y el caro reciba. Por ahora solo se puede confirmar con KuCoin, Gate.io y Bitget, que publican ese dato sin clave; con los demás sale «no verificable».
 - Calcula el neto con una comisión por operación (compra y venta). Tocando una fila, ves todos los exchanges y un enlace para operar.
 - Filtros sobre lo leído, sin volver a pedir nada: margen mínimo y nombre de la cripto.
 - Si un exchange no responde (por ejemplo, Binance y Bybit bloquean algunos países), la app lo informa y compara con los demás.
@@ -20,6 +21,7 @@ App Android para comparar el precio de cada criptomoneda entre distintos exchang
 | `Modelos.kt` | `Moneda`, `Ticker` y `Oportunidad` (con `margenPct`, `barato`, `caro`). |
 | `Exchanges.kt` | Las 7 fuentes: URL pública de cada exchange y cómo leer su respuesta. |
 | `BuscadorExchanges.kt` | Lee cada exchange, agrupa los pares por activo (`Agregador`) y arma las oportunidades. |
+| `Transferencias.kt` | Redes y estado de retiro/depósito de KuCoin, Gate.io y Bitget; decide si un envío es posible. |
 | `Red.kt` | El pedido HTTP. |
 | `Calculadora.kt` | El neto después de comisiones. |
 | `Comparador.kt` | Las reglas de negocio: descarta anómalos/desactualizados/baja confianza, se queda con el de mayor volumen por exchange repetido, exige un mínimo de exchanges. |
@@ -32,4 +34,4 @@ Lo compila GitHub: **Actions → Compilar Zumo Cripto → Run workflow** (tambi�
 
 ## Fuentes
 
-Precios leídos de las APIs públicas de Binance, Bybit, OKX, KuCoin, Gate.io, Bitget y MEXC.
+Precios leídos de las APIs públicas de Binance, Bybit, OKX, KuCoin, Gate.io, Bitget y MEXC. Envíos (redes, retiro y depósito) de KuCoin, Gate.io y Bitget.

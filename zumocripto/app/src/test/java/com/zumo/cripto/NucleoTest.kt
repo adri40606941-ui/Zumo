@@ -192,7 +192,7 @@ class BuscadorExchangesTest {
         val r = BuscadorExchanges({ url ->
             pedidos.add(url)
             if (url == "u://b") ResultadoPedido(451, null) else ResultadoPedido(200, muestra)
-        }, listOf(fA, fB, fC)).buscar {}
+        }, listOf(fA, fB, fC), emptyList()).buscar {}
 
         assertEquals(listOf("u://a", "u://b", "u://c"), pedidos.toList())
         assertEquals(2, r.leidos)
@@ -204,7 +204,7 @@ class BuscadorExchangesTest {
 
     @Test fun si_ningun_exchange_responde_avisa_sin_oportunidades() {
         val estados = CopyOnWriteArrayList<String>()
-        val r = BuscadorExchanges({ ResultadoPedido(0, null) }, listOf(Fuente("A", "u://a") { emptyList() })).buscar { estados.add(it) }
+        val r = BuscadorExchanges({ ResultadoPedido(0, null) }, listOf(Fuente("A", "u://a") { emptyList() }), emptyList()).buscar { estados.add(it) }
         assertTrue(r.oportunidades.isEmpty())
         assertEquals(0, r.leidos)
         assertTrue(estados.any { it.contains("No se pudo leer ningún exchange") })
@@ -217,10 +217,81 @@ class BuscadorExchangesTest {
             pedidos.add(url)
             holder[0]!!.cancelar()
             ResultadoPedido(200, muestra)
-        }, listOf(Fuente("A", "u://a") { emptyList() }, Fuente("B", "u://b") { emptyList() }))
+        }, listOf(Fuente("A", "u://a") { emptyList() }, Fuente("B", "u://b") { emptyList() }), emptyList())
         holder[0] = buscador
         val r = buscador.buscar {}
         assertTrue(r.cancelado)
         assertEquals(1, pedidos.size)
+    }
+}
+
+class TransferenciasTest {
+    private val kucoinUsdt = """{"code":"200000","data":[{"currency":"USDT","chains":[
+      {"chainName":"ERC20","isWithdrawEnabled":true,"isDepositEnabled":true,"withdrawalMinFee":"2","memoRegex":""},
+      {"chainName":"TRC20","isWithdrawEnabled":true,"isDepositEnabled":true,"withdrawalMinFee":"1.5","memoRegex":""}]}]}"""
+    private val gateUsdt = """[{"currency":"USDT","delisted":false,"chains":[
+      {"name":"ETH","withdraw_disabled":false,"deposit_disabled":false},
+      {"name":"TRX","withdraw_disabled":false,"deposit_disabled":true}]},
+      {"currency":"VIEJA","delisted":true,"chains":[{"name":"ETH","withdraw_disabled":false,"deposit_disabled":false}]}]"""
+    private val bitgetUsdt = """{"code":"00000","data":[{"coin":"USDT","chains":[
+      {"chain":"ERC20","withdrawable":"true","rechargeable":"true","withdrawFee":"2","needTag":"false"},
+      {"chain":"TRC20","withdrawable":"true","rechargeable":"true","withdrawFee":"1.5","needTag":"true"}]}]}"""
+
+    @Test fun nombres_de_red_distintos_son_la_misma_red() {
+        assertEquals("ETH", Redes.canonica("ERC20"))
+        assertEquals("ARB", Redes.canonica("ARBEVM"))
+        assertEquals("AVAX", Redes.canonica("AVAX_C"))
+        assertEquals("TRX", Redes.canonica("TRC20"))
+    }
+
+    @Test fun kucoin_lee_redes_con_comision_y_flags() {
+        val d = Transferencias.kucoin(kucoinUsdt)["USDT"]!!
+        assertEquals(2, d.size)
+        assertEquals(RedDe("ETH", true, true, 2.0, false), d[0])
+    }
+
+    @Test fun gate_salta_los_deslistados_y_lee_los_flags_invertidos() {
+        val d = Transferencias.gate(gateUsdt)
+        assertEquals(setOf("USDT"), d.keys)
+        assertFalse(d["USDT"]!![1].puedeDepositar)
+        assertNull(d["USDT"]!![0].comision)
+    }
+
+    @Test fun bitget_lee_el_tag_requerido() {
+        val d = Transferencias.bitget(bitgetUsdt)["USDT"]!!
+        assertTrue(d[1].requiereTag)
+        assertEquals(1.5, d[1].comision!!, 0.0001)
+    }
+
+    private fun catalogo(hastaKucoin: String = kucoinUsdt) = Catalogo(mapOf(
+        "Bitget" to Transferencias.bitget(bitgetUsdt),
+        "KuCoin" to Transferencias.kucoin(hastaKucoin),
+    ))
+
+    @Test fun elige_la_red_en_comun_mas_barata() {
+        // ERC20 cuesta 2 y TRC20 cuesta 1.5: las dos están en común, así que gana TRC20
+        val e = catalogo().estado("USDT", "Bitget", "KuCoin")
+        assertTrue(e is Catalogo.Estado.Posible)
+        e as Catalogo.Estado.Posible
+        assertEquals("TRX", e.red)
+        assertEquals(1.5, e.comision!!, 0.0001)
+        assertTrue(e.requiereTag)
+    }
+
+    @Test fun no_es_posible_si_el_destino_no_recibe_en_ninguna_red_en_comun() {
+        val soloTrxSinDeposito = """{"code":"200000","data":[{"currency":"USDT","chains":[
+          {"chainName":"TRC20","isWithdrawEnabled":true,"isDepositEnabled":false,"withdrawalMinFee":"1.5","memoRegex":""}]}]}"""
+        val e = catalogo(soloTrxSinDeposito).estado("USDT", "Bitget", "KuCoin")
+        assertTrue(e is Catalogo.Estado.NoPosible)
+    }
+
+    @Test fun sin_datos_de_un_exchange_es_no_verificable() {
+        val e = catalogo().estado("USDT", "Bitget", "Binance")
+        assertTrue(e is Catalogo.Estado.NoVerificable)
+        assertTrue((e as Catalogo.Estado.NoVerificable).motivo.contains("Binance"))
+    }
+
+    @Test fun activo_que_no_figura_en_el_exchange_origen_no_es_posible() {
+        assertTrue(catalogo().estado("ETH", "Bitget", "KuCoin") is Catalogo.Estado.NoPosible)
     }
 }
