@@ -7,16 +7,40 @@ object Agregador {
     /** Un par con poco volumen tiene un libro vacío y da diferencias de precio falsas: se ignora. */
     const val VOLUMEN_MINIMO_USD = 20000.0
 
+    /**
+     * Dos precios del mismo símbolo que se alejan más que esto (50 %) no se consideran la misma cripto: es casi siempre
+     * otra moneda con el mismo símbolo (por ejemplo dos "RAIN"), no una oportunidad.
+     */
+    const val SALTO_MAXIMO = 1.5
+
+    /**
+     * Separa las cotizaciones de un símbolo en grupos de precios parecidos y se queda con el grupo que tiene más exchanges
+     * (si empatan, el de más volumen). Los que quedan afuera son otra moneda con el mismo símbolo.
+     */
+    internal fun mismoActivo(lista: List<Cotizacion>): List<Cotizacion> {
+        val ordenadas = lista.sortedBy { it.precio }
+        val grupos = ArrayList<MutableList<Cotizacion>>()
+        for (c in ordenadas) {
+            val g = grupos.lastOrNull()
+            if (g != null && c.precio / g.last().precio <= SALTO_MAXIMO) g.add(c) else grupos.add(mutableListOf(c))
+        }
+        return grupos.maxWithOrNull(
+            compareBy<List<Cotizacion>>({ g -> g.map { it.exchange }.toSet().size }, { g -> g.sumOf { it.volumen } })
+        ) ?: emptyList()
+    }
+
     fun construir(cotizaciones: List<Cotizacion>): List<Oportunidad> {
         val porActivo = LinkedHashMap<String, MutableList<Cotizacion>>()
         for (c in cotizaciones) {
             if (c.volumen < VOLUMEN_MINIMO_USD) continue
             porActivo.getOrPut(c.base) { ArrayList() }.add(c)
         }
-        return porActivo.mapNotNull { (base, lista) ->
+        return porActivo.mapNotNull { (base, todas) ->
+            val lista = mismoActivo(todas)
             val tickers = lista.map {
                 Ticker(it.exchange, "$base/${it.quote}", it.precio, it.volumen, "", it.urlOperar, anomalo = false, desactualizado = false)
             }
+            if (tickers.isEmpty()) return@mapNotNull null
             val precios = tickers.map { it.precioUsd }.sorted()
             val moneda = Moneda(base.lowercase(), base, base, precios[precios.size / 2], 0)
             Comparador.construir(moneda, tickers)

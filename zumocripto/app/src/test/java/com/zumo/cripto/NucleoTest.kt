@@ -500,3 +500,25 @@ class MasEnviosTest {
         assertTrue((Transferencias.FUENTES.map { it.nombre } + Privadas.FUENTES.map { it.nombre }).all { it in precios })
     }
 }
+
+class SimbolosRepetidosTest {
+    private fun c(ex: String, precio: Double, vol: Double = 50000.0) = Cotizacion(ex, "RAIN", "USDT", precio, vol, "u")
+
+    @Test fun dos_monedas_con_el_mismo_simbolo_no_se_mezclan() {
+        val ops = Agregador.construir(listOf(c("Gate.io", 0.010246), c("Bitget", 61.80)))
+        assertTrue(ops.isEmpty())
+    }
+    @Test fun entre_varios_exchanges_gana_el_grupo_con_mas_exchanges() {
+        val cot = listOf("A", "B", "C", "D", "E", "F", "G").mapIndexed { i, e -> c(e, 0.0100 + i * 0.0001) } + c("Bitget", 61.80)
+        val op = Agregador.construir(cot).single()
+        assertEquals(7, op.exchanges); assertFalse(op.tickers.any { it.exchange == "Bitget" }); assertTrue(op.margenPct < 10)
+    }
+    @Test fun una_diferencia_real_chica_se_mantiene() {
+        val op = Agregador.construir(listOf(c("A", 1.00), c("B", 1.03))).single()
+        assertEquals(3.0, op.margenPct, 0.01)
+    }
+    @Test fun si_empatan_en_cantidad_gana_el_de_mas_volumen() {
+        val g = Agregador.mismoActivo(listOf(c("A", 1.0, 100000.0), c("B", 1.01, 100000.0), c("C", 90.0, 30000.0), c("D", 91.0, 30000.0)))
+        assertEquals(setOf("A", "B"), g.map { it.exchange }.toSet())
+    }
+}
