@@ -415,3 +415,75 @@ class SubdominiosExtrasTest {
         assertTrue(out[0].asns.isEmpty()); assertTrue(out[0].asnListo)
     }
 }
+
+/** Detener tiene que volver enseguida aunque haya consultas DNS o descargas colgadas (no se pueden interrumpir). */
+class SubdominiosCancelarTest {
+    /** Se queda esperando aunque lo interrumpan, como una consulta DNS de Android. */
+    private fun colgar(suelta: java.util.concurrent.CountDownLatch) {
+        var listo = false
+        while (!listo) { try { suelta.await(); listo = true } catch (_: InterruptedException) {} }
+    }
+
+    private fun cancelarA(b: BuscadorSubdominios, ms: Long) { Thread { Thread.sleep(ms); b.cancelar() }.also { it.isDaemon = true }.start() }
+
+    @Test fun vuelve_enseguida_si_el_dns_de_los_nombres_se_cuelga() {
+        val suelta = java.util.concurrent.CountDownLatch(1)
+        val b = BuscadorSubdominios(resolver = { n -> if (!n.startsWith("zp-")) colgar(suelta); emptyList() }, bajar = { _, _ -> null })
+        val halladas = CopyOnWriteArrayList<Subdominio>()
+        val t0 = System.currentTimeMillis()
+        cancelarA(b, 400)
+        b.buscar("ejemplo.com", Metodos(false, false, true), {}, { halladas.add(it) }, { _, _ -> })
+        val ms = System.currentTimeMillis() - t0
+        suelta.countDown()
+        assertTrue("tardó $ms ms en volver", ms < 3000)
+    }
+
+    @Test fun vuelve_enseguida_si_la_consulta_comodin_se_cuelga() {
+        val suelta = java.util.concurrent.CountDownLatch(1)
+        val b = BuscadorSubdominios(resolver = { colgar(suelta); emptyList() }, bajar = { _, _ -> null })
+        val t0 = System.currentTimeMillis()
+        cancelarA(b, 400)
+        b.buscar("ejemplo.com", Metodos(false, false, true), {}, {}, { _, _ -> })
+        val ms = System.currentTimeMillis() - t0
+        suelta.countDown()
+        assertTrue("tardó $ms ms en volver", ms < 3000)
+    }
+
+    @Test fun vuelve_enseguida_si_la_descarga_se_cuelga() {
+        val suelta = java.util.concurrent.CountDownLatch(1)
+        val b = BuscadorSubdominios(resolver = { emptyList() }, bajar = { _, _ -> colgar(suelta); null })
+        val t0 = System.currentTimeMillis()
+        cancelarA(b, 400)
+        b.buscar("ejemplo.com", Metodos(true, true, true), {}, {}, { _, _ -> })
+        val ms = System.currentTimeMillis() - t0
+        suelta.countDown()
+        assertTrue("tardó $ms ms en volver", ms < 3000)
+    }
+
+    @Test fun vuelve_enseguida_si_se_cuelga_el_asn_o_un_puerto() {
+        val suelta = java.util.concurrent.CountDownLatch(1)
+        val b = BuscadorSubdominios(
+            resolver = { n -> if (n == "ejemplo.com") listOf("1.1.1.1") else emptyList() },
+            bajar = { _, _ -> null },
+            asn = BuscadorAsn { _, _ -> colgar(suelta); null },
+            abierto = { _, _ -> colgar(suelta); false },
+        )
+        val t0 = System.currentTimeMillis()
+        cancelarA(b, 600)
+        b.buscar("ejemplo.com", Metodos(false, false, false), {}, {}, { _, _ -> }, Extras(asn = true, puertos = listOf(80, 443)))
+        val ms = System.currentTimeMillis() - t0
+        suelta.countDown()
+        assertTrue("tardó $ms ms en volver", ms < 3000)
+    }
+
+    @Test fun lo_que_llega_tarde_de_una_busqueda_cancelada_no_se_agrega() {
+        val suelta = java.util.concurrent.CountDownLatch(1)
+        val b = BuscadorSubdominios(resolver = { n -> if (n.startsWith("zp-")) emptyList() else { colgar(suelta); listOf("1.2.3.4") } }, bajar = { _, _ -> null })
+        val halladas = CopyOnWriteArrayList<Subdominio>()
+        cancelarA(b, 300)
+        b.buscar("ejemplo.com", Metodos(false, false, true), {}, { halladas.add(it) }, { _, _ -> })
+        suelta.countDown()
+        Thread.sleep(400)       // los hilos colgados terminan ahora: no tienen que sumar nada
+        assertTrue(halladas.isEmpty())
+    }
+}
