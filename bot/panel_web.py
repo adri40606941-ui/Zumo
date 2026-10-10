@@ -275,10 +275,10 @@ class PanelWeb:
                 if not d.get("dias"):
                     raise ErrorRevendedor("Elegí la duración: 7, 15 o 30 días.")
                 dias = int(d["dias"])
-                res = self.srv.crear(rid, token, d.get("nombre", ""), dias)
-                s["aviso"] = ("ok", f"✅ Usuario creado. Token: {res['token']} · vence el {res['vence']:%d/%m/%Y} "
-                                    f"· gastó 1 moneda de {res['moneda']}." + self._falla(res) +
-                                    (" Se completa solo en cuanto esa VPS conteste." if res["fallaron"] else ""))
+                res = self.srv.crear(rid, token, d.get("nombre", ""), dias, d.get("vps", ""))
+                s["aviso"] = ("ok", f"✅ Usuario creado en {res['vps'][0]}. Token: {res['token']} · vence el {res['vence']:%d/%m/%Y} "
+                                    f"· gastó 1 moneda de {res['moneda']}."
+                                    + (f" ({', '.join(res['fallaron'])} no contestó, se usó otra.)" if res["fallaron"] else ""))
             elif a in ("r7", "r15", "r30"):
                 res = self.srv.renovar(rid, token, int(a[1:]))
                 s["aviso"] = ("ok", f"✅ Renovado {a[1:]} días. Ahora vence el {res['vence']:%d/%m/%Y} · gastó 1 moneda de {res['moneda']}."
@@ -396,9 +396,20 @@ class PanelWeb:
                 '<label>Token del cliente (8 a 32 letras y números)</label>'
                 '<input type="text" name="token" maxlength="32" autocapitalize="none" autocomplete="off" required>'
                 '<label>Nombre del cliente</label><input type="text" name="nombre" maxlength="48" autocomplete="off" required>'
+                f'{self._selector_vps(r)}'
                 f'<label>Duración (gasta una moneda)</label><div class="dias">{opciones}</div>'
                 '<div id="sin-moneda" class="aviso mal" role="alert"></div>'
                 '<p><button type="submit">Crear usuario</button></p></form></div>')
+
+    def _selector_vps(self, r):
+        """Si tiene más de una VPS: dónde crear al usuario (cada usuario vive en una sola)."""
+        if len(r["maquinas"]) < 2:
+            return ""
+        carga = self.srv.cargas(r)
+        ops = '<option value="">Automática (la que tenga menos usuarios)</option>' + "".join(
+            f'<option value="{e(i)}">{e(n)} · {carga.get(i, 0)} usuario{"" if carga.get(i, 0) == 1 else "s"}</option>'
+            for i, n in zip(r["maquinas"], self.srv.nombres(r["maquinas"])))
+        return f'<label>VPS donde se crea</label><select name="vps" style="width:100%">{ops}</select>'
 
     def _filas(self, rid):
         ahora = self.reloj()

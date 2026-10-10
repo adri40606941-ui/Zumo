@@ -3,10 +3,9 @@
 Lo usan el panel web (panel_web.py), el bot y las pruebas. Todo error se levanta como ErrorRevendedor, con un texto
 que se puede mostrar tal cual en pantalla.
 
-Un revendedor puede tener varias VPS: cada usuario nuevo se crea en todas, y renovar, bloquear, eliminar o cambiar el
-nombre se aplica en todas las que tiene ese usuario. Si una VPS no contesta, la operación sigue en las demás y se avisa
-cuáles fallaron; `reparar()` (la corre el bot cada tanto) completa después los usuarios que quedaron sin crear en una
-VPS y iguala los vencimientos.
+Un revendedor puede tener varias VPS, pero cada usuario vive en UNA sola: la que elige el revendedor al crearlo o, si no
+elige, la que tenga menos usuarios (y si esa no contesta, la siguiente). Renovar, bloquear, eliminar y cambiar el nombre
+se hacen en la VPS de ese usuario.
 """
 import threading
 import time
@@ -91,7 +90,25 @@ class Servicio:
             self.notificar(f"🪙 {r['usuario']} se quedó sin monedas de {tipo} ({moneda_de_dias(tipo)} días).")
 
     # -- acciones
-    def crear(self, rid, token, nombre, dias):
+    def elegir_vps(self, r, vps=""):
+        """Las VPS donde probar crear un usuario, en orden: la elegida, o todas empezando por la de menos usuarios."""
+        if vps:
+            if vps not in r["maquinas"]:
+                raise ErrorRevendedor("Esa VPS no es una de las tuyas.")
+            return [vps]
+        carga = self.cargas(r)
+        return sorted(r["maquinas"], key=lambda i: (carga[i], r["maquinas"].index(i)))
+
+    def cargas(self, r):
+        """{id de VPS: cantidad de usuarios de este revendedor} para mostrar en el formulario."""
+        carga = {i: 0 for i in r["maquinas"]}
+        for c in self.rev.cuentas_de(r["id"]).values():
+            for i in c["maq"]:
+                if i in carga:
+                    carga[i] += 1
+        return carga
+
+    def crear(self, rid, token, nombre, dias, vps=""):
         with self._candado(rid):
             r = self._activo(rid)
             if not r["maquinas"]:
@@ -99,20 +116,25 @@ class Servicio:
             token = (token or "").strip()
             if self.rev.dueno(token):
                 raise ErrorRevendedor("Ese token ya está registrado.")
+            candidatas = self.elegir_vps(r, vps)
             tipo = self.rev.gastar(rid, dias)
-            oks, fallos = self._aplicar(r["maquinas"], lambda m: self._vps(self.ops.crear, m, token, nombre, dias, hoy=self.hoy()))
-            if not oks:
+            usada, exp, fallos = None, None, []
+            for mid in candidatas:           # la primera que conteste
+                oks, f = self._aplicar([mid], lambda m: self._vps(self.ops.crear, m, token, nombre, dias, hoy=self.hoy()))
+                if oks:
+                    usada, exp = mid, oks[0][1]
+                    break
+                fallos += f
+            if usada is None:
                 self.rev.devolver(rid, tipo)
                 raise ErrorRevendedor(fallos[0][2] if len(fallos) == 1 else "No pude crearlo en ninguna VPS. " + self._motivos(fallos))
-            exp = oks[0][1]
-            usadas = [i for i, _ in oks]
             etq = cv.limpiar_nombre(nombre)
-            self.rev.registrar_cuenta(token, rid, etq, dias, tipo, maq=usadas)
-            res = {"token": token, "vence": exp, "moneda": tipo, "vps": self.nombres(usadas),
+            self.rev.registrar_cuenta(token, rid, etq, dias, tipo, maq=[usada])
+            res = {"token": token, "vence": exp, "moneda": tipo, "vps": self.nombres([usada]),
                    "fallaron": [n for _, n, _ in fallos], "motivos": self._motivos(fallos)}
             self.notificar(f"🆕 {r['usuario']} creó a {etq} ({dias} días, vence {exp:%d/%m/%Y})\n"
-                           f"🔑 {token}\n🖥 VPS: {', '.join(res['vps'])}"
-                           + (f"\n⚠️ No se pudo en: {', '.join(res['fallaron'])} (se completa solo)" if fallos else ""))
+                           f"🔑 {token}\n🖥 VPS: {res['vps'][0]}"
+                           + (f"\n⚠️ {', '.join(res['fallaron'])} no contestó; se usó otra." if fallos else ""))
             self._avisar_saldo(rid, tipo)
             return res
 
@@ -121,22 +143,14 @@ class Servicio:
             self._activo(rid)
             c = self._propio(rid, token)
             tipo = self.rev.gastar(rid, dias)
-            fijo = []                   # el primer vencimiento calculado: las demás VPS quedan en el mismo día
-
-            def una(m):
-                e = self._vps(self.ops.renovar, m, token, dias, hoy=self.hoy(), exp=fijo[0] if fijo else None)
-                if not fijo:
-                    fijo.append(e)
-                return e
-            oks, fallos = self._aplicar(c["maquinas"], una)
+            oks, fallos = self._aplicar(c["maquinas"], lambda m: self._vps(self.ops.renovar, m, token, dias, hoy=self.hoy()))
             if not oks:
                 self.rev.devolver(rid, tipo)
-                raise ErrorRevendedor(fallos[0][2] if len(fallos) == 1 else "No pude renovarlo en ninguna VPS. " + self._motivos(fallos))
+                raise ErrorRevendedor(fallos[0][2] if len(fallos) == 1 else "No pude renovarlo. " + self._motivos(fallos))
             self.rev.anotar(rid, "renovar", token, dias, tipo)
             self._datos.pop(token, None)
             self._avisar_saldo(rid, tipo)
-            return {"token": token, "vence": oks[0][1], "moneda": tipo,
-                    "fallaron": [n for _, n, _ in fallos], "motivos": self._motivos(fallos)}
+            return {"token": token, "vence": oks[0][1], "moneda": tipo, "fallaron": [], "motivos": ""}
 
     def bloquear(self, rid, token, si=True):
         with self._candado(rid):
@@ -162,7 +176,7 @@ class Servicio:
             return {"nombre": n, "fallaron": [x for _, x, _ in fallos], "motivos": self._motivos(fallos)}
 
     def eliminar(self, rid, token):
-        """Lo borra de todas sus VPS. Si alguna no contesta, el usuario queda anotado solo con esas, para reintentar."""
+        """Lo borra de su VPS. Si esa no contesta, el usuario queda anotado para reintentar."""
         with self._candado(rid):
             self._activo(rid)
             c = self._propio(rid, token)
@@ -255,74 +269,6 @@ class Servicio:
             self._datos.clear()
         self._datos[token] = (ahora, res, vida)
         return res
-
-    # -- mantenimiento (lo corre el bot cada tanto)
-    def reparar(self):
-        """Completa los usuarios que faltan en alguna VPS del revendedor (una VPS recién agregada, o una que no
-        contestó al crearlos) e iguala los vencimientos. Devuelve la lista de cosas que hizo, en texto."""
-        hechos = []
-        cuentas = self.rev.todas_las_cuentas()
-        revs = {r["id"]: r for r in self.rev.listar()}
-        # 1) vencimiento y estado de cada usuario en las VPS donde está
-        por_vps = {}
-        for t, c in cuentas.items():
-            for mid in c["maq"]:
-                por_vps.setdefault(mid, []).append(t)
-        estado = {}                           # (token, vps) -> estado
-        for mid, tokens in por_vps.items():
-            m, _ = self._resolver(mid)
-            if not m:
-                continue
-            try:
-                for t, e in self._vps(self.ops.estado, m, tokens).items():
-                    estado[(t, mid)] = e
-            except ErrorRevendedor:
-                continue
-        for t, c in cuentas.items():
-            r = revs.get(c["rev"])
-            if not r:
-                continue
-            with self._candado(c["rev"]):
-                hechos += self._reparar_uno(t, c, r, estado)
-        return hechos
-
-    def _reparar_uno(self, t, c, r, estado):
-        hechos = []
-        vivos = {mid: estado[(t, mid)] for mid in c["maq"] if (t, mid) in estado and estado[(t, mid)].get("existe")}
-        if not vivos:
-            return hechos
-        venc = [e["vence"] for e in vivos.values() if e.get("vence")]
-        mayor = max(venc) if venc else None
-        bloq = any(e.get("bloqueado") for e in vivos.values())
-        # igualar vencimientos
-        if mayor:
-            for mid, e in vivos.items():
-                if e.get("vence") != mayor:
-                    m, _ = self._resolver(mid)
-                    try:
-                        self._vps(self.ops.fijar_vence, m, t, mayor)
-                        hechos.append(f"📅 {c['etq']}: vencimiento igualado en {self._nombre(mid)}")
-                    except (ErrorRevendedor, AttributeError):
-                        pass
-        # completar en las VPS del revendedor donde no está
-        faltan = [mid for mid in r["maquinas"] if mid not in c["maq"]]
-        agregados = []
-        for mid in faltan:
-            m, _ = self._resolver(mid)
-            if not m:
-                continue
-            try:
-                self._vps(self.ops.crear, m, t, c["etq"], 0, hoy=mayor or self.hoy())
-                if bloq:
-                    self._vps(self.ops.bloquear, m, t, True)
-                agregados.append(mid)
-                hechos.append(f"➕ {c['etq']}: creado en {m['nombre']}")
-            except ErrorRevendedor:
-                pass
-        if agregados:
-            self.rev.poner_maq_cuenta(t, list(c["maq"]) + agregados)
-            self._datos.pop(t, None)
-        return hechos
 
     @staticmethod
     def dias_validos(dias):

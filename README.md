@@ -215,14 +215,13 @@ Solo ve y toca los usuarios que creó él. También tiene: un **buscador** y ord
 por nombre), un aviso y una marca de **«Vence en N d»** para los que vencen en 3 días o menos, el punto 🟢 *en línea* / 🔴 *sin
 conexión*, el lápiz **Editar** (cambiar nombre, renovar, bloquear, eliminar), sus **movimientos** y **cambiar su contraseña**.
 
-**Varias VPS por revendedor:** si le asignás más de una, cada usuario nuevo se crea en todas, y renovar (mismo vencimiento en
-todas), bloquear, cambiar nombre y eliminar se aplican en todas. Si una VPS no contesta, la operación sigue en las demás, se
-le avisa al revendedor cuál falló y el bot completa solo lo que faltó en cuanto vuelve (revisa cada 5 minutos). Una VPS que se
-suma después también recibe los usuarios que ya existían.
+**Varias VPS por revendedor:** si le asignás más de una, **cada usuario vive en una sola VPS** (no se repite en las demás).
+Al crear, el revendedor elige en cuál (el formulario muestra cuántos usuarios tiene en cada una) o deja «Automática» y se usa
+la que tenga menos usuarios; si esa no contesta, prueba con la siguiente. Renovar, bloquear, cambiar nombre y eliminar se
+hacen en la VPS de ese usuario. El 📋 del bot muestra en qué VPS está cada usuario.
 
 **Avisos por Telegram a los admins:** usuario creado por un revendedor (con la lista de VPS), revendedor sin monedas de un tipo,
-VPS de un revendedor que no contesta (y cuando vuelve), muchos intentos fallidos de contraseña en el panel, y usuarios completados
-en una VPS. **Copia:** una por día de `revendedores.json` en `/var/backups/zumo/` (las últimas 14) y, con contraseña de
+VPS de un revendedor que no contesta (y cuando vuelve) y muchos intentos fallidos de contraseña en el panel. **Copia:** una por día de `revendedores.json` en `/var/backups/zumo/` (las últimas 14) y, con contraseña de
 💾 Respaldo, la copia cifrada diaria que ya manda el bot también lo incluye; sin esa contraseña el bot avisa una vez por semana.
 
 Cosas a tener en cuenta:

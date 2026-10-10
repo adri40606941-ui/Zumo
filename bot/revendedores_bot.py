@@ -104,20 +104,15 @@ class RevendedoresMixin:
                     except Exception:
                         nombre = mid
                     self.avisar_admins(f"🔴 La VPS {nombre} no contesta (revendedores: {', '.join(sorted(set(quienes)))}). "
-                                       "Los usuarios nuevos se crean en las demás; cuando vuelva se completa sola.")
+                                       "Los usuarios nuevos que no elijan esa VPS se crean en las demás.")
 
     def vigilar_una_vez(self):
-        if self.srv_rev is not None:
-            hechos = self.srv_rev.reparar()
-            if hechos:
-                self.avisar_admins("🔧 Completé usuarios de revendedores en sus VPS:\n" + "\n".join(hechos[:15])
-                                   + (f"\n… y {len(hechos) - 15} más" if len(hechos) > 15 else ""))
         self._vigilar_vps()
         self.copia_local_revendedores()
         self._aviso_sin_clave()
 
     def vigilar_revendedores(self):
-        """Hilo: cada 5 minutos completa usuarios en VPS nuevas, vigila las VPS y hace la copia diaria."""
+        """Hilo: cada 5 minutos vigila las VPS de los revendedores; una vez por día hace la copia."""
         time.sleep(90)
         while True:
             try:
@@ -187,8 +182,8 @@ class RevendedoresMixin:
             return self.pantalla_revendedores(chat, mid, "Ese revendedor ya no existe.")
         txt = (aviso + "\n\n" if aviso else "") + f"🖥 VPS de {r['usuario']}\n\n"
         txt += "\n".join(f"• {self._nombre_maquina(i)}" for i in r["maquinas"]) or "(ninguna)"
-        txt += ("\n\nLos usuarios nuevos se crean en todas estas VPS; renovar, bloquear y eliminar también se aplican en todas. "
-                "Si una no contesta, se avisa y se completa sola cuando vuelve.")
+        txt += ("\n\nCada usuario nuevo se crea en UNA sola de estas VPS (no se repite en las demás): la que elige el "
+                "revendedor al crearlo o, si no elige, la que tenga menos usuarios. Si esa no contesta, usa otra.")
         botones = [[(f"❌ Quitar {self._nombre_maquina(i).split(' (')[0]}", f"rvmq-:{rid}:{i}")] for i in r["maquinas"]
                    if len(r["maquinas"]) > 1]
         botones += [[("➕ Agregar otra VPS", f"rvmq+:{rid}")], [("◂ Volver", f"rv:{rid}")]]
@@ -311,7 +306,7 @@ class RevendedoresMixin:
                                                                            "Enlazá otra en 🖥 Máquinas.")
         botones = [[(f"🖥 {m['nombre']} · {m['host']}", f"{destino}:{m['id']}")] for m in maqs]
         botones.append([("✖ Cancelar", "rv")])
-        txt = (aviso + "\n\n" if aviso else "") + ("¿Qué VPS le sumás? Los usuarios nuevos se crean en todas las suyas."
+        txt = (aviso + "\n\n" if aviso else "") + ("¿Qué VPS le sumás? Cada usuario nuevo se crea en una sola de sus VPS (la que elija o la de menos usuarios)."
                                                     if extra else "¿En qué VPS se van a crear los usuarios de este revendedor?")
         if mid:
             self.mostrar(chat, mid, txt, botones)
@@ -399,8 +394,8 @@ class RevendedoresMixin:
                 self.revs.agregar_maquina(rid, mid_maq)
             except rv.ErrorRevendedor as err:
                 return self.pantalla_vps_rev(chat, mid, rid, f"⚠️ {err}") or True
-            self.pantalla_vps_rev(chat, mid, rid, "✅ VPS agregada. Los usuarios nuevos se crean en todas; "
-                                                  "los que ya tenía se completan solos en unos minutos.")
+            self.pantalla_vps_rev(chat, mid, rid, "✅ VPS agregada. Desde ahora puede crear usuarios ahí; "
+                                                  "los que ya tiene siguen en su VPS.")
         elif acc == "rvmq-":          # sacar una VPS
             rid, mid_maq = (partes + [""])[:2]
             try:
