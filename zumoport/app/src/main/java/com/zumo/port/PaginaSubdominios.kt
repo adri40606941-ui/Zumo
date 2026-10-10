@@ -17,7 +17,7 @@ import android.widget.TextView
 import android.widget.Toast
 
 /** Pestaña "Subdominios": busca los nombres de un dominio y a qué IP apunta cada uno. */
-class PaginaSubdominios(private val act: Activity, private val ui: Ui, private val alEscanear: (String) -> Unit) {
+class PaginaSubdominios(private val act: Activity, private val ui: Ui, private val red: Red, private val alEscanear: (String) -> Unit) {
     private val principal = Handler(Looper.getMainLooper())
     private val candado = Any()
     private val encontrados = ArrayList<Subdominio>()
@@ -47,6 +47,9 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
     private lateinit var chipCert: TextView
     private lateinit var chipHt: TextView
     private lateinit var chipLista: TextView
+    private val chipsSalida = ArrayList<Pair<Salida, TextView>>()
+    private var esperandoRed = false
+    private var nombreRed = ""
 
     val vista: ScrollView = ScrollView(act)
 
@@ -75,6 +78,17 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
         t1.addView(ui.texto("Los dos primeros consultan servicios públicos de internet (a veces están saturados). La lista prueba cada nombre preguntando al DNS.", 12f, Paleta.APAGADO), ui.params(arriba = 10))
         col.addView(t1)
 
+        val tr = ui.tarjeta()
+        tr.addView(ui.texto("📶  Por qué red salir", 16f, Paleta.TEXTO, true))
+        val filaR = ui.horizontal()
+        for (sa in Salida.values()) {
+            val c = ui.chip(sa.titulo, sa == Ajustes.salida) { Ajustes.salida = sa; repintarRed() }
+            chipsSalida.add(sa to c)
+            filaR.addView(c, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, der = 6))
+        }
+        tr.addView(filaR, ui.params(arriba = 10))
+        col.addView(tr, ui.params(arriba = 12))
+
         botonPrincipal = ui.boton("🔎  BUSCAR SUBDOMINIOS") { if (buscando) detener() else empezar() }
         col.addView(botonPrincipal, ui.params(arriba = 14))
 
@@ -98,6 +112,8 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
         pintarEstado()
     }
 
+    fun repintarRed() { for ((sa, c) in chipsSalida) ui.pintarChip(c, sa == Ajustes.salida) }
+
     private fun toast(t: String) { Toast.makeText(act, t, Toast.LENGTH_SHORT).show() }
 
     private fun empezar() {
@@ -106,8 +122,20 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
         if (!usarCert && !usarHt && !usarLista) { toast("Elegí al menos una forma de buscar"); return }
         val imm = act.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(vista.windowToken, 0)
+        if (esperandoRed) return
+        esperandoRed = true
+        mensaje = "Conectando por ${Ajustes.salida.nombre}…"
+        pintarEstado()
+        red.conectar(Ajustes.salida) { ok, texto ->
+            esperandoRed = false
+            if (!ok) { toast(texto); mensaje = texto; pintarEstado() }
+            else { nombreRed = texto; arrancar(dominio) }
+        }
+    }
+
+    private fun arrancar(dominio: String) {
         synchronized(candado) { encontrados.clear(); version++ }
-        hechos = 0; total = 0; hubo = true; inicio = System.currentTimeMillis(); mensaje = "Buscando…"
+        hechos = 0; total = 0; hubo = true; inicio = System.currentTimeMillis(); mensaje = "Buscando por $nombreRed…"
         buscando = true
         botonPrincipal.text = "⏹  DETENER"
         act.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -129,6 +157,7 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
 
     private fun terminar() {
         buscando = false
+        red.soltar()
         botonPrincipal.text = "🔎  BUSCAR SUBDOMINIOS"
         act.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         segundos = (System.currentTimeMillis() - inicio) / 1000

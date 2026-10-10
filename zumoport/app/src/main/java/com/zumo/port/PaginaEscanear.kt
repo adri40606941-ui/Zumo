@@ -19,7 +19,7 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 
 /** Pestaña "Escanear": una IP, un rango o un dominio, y qué puertos mirar. */
-class PaginaEscanear(private val act: Activity, private val ui: Ui) {
+class PaginaEscanear(private val act: Activity, private val ui: Ui, private val red: Red) {
     private class Equipo(val nombre: String, val ip: String) { val hallazgos = ArrayList<Hallazgo>() }
 
     private val principal = Handler(Looper.getMainLooper())
@@ -49,6 +49,8 @@ class PaginaEscanear(private val act: Activity, private val ui: Ui) {
     private val chipsVelocidad = ArrayList<Pair<Velocidad, TextView>>()
     private val chipsPuertos = ArrayList<Pair<String, TextView>>()
     private lateinit var chipWeb: TextView
+    private val chipsSalida = ArrayList<Pair<Salida, TextView>>()
+    private var nombreRed = ""
 
     val vista: ScrollView = ScrollView(act)
 
@@ -92,6 +94,19 @@ class PaginaEscanear(private val act: Activity, private val ui: Ui) {
         t2.addView(campoPuertos, ui.params(arriba = 10))
         col.addView(t2, ui.params(arriba = 12))
         pintarPresets()
+
+        // --- Por qué red salir
+        val tr = ui.tarjeta()
+        tr.addView(ui.texto("📶  Por qué red salir", 16f, Paleta.TEXTO, true))
+        val filaR = ui.horizontal()
+        for (sa in Salida.values()) {
+            val c = ui.chip(sa.titulo, sa == Ajustes.salida) { Ajustes.salida = sa; repintarRed() }
+            chipsSalida.add(sa to c)
+            filaR.addView(c, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, der = 6))
+        }
+        tr.addView(filaR, ui.params(arriba = 10))
+        tr.addView(ui.texto("Con «Datos móviles» el escaneo sale por tu operadora aunque el WiFi esté prendido (sirve para ver qué IP y puertos dejan pasar tus datos).", 12f, Paleta.APAGADO), ui.params(arriba = 8))
+        col.addView(tr, ui.params(arriba = 12))
 
         // --- Opciones
         val t3 = ui.tarjeta()
@@ -142,6 +157,8 @@ class PaginaEscanear(private val act: Activity, private val ui: Ui) {
         pintarPresets()
     }
 
+    fun repintarRed() { for ((sa, c) in chipsSalida) ui.pintarChip(c, sa == Ajustes.salida) }
+
     private fun pintarVelocidad() { for ((v, c) in chipsVelocidad) ui.pintarChip(c, v == velocidad) }
 
     private fun pintarPresets() {
@@ -186,12 +203,28 @@ class PaginaEscanear(private val act: Activity, private val ui: Ui) {
         if (pu.error != null) { toast(pu.error); return }
         val total = obj.total
         if (total * pu.puertos.size > 3_000_000L) { toast("Son demasiados sondeos (${total * pu.puertos.size}). Achicá el rango o la lista de puertos."); return }
+        if (Ajustes.salida == Salida.MOVIL && obj.hayLocales) {
+            toast("Las IP de una red local (192.168…, 10…) no se alcanzan por datos móviles. Elegí WiFi o Automática."); return
+        }
         val imm = act.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(vista.windowToken, 0)
+        if (esperandoRed) return
+        esperandoRed = true
+        textoEstado.text = "Conectando por ${Ajustes.salida.nombre}…"
+        textoEstado.setTextColor(Paleta.CYAN)
+        red.conectar(Ajustes.salida) { ok, texto ->
+            esperandoRed = false
+            if (!ok) { toast(texto); textoEstado.text = texto; textoEstado.setTextColor(Paleta.AMARILLO) }
+            else { nombreRed = texto; arrancar(obj, pu.puertos, total) }
+        }
+    }
 
+    private var esperandoRed = false
+
+    private fun arrancar(obj: Objetivos.Parseo, puertos: List<Int>, total: Long) {
         synchronized(candado) { equipos.clear(); version++ }
         filtroPuerto = 0; soloWebOk = false
-        hechos = 0; totalTareas = total * pu.puertos.size; inicio = System.currentTimeMillis()
+        hechos = 0; totalTareas = total * puertos.size; inicio = System.currentTimeMillis()
         escaneando = true
         botonPrincipal.text = "⏹  DETENER"
         act.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -199,7 +232,7 @@ class PaginaEscanear(private val act: Activity, private val ui: Ui) {
         escaner = e
         val opc = Opciones(velocidad, verificarWeb, true)
         Thread({
-            e.escanear(obj.equipos(), pu.puertos, opc, total, { h -> agregar(h) }, { hecho, tot -> hechos = hecho; totalTareas = tot })
+            e.escanear(obj.equipos(), puertos, opc, total, { h -> agregar(h) }, { hecho, tot -> hechos = hecho; totalTareas = tot })
             principal.post { terminar() }
         }, "zumoport-escaneo").start()
         principal.post(refresco)
@@ -218,6 +251,7 @@ class PaginaEscanear(private val act: Activity, private val ui: Ui) {
 
     private fun terminar() {
         escaneando = false
+        red.soltar()
         botonPrincipal.text = "🚀  ESCANEAR"
         act.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         pintarEstado()
@@ -225,12 +259,13 @@ class PaginaEscanear(private val act: Activity, private val ui: Ui) {
 
     fun cerrar() { escaner?.cancelar() }
 
+
     private fun pintarEstado() {
         val seg = if (inicio == 0L) 0 else (System.currentTimeMillis() - inicio) / 1000
         val frac = if (totalTareas > 0) hechos.toDouble() / totalTareas else 0.0
         val (con, abiertos) = synchronized(candado) { equipos.size to equipos.values.sumOf { it.hallazgos.size } }
         if (escaneando) {
-            textoEstado.text = "Escaneando… ${(frac * 100).toInt()} %"
+            textoEstado.text = "Escaneando por $nombreRed… ${(frac * 100).toInt()} %"
             textoEstado.setTextColor(Paleta.CYAN)
         } else if (inicio != 0L) {
             textoEstado.text = if (frac >= 0.999) "✔ Terminó en ${seg} s" else "Detenido a las ${(frac * 100).toInt()} %"

@@ -28,8 +28,9 @@ class MainActivity : Activity() {
         window.navigationBarColor = Paleta.TARJETA
         ui = Ui(this)
 
-        escanear = PaginaEscanear(this, ui)
-        subdominios = PaginaSubdominios(this, ui) { nombre -> escanear.ponerObjetivo(nombre); mostrar(0) }
+        val red = Red(this)
+        escanear = PaginaEscanear(this, ui, red)
+        subdominios = PaginaSubdominios(this, ui, red) { nombre -> escanear.ponerObjetivo(nombre); mostrar(0) }
         info = paginaInfo()
 
         val raiz = LinearLayout(this)
@@ -92,6 +93,7 @@ class MainActivity : Activity() {
 
     private fun mostrar(i: Int) {
         actual = i
+        if (::escanear.isInitialized) { escanear.repintarRed(); subdominios.repintarRed() }
         for ((k, p) in paginas.withIndex()) p.visibility = if (k == i) View.VISIBLE else View.GONE
         for ((k, t) in botones.withIndex()) {
             val activo = k == i

@@ -8,6 +8,7 @@ App Android para escanear **IP, rangos de IP, puertos y subdominios**. Va aparte
 - **Puertos**: `80,443`, rangos como `8000-8100`, o las listas «80 y 443», «Web», «Comunes» y «1–1024».
 - **Qué te dice de cada puerto abierto**: en 80/8080/… hace un `HEAD` y muestra el código HTTP y el `Server`; en 443/8443/… hace el saludo TLS y después el `HEAD` (HTTPS 200, redirecciones, errores); en SSH/FTP/SMTP/… lee el banner. Los filtros dejan ver solo un puerto (por ejemplo «cuáles IP dan OK en el 443») o solo los que contestan bien.
 - **Subdominios**: busca en certificados públicos (crt.sh), en HackerTarget y probando una lista de nombres comunes contra el DNS; ignora los DNS comodín y marca los que solo aparecen en certificados. Un toque sobre un subdominio: escanear sus puertos, copiarlo o abrirlo.
+- **Por qué red salir**: «Datos móviles» (por defecto), «WiFi» o «Automática». Con datos móviles, el escaneo y las consultas DNS salen por la operadora aunque el WiFi esté prendido (la app pide la red celular al sistema y ata sus conexiones a ella; al terminar la suelta). Las IP de una red local (192.168…, 10…) no se alcanzan por datos móviles: la app lo avisa y hay que elegir WiFi o Automática.
 - Copiar y compartir los resultados como texto.
 
 Velocidades: Suave (40 hilos), Normal (150), Rápida (400). Tope: 65 536 equipos y 3 millones de sondeos por escaneo. Medido en la JVM contra 127.0.0.0/18: ~22 000 sondeos/s en velocidad Rápida.
@@ -19,8 +20,9 @@ Velocidades: Suave (40 hilos), Normal (150), Rápida (400). Tope: 65 536 equipos
 | `Objetivos.kt` | Entiende IP, rangos, CIDR y dominios; lista de puertos y presets. |
 | `Escaner.kt` | Sondeo TCP en paralelo + verificación web/TLS + banners. Cancelable. |
 | `Subdominios.kt` | Fuentes (crt.sh, HackerTarget, lista), resolución y filtro de DNS comodín. |
+| `Red.kt` | Elige por qué red salen los escaneos (datos móviles, WiFi o la del sistema). |
 | `Ui.kt`, `PaginaEscanear.kt`, `PaginaSubdominios.kt`, `MainActivity.kt` | Pantalla en código (sin XML): cabecera, tres pestañas y sus páginas. |
-| `app/src/test/…/NucleoTest.kt` | 28 pruebas del núcleo (sockets locales reales, sin internet). |
+| `app/src/test/…/NucleoTest.kt` | 29 pruebas del núcleo (sockets locales reales, sin internet). |
 
 ## Compilar el APK
 

@@ -24,6 +24,8 @@ object Objetivos {
 
     class Parseo(val entradas: List<Entrada>, val errores: List<String>) {
         val total: Long get() = entradas.sumOf { it.cantidad }
+        /** ¿Alguna entrada es de una red local (casa u oficina)? Esas no se alcanzan por datos móviles. */
+        val hayLocales: Boolean get() = entradas.any { esLocal(it.texto.substringBefore("-").substringBefore("/")) }
         fun equipos(): Sequence<String> = entradas.asSequence().flatMap { it.equipos() }.distinct()
     }
 
@@ -104,6 +106,14 @@ object Objetivos {
     }
 
     fun aTexto(v: Long): String = "${(v shr 24) and 255}.${(v shr 16) and 255}.${(v shr 8) and 255}.${v and 255}"
+
+    /** 10.x.x.x, 172.16-31.x.x, 192.168.x.x, 169.254.x.x y 127.x.x.x. */
+    fun esLocal(ip: String): Boolean {
+        val v = ipv4(ip) ?: return false
+        val a = (v shr 24) and 255
+        val b = (v shr 16) and 255
+        return a == 10L || a == 127L || (a == 172L && b in 16..31) || (a == 192L && b == 168L) || (a == 169L && b == 254L)
+    }
 
     fun esIp(s: String): Boolean = ipv4(s) != null || s.contains(':')
 }
