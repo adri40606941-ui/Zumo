@@ -198,6 +198,13 @@ class EscanerTest {
     }
 }
 
+class ReverseDnsTest {
+    @org.junit.Test fun nombre_normal() = assertEquals("srv.ejemplo.com", ReverseDns.resolver("1.2.3.4") { "srv.ejemplo.com." })
+    @org.junit.Test fun sin_ptr_devuelve_la_misma_ip() = assertNull(ReverseDns.resolver("1.2.3.4") { it })
+    @org.junit.Test fun vacio_es_null() = assertNull(ReverseDns.resolver("1.2.3.4") { "" })
+    @org.junit.Test fun error_es_null() = assertNull(ReverseDns.resolver("1.2.3.4") { throw java.net.UnknownHostException() })
+}
+
 class SubdominiosTest {
     @Test fun limpia_el_dominio() {
         assertEquals("ejemplo.com", BuscadorSubdominios.limpiarDominio("https://Ejemplo.com/x"))
