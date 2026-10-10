@@ -4,6 +4,9 @@ Panel para administrar accesos SSH en una VPS y exponerlos a través de varios
 transportes pensados para apps de túnel de Android (HTTP Injector, HTTP Custom,
 etc.). Se maneja desde un panel de terminal.
 
+
+> **Zumo Port** (`zumoport/`): app Android aparte para escanear IP, rangos, puertos y subdominios. Ver `zumoport/README.md`.
+
 ## Instalación
 
 En una VPS Debian/Ubuntu, como root:

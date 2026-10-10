@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp" android:height="96dp"
+    android:viewportWidth="96" android:viewportHeight="96">
+    <path android:fillColor="#0A0F24" android:pathData="M0,0h96v96h-96z" />
+    <!-- barrido del radar -->
+    <path android:fillColor="#668B5CF6" android:pathData="M48,48 L48,14 A34,34 0 0,1 77.4,31 Z" />
+    <!-- anillos -->
+    <path android:fillColor="#00000000" android:strokeColor="#22D3EE" android:strokeWidth="2.6"
+        android:pathData="M14,48 a34,34 0 1,0 68,0 a34,34 0 1,0 -68,0" />
+    <path android:fillColor="#00000000" android:strokeColor="#5522D3EE" android:strokeWidth="2"
+        android:pathData="M26,48 a22,22 0 1,0 44,0 a22,22 0 1,0 -44,0" />
+    <path android:fillColor="#00000000" android:strokeColor="#5522D3EE" android:strokeWidth="2"
+        android:pathData="M38,48 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0" />
+    <!-- ejes -->
+    <path android:fillColor="#00000000" android:strokeColor="#4422D3EE" android:strokeWidth="1.4"
+        android:pathData="M48,12 L48,84 M12,48 L84,48" />
+    <!-- puerto abierto: el punto verde, y el centro -->
+    <path android:fillColor="#22C55E" android:pathData="M64,34 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path android:fillColor="#FACC15" android:pathData="M36,62 m-3.2,0 a3.2,3.2 0 1,0 6.4,0 a3.2,3.2 0 1,0 -6.4,0" />
+    <path android:fillColor="#8B5CF6" android:pathData="M48,48 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+</vector>

@@ -1,0 +1,80 @@
+name: Compilar Zumo Port
+
+on:
+  push:
+    branches: [main, 'bot/zumo-port']
+    paths: ['zumoport/**', '.github/workflows/zumoport.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Android SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      # La firma tiene que ser siempre la misma para que cada APK nuevo se instale encima del anterior:
+      # se crea una vez, se guarda en el caché de GitHub y se reutiliza.
+      - name: Clave de firma (se crea una sola vez y se reutiliza)
+        uses: actions/cache@v4
+        with:
+          path: ks-port
+          key: zumoport-keystore-v1
+
+      - name: Preparar firma
+        run: |
+          mkdir -p ks-port
+          if [ ! -f ks-port/zumo.jks ]; then
+            P=$(openssl rand -hex 16)
+            keytool -genkeypair -keystore ks-port/zumo.jks -storepass "$P" -keypass "$P" -alias zumo \
+              -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=Zumo Port"
+            echo "$P" > ks-port/pass
+            echo "Firma: clave nueva en el caché"
+          else
+            echo "Firma: clave del caché"
+          fi
+          echo "ZUMO_KEYSTORE=$PWD/ks-port/zumo.jks" >> "$GITHUB_ENV"
+          echo "ZUMO_KS_PASS=$(cat ks-port/pass)" >> "$GITHUB_ENV"
+
+      - name: Pruebas
+        run: gradle -p zumoport testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Compilar
+        run: |
+          export ZUMO_VERSION_CODE=$(( ($(date +%s) - 1735689600) / 60 ))
+          echo "versionCode $ZUMO_VERSION_CODE"
+          gradle -p zumoport assembleRelease --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zumo-port-apk
+          path: zumoport/app/build/outputs/apk/release/*.apk
+
+      # main publica en la rama "apk-port"; cualquier otra rama en "apk-port-prueba".
+      - name: Publicar APK en la rama apk-port
+        run: |
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then DESTINO=apk-port; else DESTINO=apk-port-prueba; fi
+          mkdir -p out
+          cp zumoport/app/build/outputs/apk/release/*.apk out/zumo-port.apk
+          cd out
+          git init -q
+          git checkout -q -b "$DESTINO"
+          git add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "Zumo Port ${{ github.run_number }} (${GITHUB_SHA::7})"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$DESTINO"
