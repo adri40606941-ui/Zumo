@@ -252,3 +252,166 @@ class SubdominiosTest {
 
     @Test fun la_lista_no_tiene_repetidos() = assertEquals(BuscadorSubdominios.PALABRAS.size, BuscadorSubdominios.PALABRAS.toSet().size)
 }
+
+/** Respuesta DNS en JSON (como la de Cloudflare o Google) con uno o más registros TXT. */
+private fun jsonTxt(vararg filas: String, estado: Int = 0): String =
+    "{\"Status\":$estado,\"Answer\":[" + filas.joinToString(",") { "{\"name\":\"x\",\"type\":16,\"TTL\":60,\"data\":\"\\\"$it\\\"\"}" } + "]}"
+
+private const val CLOUDFLARE = "13335 | 104.16.0.0/12 | US | arin | 2014-03-28"
+private const val CLOUDFLARE_NOMBRE = "13335 | US | arin | 2010-07-14 | CLOUDFLARENET, US"
+
+class AsnTest {
+    @Test fun nombre_dns_de_una_ip() {
+        assertEquals("77.0.16.104.origin.asn.cymru.com", BuscadorAsn.nombreOrigen("104.16.0.77"))
+        assertEquals("1." + "0.".repeat(23) + "8.b.d.0.1.0.0.2.origin6.asn.cymru.com", BuscadorAsn.nombreOrigen("2001:db8::1"))
+        assertNull(BuscadorAsn.nombreOrigen("hola"))
+        assertNull(BuscadorAsn.nombreOrigen("300.1.1.1"))
+        assertNull(BuscadorAsn.nombreOrigen("ejemplo.com"))
+    }
+
+    @Test fun lee_las_filas_de_cymru() {
+        val o = BuscadorAsn.parsearOrigen(CLOUDFLARE)!!
+        assertEquals(listOf(13335L), o.numeros); assertEquals("104.16.0.0/12", o.prefijo); assertEquals("US", o.pais)
+        assertEquals(listOf(13335L, 209242L), BuscadorAsn.parsearOrigen("13335 209242 | 1.2.3.0/24 | US | arin | 2014-03-28")!!.numeros)
+        assertNull(BuscadorAsn.parsearOrigen("NA | NA"))
+        assertNull(BuscadorAsn.parsearOrigen(""))
+        assertEquals("CLOUDFLARENET" to "US", BuscadorAsn.parsearNombre(CLOUDFLARE_NOMBRE))
+        assertEquals("ACME Hosting Ltd" to "AR", BuscadorAsn.parsearNombre("65000 | AR | lacnic | 2001-01-01 | ACME Hosting Ltd, AR"))
+        assertNull(BuscadorAsn.parsearNombre("13335 | US"))
+    }
+
+    @Test fun lee_las_respuestas_dns() {
+        assertEquals(listOf(CLOUDFLARE), BuscadorAsn.respuestasTxt(jsonTxt(CLOUDFLARE)))
+        assertEquals(0, BuscadorAsn.estadoDns(jsonTxt(CLOUDFLARE)))
+        assertEquals(3, BuscadorAsn.estadoDns("{\"Status\":3}"))
+        assertEquals(-1, BuscadorAsn.estadoDns("<html>"))
+        assertTrue(BuscadorAsn.respuestasTxt("{\"Status\":3}").isEmpty())
+    }
+
+    private fun falso(llamadas: java.util.concurrent.atomic.AtomicInteger): (String, Int) -> String? = { u, _ ->
+        llamadas.incrementAndGet()
+        when {
+            "77.0.16.104.origin.asn.cymru.com" in u -> jsonTxt(CLOUDFLARE)
+            "AS13335.asn.cymru.com" in u -> jsonTxt(CLOUDFLARE_NOMBRE)
+            "9.9.9.9.origin.asn.cymru.com" in u -> "{\"Status\":3}"
+            else -> null
+        }
+    }
+
+    @Test fun averigua_el_asn_y_lo_recuerda() {
+        val n = java.util.concurrent.atomic.AtomicInteger(0)
+        val b = BuscadorAsn(falso(n))
+        val r = b.consultar("104.16.0.77")!!.single()
+        assertEquals(13335L, r.numero); assertEquals("CLOUDFLARENET", r.nombre); assertEquals("US", r.pais)
+        assertEquals("104.16.0.0/12", r.prefijo)
+        assertEquals("AS13335 · CLOUDFLARENET · US", r.etiqueta)
+        val usadas = n.get()
+        assertEquals(13335L, b.consultar("104.16.0.77")!!.single().numero)
+        assertEquals("la segunda vez sale de la memoria", usadas, n.get())
+    }
+
+    @Test fun una_ip_sin_asn_no_es_una_falla() {
+        val b = BuscadorAsn(falso(java.util.concurrent.atomic.AtomicInteger(0)))
+        assertEquals(emptyList<InfoAsn>(), b.consultar("9.9.9.9"))
+        assertFalse(b.sinServicio)
+    }
+
+    @Test fun las_ip_locales_no_se_consultan() {
+        val n = java.util.concurrent.atomic.AtomicInteger(0)
+        val b = BuscadorAsn(falso(n))
+        assertEquals(emptyList<InfoAsn>(), b.consultar("192.168.1.5"))
+        assertEquals(emptyList<InfoAsn>(), b.consultar("10.0.0.1"))
+        assertEquals(0, n.get())
+    }
+
+    @Test fun si_el_primer_servicio_falla_usa_el_otro() {
+        val urls = CopyOnWriteArrayList<String>()
+        val b = BuscadorAsn { u, _ ->
+            urls.add(u)
+            if ("cloudflare-dns.com" in u) null
+            else if ("77.0.16.104.origin" in u) jsonTxt(CLOUDFLARE) else jsonTxt(CLOUDFLARE_NOMBRE)
+        }
+        assertEquals(13335L, b.consultar("104.16.0.77")!!.single().numero)
+        assertTrue(urls.any { "dns.google" in it })
+    }
+
+    @Test fun sin_servicio_deja_de_insistir() {
+        val n = java.util.concurrent.atomic.AtomicInteger(0)
+        val b = BuscadorAsn { _, _ -> n.incrementAndGet(); null }
+        for (i in 1..BuscadorAsn.MAX_FALLOS) assertNull(b.consultar("8.8.$i.8"))
+        assertTrue(b.sinServicio)
+        val antes = n.get()
+        assertNull(b.consultar("8.8.100.8"))
+        assertEquals(antes, n.get())
+    }
+}
+
+class SubdominiosExtrasTest {
+    @Test fun completa_asn_y_puertos_de_cada_subdominio() {
+        val dns = mapOf("ejemplo.com" to listOf("1.1.1.1"), "www.ejemplo.com" to listOf("1.1.1.1"), "api.ejemplo.com" to listOf("2.2.2.2"),
+            "interno.ejemplo.com" to listOf("10.0.0.5"))
+        val asn = BuscadorAsn { u, _ ->
+            when {
+                "1.1.1.1.origin.asn.cymru.com" in u -> jsonTxt(CLOUDFLARE)
+                "2.2.2.2.origin.asn.cymru.com" in u -> jsonTxt("15169 | 2.2.2.0/24 | US | arin | 2000-03-30")
+                "AS13335.asn.cymru.com" in u -> jsonTxt(CLOUDFLARE_NOMBRE)
+                "AS15169.asn.cymru.com" in u -> jsonTxt("15169 | US | arin | 2000-03-30 | GOOGLE, US")
+                else -> null
+            }
+        }
+        val sondeadas = Collections.synchronizedSet(HashSet<String>())
+        val b = BuscadorSubdominios(
+            resolver = { n -> dns[n].orEmpty() },
+            bajar = { _, _ -> "www.ejemplo.com,1.1.1.1\napi.ejemplo.com,2.2.2.2\ninterno.ejemplo.com,10.0.0.5" },
+            asn = asn,
+            abierto = { ip, p -> sondeadas.add("$ip:$p"); (ip == "1.1.1.1" && (p == 80 || p == 443)) || (ip == "2.2.2.2" && p == 8080) },
+        )
+        val out = CopyOnWriteArrayList<Subdominio>()
+        val actualizaciones = java.util.concurrent.atomic.AtomicInteger(0)
+        b.buscar("ejemplo.com", Metodos(certificados = false, hackertarget = true, lista = false), {}, { out.add(it) }, { _, _ -> },
+            Extras(asn = true, puertos = listOf(80, 443, 8080, 22))) { actualizaciones.incrementAndGet() }
+        val por = out.associateBy { it.nombre }
+
+        val www = por["www.ejemplo.com"]!!
+        assertEquals(listOf("AS13335 · CLOUDFLARENET · US"), www.asns.map { it.etiqueta })
+        assertEquals(listOf(80, 443), www.puertos)
+        assertTrue(www.asnListo && www.puertosListo)
+        assertEquals(listOf(13335L), por["ejemplo.com"]!!.asns.map { it.numero })
+
+        val api = por["api.ejemplo.com"]!!
+        assertEquals(listOf(15169L), api.asns.map { it.numero })
+        assertEquals(listOf(8080), api.puertos)
+
+        val interno = por["interno.ejemplo.com"]!!
+        assertTrue("la IP local no tiene ASN pero la fila termina", interno.asns.isEmpty() && interno.asnListo)
+        assertTrue(interno.puertos.isEmpty() && interno.puertosListo)
+        assertTrue("no se prueban puertos en redes locales", sondeadas.none { it.startsWith("10.0.0.5") })
+        assertEquals("cada IP se prueba una sola vez por puerto, aunque la compartan varios nombres", 8, sondeadas.size)
+        assertTrue(actualizaciones.get() > 0)
+    }
+
+    @Test fun sin_pedir_extras_no_consulta_nada() {
+        val b = BuscadorSubdominios(
+            resolver = { n -> if (n == "ejemplo.com") listOf("1.1.1.1") else emptyList() },
+            bajar = { _, _ -> null },
+            asn = BuscadorAsn { _, _ -> throw AssertionError("no debía consultar el ASN") },
+            abierto = { _, _ -> throw AssertionError("no debía probar puertos") },
+        )
+        val out = CopyOnWriteArrayList<Subdominio>()
+        b.buscar("ejemplo.com", Metodos(false, false, false), {}, { out.add(it) }, { _, _ -> })
+        assertEquals(1, out.size)
+        assertFalse(out[0].asnListo); assertFalse(out[0].puertosListo)
+    }
+
+    @Test fun si_el_asn_no_responde_la_fila_termina_igual() {
+        val b = BuscadorSubdominios(
+            resolver = { n -> if (n == "ejemplo.com") listOf("1.1.1.1") else emptyList() },
+            bajar = { _, _ -> null },
+            asn = BuscadorAsn { _, _ -> null },
+        )
+        val out = CopyOnWriteArrayList<Subdominio>()
+        val estados = CopyOnWriteArrayList<String>()
+        b.buscar("ejemplo.com", Metodos(false, false, false), { estados.add(it) }, { out.add(it) }, { _, _ -> }, Extras(asn = true))
+        assertTrue(out[0].asns.isEmpty()); assertTrue(out[0].asnListo)
+    }
+}

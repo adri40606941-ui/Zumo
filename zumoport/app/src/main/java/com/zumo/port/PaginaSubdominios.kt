@@ -29,6 +29,10 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
     private var usarCert = true
     private var usarHt = true
     private var usarLista = true
+    private var verAsn = true
+    private var verPuertos = true
+    private var pedidoAsn = false           // lo que se pidió en la búsqueda que se está mostrando (no cambia si se tocan los chips después)
+    private var pedidoPuertos = false
     private var mostrarSinIp = false
     @Volatile private var hechos = 0
     @Volatile private var total = 0
@@ -38,6 +42,7 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
     private var inicio = 0L
 
     private val campoDominio = ui.campo("Dominio (ejemplo.com)")
+    private val campoPuertos = ui.campo("Puertos a probar (80,443,8080…)")
     private val botonPrincipal: TextView
     private val textoEstado = ui.texto("Listo para buscar", 14f, Paleta.APAGADO)
     private val barra = Barra(act, ui)
@@ -47,6 +52,8 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
     private lateinit var chipCert: TextView
     private lateinit var chipHt: TextView
     private lateinit var chipLista: TextView
+    private lateinit var chipAsn: TextView
+    private lateinit var chipPuertos: TextView
     private val chipsSalida = ArrayList<Pair<Salida, TextView>>()
     private var esperandoRed = false
     private var nombreRed = ""
@@ -62,6 +69,7 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
 
     init {
         campoDominio.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+        campoPuertos.setText(BuscadorSubdominios.PUERTOS_POR_DEFECTO.joinToString(","))
         val col = ui.vertical()
         col.setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(24))
 
@@ -77,6 +85,16 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
         t1.addView(chipLista, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, arriba = 8))
         t1.addView(ui.texto("Los dos primeros consultan servicios públicos de internet (a veces están saturados). La lista prueba cada nombre preguntando al DNS.", 12f, Paleta.APAGADO), ui.params(arriba = 10))
         col.addView(t1)
+
+        val tx = ui.tarjeta()
+        tx.addView(ui.texto("🔬  De cada subdominio que responde", 16f, Paleta.TEXTO, true))
+        chipAsn = ui.chip("🏢 ASN (a qué empresa o red pertenece)", verAsn) { verAsn = !verAsn; ui.pintarChip(chipAsn, verAsn) }
+        chipPuertos = ui.chip("🔌 Puertos abiertos", verPuertos) { verPuertos = !verPuertos; ui.pintarChip(chipPuertos, verPuertos) }
+        tx.addView(chipAsn, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, arriba = 10))
+        tx.addView(chipPuertos, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, arriba = 8))
+        tx.addView(campoPuertos, ui.params(arriba = 10))
+        tx.addView(ui.texto("El ASN se consulta en Team Cymru (por DNS sobre HTTPS). Los puertos se prueban una vez por IP, aunque varios subdominios compartan la misma. Cuantos más puertos, más tarda (máximo ${BuscadorSubdominios.MAX_PUERTOS}).", 12f, Paleta.APAGADO), ui.params(arriba = 10))
+        col.addView(tx, ui.params(arriba = 12))
 
         val tr = ui.tarjeta()
         tr.addView(ui.texto("📶  Por qué red salir", 16f, Paleta.TEXTO, true))
@@ -120,6 +138,13 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
         val dominio = BuscadorSubdominios.limpiarDominio(campoDominio.text.toString())
         if (dominio == null) { toast("Escribí un dominio, por ejemplo ejemplo.com"); return }
         if (!usarCert && !usarHt && !usarLista) { toast("Elegí al menos una forma de buscar"); return }
+        var puertos = emptyList<Int>()
+        if (verPuertos) {
+            val pp = Puertos.analizar(campoPuertos.text.toString())
+            if (pp.error != null) { toast(pp.error); return }
+            if (pp.puertos.size > BuscadorSubdominios.MAX_PUERTOS) { toast("Máximo ${BuscadorSubdominios.MAX_PUERTOS} puertos por subdominio"); return }
+            puertos = pp.puertos
+        }
         val imm = act.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(vista.windowToken, 0)
         if (esperandoRed) return
@@ -129,11 +154,13 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
         red.conectar(Ajustes.salida) { ok, texto ->
             esperandoRed = false
             if (!ok) { toast(texto); mensaje = texto; pintarEstado() }
-            else { nombreRed = texto; arrancar(dominio) }
+            else { nombreRed = texto; arrancar(dominio, puertos) }
         }
     }
 
-    private fun arrancar(dominio: String) {
+    private fun arrancar(dominio: String, puertos: List<Int>) {
+        pedidoAsn = verAsn
+        pedidoPuertos = puertos.isNotEmpty()
         synchronized(candado) { encontrados.clear(); version++ }
         hechos = 0; total = 0; hubo = true; inicio = System.currentTimeMillis(); mensaje = "Buscando por $nombreRed…"
         buscando = true
@@ -142,9 +169,11 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
         val b = BuscadorSubdominios()
         buscador = b
         val m = Metodos(usarCert, usarHt, usarLista)
+        val extras = Extras(pedidoAsn, puertos)
         Thread({
             try {
-                b.buscar(dominio, m, { mensaje = it }, { s -> synchronized(candado) { encontrados.add(s); version++ } }, { h, t -> hechos = h; total = t })
+                b.buscar(dominio, m, { mensaje = it }, { s -> synchronized(candado) { encontrados.add(s); version++ } }, { h, t -> hechos = h; total = t },
+                    extras) { synchronized(candado) { version++ } }
             } catch (_: Exception) {
                 mensaje = "Hubo un error al buscar"
             }
@@ -201,6 +230,26 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
             l.addView(ui.insignia(s.fuente, if (s.resuelve) Paleta.VERDE else Paleta.AMARILLO))
             fila.addView(l)
             fila.addView(ui.texto(if (s.resuelve) s.ips.joinToString("  ") else "sin IP: hoy no responde", 12f, Paleta.APAGADO), ui.params(arriba = 4))
+            if (s.resuelve && pedidoAsn) {
+                val hay = s.asns.isNotEmpty()
+                val t = when {
+                    hay -> "🏢 " + s.asns.joinToString("  ·  ") { it.etiqueta }
+                    s.asnListo -> "🏢 ASN: sin dato"
+                    buscando -> "🏢 ASN: buscando…"
+                    else -> "🏢 ASN: sin dato"
+                }
+                fila.addView(ui.texto(t, 12f, if (hay) Paleta.CYAN else Paleta.APAGADO, hay), ui.params(arriba = 4))
+            }
+            if (s.resuelve && pedidoPuertos) {
+                val hay = s.puertos.isNotEmpty()
+                val t = when {
+                    hay -> "🔌 Puertos abiertos: " + s.puertos.joinToString("  ")
+                    s.puertosListo -> "🔌 Ningún puerto abierto de los probados"
+                    buscando -> "🔌 Puertos: probando…"
+                    else -> "🔌 Puertos: sin dato"
+                }
+                fila.addView(ui.texto(t, 12f, if (hay) Paleta.VERDE else Paleta.APAGADO, hay), ui.params(arriba = 4))
+            }
             fila.setOnClickListener { acciones(s) }
             cajaResultados.addView(fila, ui.params(abajo = 8))
         }
@@ -227,7 +276,13 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
     }
 
     private fun textoPlano(): String =
-        copia().filter { it.resuelve || mostrarSinIp }.joinToString("\n") { it.nombre + (if (it.resuelve) "  " + it.ips.joinToString(",") else "  (sin IP)") }
+        copia().filter { it.resuelve || mostrarSinIp }.joinToString("\n") { s ->
+            val sb = StringBuilder(s.nombre)
+            sb.append(if (s.resuelve) "  " + s.ips.joinToString(",") else "  (sin IP)")
+            if (s.asns.isNotEmpty()) sb.append("  ").append(s.asns.joinToString(" / ") { "AS${it.numero} ${it.nombre}".trim() })
+            if (s.puertos.isNotEmpty()) sb.append("  puertos ").append(s.puertos.joinToString(","))
+            sb.toString()
+        }
 
     private fun copiar() {
         val t = textoPlano()
