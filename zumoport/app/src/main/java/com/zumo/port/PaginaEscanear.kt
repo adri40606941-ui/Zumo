@@ -1,10 +1,12 @@
 package com.zumo.port
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.view.ViewGroup
@@ -319,10 +321,54 @@ class PaginaEscanear(private val act: Activity, private val ui: Ui, private val 
                 l.addView(ui.texto(h.resumen(), 13f, Paleta.TEXTO), ui.params(ancho = 0, peso = 1f))
                 fila.addView(l, ui.params(arriba = 6))
             }
+            fila.setOnClickListener { acciones(eq) }
             cajaResultados.addView(fila, ui.params(abajo = 8))
         }
         if (mostrados == 0) cajaResultados.addView(ui.texto("Ningún resultado con ese filtro.", 13f, Paleta.APAGADO))
         if (ocultos > 0) cajaResultados.addView(ui.texto("… y $ocultos equipos más. Usá Copiar o Compartir para llevarte la lista completa.", 12f, Paleta.AMARILLO))
+    }
+
+    private fun acciones(eq: Equipo): Unit {
+        val web = eq.hallazgos.firstOrNull { it.webOk }
+        val opciones = ArrayList<CharSequence>()
+        opciones.add("🔎 Ver dominio de esta IP (DNS inverso)")
+        opciones.add("📋 Copiar IP")
+        if (web != null) opciones.add("🌍 Abrir en el navegador")
+        AlertDialog.Builder(act)
+            .setTitle(if (eq.nombre != eq.ip) eq.nombre else eq.ip)
+            .setItems(opciones.toTypedArray()) { _, cual ->
+                when (opciones[cual]) {
+                    "🔎 Ver dominio de esta IP (DNS inverso)" -> verDominio(eq.ip)
+                    "📋 Copiar IP" -> {
+                        val cm = act.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cm.setPrimaryClip(ClipData.newPlainText("Zumo Port", eq.ip))
+                        toast("Copiado")
+                    }
+                    else -> {
+                        val esquema = if (Puertos.esTls(web!!.puerto)) "https" else "http"
+                        try { act.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$esquema://${eq.ip}:${web.puerto}"))) } catch (_: Exception) { toast("No se pudo abrir") }
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun verDominio(ip: String) {
+        toast("Buscando el DNS inverso de $ip…")
+        Thread({
+            val d = ReverseDns.resolver(ip)
+            principal.post {
+                if (d == null) toast("Esa IP no tiene un dominio configurado (sin registro PTR)")
+                else AlertDialog.Builder(act).setTitle(ip).setMessage(d)
+                    .setPositiveButton("Copiar") { _, _ ->
+                        val cm = act.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cm.setPrimaryClip(ClipData.newPlainText("Zumo Port", d))
+                        toast("Copiado")
+                    }
+                    .setNegativeButton("Cerrar", null)
+                    .show()
+            }
+        }, "zumoport-dns-inverso").start()
     }
 
     private fun colorDe(h: Hallazgo): Int = when {

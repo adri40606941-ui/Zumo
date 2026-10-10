@@ -2,7 +2,7 @@ name: Compilar Zumo Port
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'bot/zumo-port-dns-inverso']
     paths: ['zumoport/**', '.github/workflows/zumoport.yml']
   workflow_dispatch:
 
