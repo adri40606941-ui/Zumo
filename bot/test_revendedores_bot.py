@@ -258,12 +258,12 @@ class Gestion(Base):
         self.btn("rvs")
         t = self.tg.mensajes[-1]
         self.assertIn("juan", t)
-        self.assertIn("Cargadas 🥉3 🥈0 🥇5", t)
-        self.assertIn("Gastadas 🥉0 🥈0 🥇2", t)
+        self.assertIn("Cargadas:  🥉 3  🥈 0  🥇 5", t)
+        self.assertIn("Gastadas:  🥉 0  🥈 0  🥇 2", t)
         self.assertIn("TOTAL", t)
         self.assertIn("rvs:prev", self.tg.datos_botones())
         self.btn("rvs:prev")
-        self.assertIn("Cargadas 🥉0 🥈0 🥇0", self.tg.mensajes[-1], "el mes pasado no tiene nada")
+        self.assertIn("Cargadas:  🥉 0  🥈 0  🥇 0", self.tg.mensajes[-1], "el mes pasado no tiene nada")
 
     def test_pantalla_https_explica_cloudflare(self):
         self.armar()

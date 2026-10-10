@@ -238,22 +238,27 @@ class RevendedoresMixin:
     def pantalla_resumen(self, chat, mid, anterior=False):
         desde, hasta, nombre = self._mes(-1 if anterior else 0)
         res = self.revs.resumen(desde, hasta)
-        txt = f"📊 Resumen de {nombre}\n\nCargadas = monedas que les diste · Gastadas = usuarios creados o renovados\n"
+        fmt = lambda d: "  ".join(f"{rv.EMOJI[t]} {d[t]}" for t in rv.MONEDAS)
+        raya = "━━━━━━━━━━━━━━"
+        txt = f"📊 Resumen de {nombre}\n{raya}\n"
         tot_c = {t: 0 for t in rv.MONEDAS}
         tot_g = {t: 0 for t in rv.MONEDAS}
         for o in sorted(res.values(), key=lambda x: x["usuario"]):
-            fmt = lambda d: " ".join(f"{rv.EMOJI[t]}{d[t]}" for t in rv.MONEDAS)
-            txt += (f"\n🧑‍💼 {o['usuario']}{'' if o['activo'] else ' ⛔'} · {o['usuarios']} usuarios\n"
-                    f"   Cargadas {fmt(o['cargadas'])} · Gastadas {fmt(o['gastadas'])}\n"
-                    f"   Saldo sin usar {fmt(o['saldo'])}\n")
+            n = o["usuarios"]
+            txt += (f"\n🧑‍💼 {o['usuario']}{'' if o['activo'] else ' ⛔'}  ({n} usuario{'' if n == 1 else 's'})\n"
+                    f"➕ Cargadas:  {fmt(o['cargadas'])}\n"
+                    f"✅ Gastadas:  {fmt(o['gastadas'])}\n"
+                    f"💰 Te quedan: {fmt(o['saldo'])}\n")
             for t in rv.MONEDAS:
                 tot_c[t] += o["cargadas"][t]
                 tot_g[t] += o["gastadas"][t]
         if not res:
             txt += "\n(todavía no hay revendedores)"
         else:
-            fmt = lambda d: " ".join(f"{rv.EMOJI[t]}{d[t]}" for t in rv.MONEDAS)
-            txt += f"\nTOTAL · Cargadas {fmt(tot_c)} · Gastadas {fmt(tot_g)}"
+            txt += (f"\n{raya}\n📦 TOTAL del mes\n"
+                    f"➕ Cargadas:  {fmt(tot_c)}\n"
+                    f"✅ Gastadas:  {fmt(tot_g)}\n")
+        txt += "\nCargadas = monedas que les diste\nGastadas = usuarios creados o renovados"
         otro = ("📅 Este mes", "rvs") if anterior else ("📅 Mes anterior", "rvs:prev")
         self.mostrar(chat, mid, txt[:4000], [[otro], [("◂ Revendedores", "rv")]])
 
