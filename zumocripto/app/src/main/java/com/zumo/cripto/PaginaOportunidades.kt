@@ -10,7 +10,6 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.view.ViewGroup
-import android.view.inputmethod.InputMethodManager
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -31,14 +30,12 @@ class PaginaOportunidades(private val act: Activity, private val almacen: Almace
     private var hubo = false
     @Volatile private var mensaje = "Listo para leer los exchanges"
     @Volatile private var informe = ""
-    private var comision = 0.1
+    /** Comisión por operación (compra y venta) con la que se calcula el neto, y margen mínimo para mostrar una oportunidad. */
+    private val comision = 0.1
     @Volatile private var catalogo = Catalogo(emptyMap())
     private var soloEnviables = true
     private lateinit var chipEnviables: TextView
 
-    private val campoMargen = ui.campo("Margen mínimo %, por ejemplo 1.0")
-    private val campoComision = ui.campo("Comisión por operación %, por ejemplo 0.1")
-    private val campoFiltro = ui.campo("Filtrar por cripto: BTC, ETH…")
     private val botonPrincipal: TextView
     private val textoEstado = ui.texto("Listo para leer los exchanges", 14f, Paleta.APAGADO)
     private val textoResumen = ui.texto("", 13f, Paleta.APAGADO)
@@ -54,10 +51,6 @@ class PaginaOportunidades(private val act: Activity, private val almacen: Almace
     }
 
     init {
-        campoMargen.setText("1.0")
-        campoComision.setText("0.1")
-        campoMargen.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        campoComision.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         val col = ui.vertical()
         col.setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(24))
 
@@ -72,10 +65,6 @@ class PaginaOportunidades(private val act: Activity, private val almacen: Almace
         // --- Filtros (se aplican sobre lo leído, sin volver a pedir nada)
         val t1 = ui.tarjeta()
         t1.addView(ui.texto("🎛  Filtros", 16f, Paleta.TEXTO, true))
-        t1.addView(campoMargen, ui.params(arriba = 10))
-        t1.addView(campoFiltro, ui.params(arriba = 10))
-        t1.addView(campoComision, ui.params(arriba = 10))
-        t1.addView(ui.texto("La comisión se cobra en la compra y en la venta: cada fila muestra cuánto te queda neto con ese valor.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
         chipEnviables = ui.chip("Solo las que se pueden enviar", soloEnviables) {
             soloEnviables = !soloEnviables
             ui.pintarChip(chipEnviables, soloEnviables)
@@ -83,7 +72,6 @@ class PaginaOportunidades(private val act: Activity, private val almacen: Almace
             pintarEstado()
         }
         t1.addView(chipEnviables, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, arriba = 10))
-        t1.addView(ui.chip("✔ Aplicar filtros", false) { versionPintada = -1; pintarEstado() }, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, arriba = 10))
         t1.addView(ui.texto("«Se pueden enviar» solo muestra activos que podés comprar en el exchange barato y retirar a otro que los reciba, por una misma red. Se confirma sin clave con KuCoin, Gate.io, Bitget, HTX, WhiteBIT, XT.com y Poloniex; con Binance, Bybit, OKX, MEXC y BingX, cargando tu clave en Cuentas.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
         col.addView(t1, ui.params(arriba = 12))
 
@@ -99,19 +87,7 @@ class PaginaOportunidades(private val act: Activity, private val almacen: Almace
 
     private fun toast(t: String) { Toast.makeText(act, t, Toast.LENGTH_SHORT).show() }
 
-    private fun parsePct(texto: String): Double? =
-        texto.trim().replace(",", ".").toDoubleOrNull()?.takeIf { it >= 0 && it < 100 }
-
-    private fun ocultarTeclado() {
-        val imm = act.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-        imm.hideSoftInputFromWindow(vista.windowToken, 0)
-    }
-
     private fun empezar() {
-        val com = parsePct(campoComision.text.toString())
-        if (com == null) { toast("Poné una comisión válida, por ejemplo 0.1"); return }
-        comision = com
-        ocultarTeclado()
         synchronized(candado) { resultados = emptyList(); version++ }
         hubo = true
         buscando = true
@@ -154,14 +130,11 @@ class PaginaOportunidades(private val act: Activity, private val almacen: Almace
 
     fun cerrar() { buscador?.cancelar() }
 
-    /** Lo que se ve según los filtros: margen mínimo y nombre de cripto, ordenado de mayor a menor margen. */
+    /** Lo que se ve: margen de al menos [MARGEN_MINIMO_PCT] y, si está marcado el filtro, solo las que se pueden enviar; de mayor a menor margen. */
     private fun visibles(): List<Oportunidad> {
-        val margen = parsePct(campoMargen.text.toString()) ?: 0.0
-        val filtro = campoFiltro.text.toString().trim().lowercase()
         val todas = synchronized(candado) { resultados }
         return todas
-            .filter { it.margenPct >= margen }
-            .filter { filtro.isEmpty() || it.moneda.simbolo.lowercase().contains(filtro) }
+            .filter { it.margenPct >= MARGEN_MINIMO_PCT }
             .filter { !soloEnviables || estadoDe(it) is Catalogo.Estado.Posible }
             .sortedByDescending { it.margenPct }
     }
@@ -276,6 +249,7 @@ class PaginaOportunidades(private val act: Activity, private val almacen: Almace
     }
 
     companion object {
+        const val MARGEN_MINIMO_PCT = 1.0
         const val MAX_FILAS = 200
     }
 }
