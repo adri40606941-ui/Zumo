@@ -43,9 +43,9 @@ class Hallazgo(
 
 /** Cuántos hilos y cuánto esperar por puerto. Suave cuida la batería y la red; Rápido barre más por segundo. */
 enum class Velocidad(val titulo: String, val hilos: Int, val esperaMs: Int) {
-    SUAVE("Suave", 40, 1500),
-    NORMAL("Normal", 300, 800),
-    RAPIDA("Rápida", 600, 500),
+    SUAVE("Suave", 40, 4000),
+    NORMAL("Normal", 200, 2500),
+    RAPIDA("Rápida", 400, 1500),
 }
 
 class Opciones(
@@ -89,13 +89,26 @@ class Escaner(private val resolver: (String) -> String? = { n -> resolverIpv4(n)
                 dns.execute {
                     try {
                         if (!cancelado.get()) {
-                            val ip = resolver(equipo) ?: ""
+                            // Un DNS saturado (o los datos móviles) a veces falla una vez: se reintenta antes de dar el nombre por inexistente.
+                            var ip = ""
+                            for (intento in 0..2) {
+                                if (cancelado.get()) break
+                                ip = resolver(equipo) ?: ""
+                                if (ip.isNotEmpty() || Objetivos.esIp(equipo)) break
+                                try { Thread.sleep(250L * (intento + 1)) } catch (_: InterruptedException) { break }
+                            }
                             if (ip.isEmpty()) hechos.addAndGet(puertos.size.toLong())      // no existe: no hay nada que probar
                             else for (puerto in puertos) {
                                 if (!adquirir(cupo)) break
                                 pool.execute {
                                     try {
-                                        if (!cancelado.get()) sondear(equipo, ip, puerto, opc)?.let(alHallar)
+                                        if (!cancelado.get()) {
+                                            var h = sondear(equipo, ip, puerto, opc)
+                                            // El 80 y el 443 de un dominio que ya resolvió casi siempre responden: si la primera conexión se
+                                            // perdió (red móvil, CDN lento) se reintenta una vez antes de darlo por cerrado.
+                                            if (h == null && !cancelado.get() && !Objetivos.esIp(equipo) && (puerto == 80 || puerto == 443)) h = sondear(equipo, ip, puerto, opc)
+                                            h?.let(alHallar)
+                                        }
                                     } catch (_: Exception) {
                                     } finally {
                                         hechos.incrementAndGet()
@@ -244,7 +257,7 @@ class Escaner(private val resolver: (String) -> String? = { n -> resolverIpv4(n)
     }
 
     companion object {
-        const val DNS_HILOS = 64
+        const val DNS_HILOS = 32
         val PUERTOS_CON_SALUDO = setOf(21, 22, 25, 110, 143, 465, 587, 993, 995, 3306, 5900)
 
         /** Un contexto TLS que acepta cualquier certificado: acá solo se mira si el puerto contesta, no se envía nada privado. */

@@ -15,7 +15,7 @@ App Android para escanear **IP, rangos de IP, puertos y subdominios**. Va aparte
 - **Por qué red salir**: «Datos móviles» (por defecto), «WiFi» o «Automática». Con datos móviles, el escaneo y las consultas DNS salen por la operadora aunque el WiFi esté prendido (la app pide la red celular al sistema y ata sus conexiones a ella; al terminar la suelta). Las IP de una red local (192.168…, 10…) no se alcanzan por datos móviles: la app lo avisa y hay que elegir WiFi o Automática.
 - Copiar y compartir los resultados como texto. En Escanear, **Copiar** lleva solo los dominios (o IP) con el 80 o el 443 en verde (respuesta web 2xx/3xx), separados por coma; Compartir lleva el detalle completo. Los nombres se resuelven en paralelo aparte de las conexiones, así que escanear listas de dominios es bastante más rápido.
 
-Velocidades: Suave (40 hilos), Normal (150), Rápida (400). Tope: 65 536 equipos y 3 millones de sondeos por escaneo. Medido en la JVM contra 127.0.0.0/18: ~22 000 sondeos/s en velocidad Rápida.
+Velocidades: Suave (40 hilos, 4 s por conexión), Normal (200 hilos, 2,5 s), Rápida (400 hilos, 1,5 s). Con dominios, un nombre que no resuelve se reintenta y el 80/443 que no conecta a la primera se prueba otra vez, para no perder sitios por una red móvil lenta. Tope: 65 536 equipos y 3 millones de sondeos por escaneo. Medido en la JVM contra 127.0.0.0/18: ~22 000 sondeos/s en velocidad Rápida.
 
 ## Estructura
 
