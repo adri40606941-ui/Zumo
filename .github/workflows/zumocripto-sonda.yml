@@ -1,5 +1,7 @@
 name: Sonda temporal de APIs de exchanges
 on:
+  push:
+    branches: [zumocripto-fuentes]
   workflow_dispatch:
 jobs:
   sonda:
