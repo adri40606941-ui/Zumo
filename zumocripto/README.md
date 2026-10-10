@@ -7,8 +7,8 @@ App Android para comparar el precio de cada criptomoneda entre distintos exchang
 - Lee los precios de **15 exchanges** directamente desde sus APIs públicas, sin clave: Binance, Bybit, OKX, KuCoin, Gate.io, Bitget, MEXC, HTX, Crypto.com, LBank, XT.com, Poloniex, Bitstamp, WhiteBIT y BingX. Cada uno devuelve todos sus pares en una sola llamada.
 - Se queda con los pares contra **USDT, USDC o USD** (todos ≈ 1 dólar) y deja afuera los que tienen menos de 20 000 USD de volumen en 24 h, porque sus precios no son confiables.
 - Arma cada activo que se opera en dos o más exchanges, y muestra dónde está más barato y dónde más caro, con la diferencia en porcentaje.
-- Para cada oportunidad, mira si podés **enviar** el activo del exchange barato al caro: busca una red en común donde el barato deje retirar y el caro reciba. Por ahora solo se puede confirmar con KuCoin, Gate.io y Bitget, que publican ese dato sin clave; con los demás sale «no verificable».
-- En la pestaña **Cuentas** podés cargar una clave API **de solo lectura** de Binance, Bybit u OKX (nunca usuario ni contraseña). Con ella la app lee las redes de retiro y depósito reales de tu cuenta y la comisión de retiro, y esos exchanges dejan de salir «no verificable». La clave se guarda cifrada en el teléfono (Android Keystore) y solo se usa para consultar al propio exchange.
+- Para cada oportunidad, mira si podés **enviar** el activo del exchange barato al caro: busca una red en común donde el barato deje retirar y el caro reciba. Se confirma sin clave con KuCoin, Gate.io, Bitget, HTX, WhiteBIT, XT.com y Poloniex, que publican ese dato abierto; con Binance, Bybit, OKX, MEXC y BingX hace falta tu clave de solo lectura (pestaña Cuentas). Con Crypto.com, LBank y Bitstamp sale «no verificable».
+- En la pestaña **Cuentas** podés cargar una clave API **de solo lectura** de Binance, Bybit, OKX, MEXC o BingX (nunca usuario ni contraseña). Con ella la app lee las redes de retiro y depósito reales de tu cuenta y la comisión de retiro, y esos exchanges dejan de salir «no verificable». La clave se guarda cifrada en el teléfono (Android Keystore) y solo se usa para consultar al propio exchange.
 - Calcula el neto con una comisión por operación (compra y venta). Tocando una fila, ves todos los exchanges y un enlace para operar.
 - Filtros sobre lo leído, sin volver a pedir nada: margen mínimo y nombre de la cripto.
 - Si un exchange no responde (por ejemplo, Binance y Bybit bloquean algunos países), la app lo informa y compara con los demás.
@@ -22,8 +22,8 @@ App Android para comparar el precio de cada criptomoneda entre distintos exchang
 | `Modelos.kt` | `Moneda`, `Ticker` y `Oportunidad` (con `margenPct`, `barato`, `caro`). |
 | `Exchanges.kt` | Las 15 fuentes: URL pública de cada exchange y cómo leer su respuesta. |
 | `BuscadorExchanges.kt` | Lee cada exchange, agrupa los pares por activo (`Agregador`) y arma las oportunidades. |
-| `Transferencias.kt` | Redes y estado de retiro/depósito de KuCoin, Gate.io y Bitget; decide si un envío es posible. |
-| `Cuentas.kt` | Firmas HMAC, `Credencial` y los lectores con clave de Binance, Bybit y OKX. |
+| `Transferencias.kt` | Redes y estado de retiro/depósito de KuCoin, Gate.io, Bitget, HTX, WhiteBIT, XT.com y Poloniex; decide si un envío es posible. |
+| `Cuentas.kt` | Firmas HMAC, `Credencial` y los lectores con clave de Binance, Bybit, OKX, MEXC y BingX. |
 | `AlmacenCuentas.kt`, `PaginaCuentas.kt` | Guardado cifrado de las claves y la pestaña para cargarlas y probarlas. |
 | `Red.kt` | El pedido HTTP (con encabezados firmados cuando hay cuenta). |
 | `Calculadora.kt` | El neto después de comisiones. |
@@ -37,4 +37,4 @@ Lo compila GitHub: **Actions → Compilar Zumo Cripto → Run workflow** (tambi�
 
 ## Fuentes
 
-Precios leídos de las APIs públicas de Binance, Bybit, OKX, KuCoin, Gate.io, Bitget, MEXC, HTX, Crypto.com, LBank, XT.com, Poloniex, Bitstamp, WhiteBIT y BingX. Envíos (redes, retiro y depósito) de KuCoin, Gate.io y Bitget sin clave, y de Binance, Bybit y OKX con tu clave de solo lectura.
+Precios leídos de las APIs públicas de Binance, Bybit, OKX, KuCoin, Gate.io, Bitget, MEXC, HTX, Crypto.com, LBank, XT.com, Poloniex, Bitstamp, WhiteBIT y BingX. Envíos (redes, retiro y depósito) de KuCoin, Gate.io, Bitget, HTX, WhiteBIT, XT.com y Poloniex sin clave, y de Binance, Bybit, OKX, MEXC y BingX con tu clave de solo lectura.
