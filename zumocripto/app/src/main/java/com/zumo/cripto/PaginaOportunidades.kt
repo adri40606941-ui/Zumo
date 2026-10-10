@@ -32,6 +32,9 @@ class PaginaOportunidades(private val act: Activity) {
     @Volatile private var mensaje = "Listo para leer los exchanges"
     @Volatile private var informe = ""
     private var comision = 0.1
+    @Volatile private var catalogo = Catalogo(emptyMap())
+    private var soloEnviables = true
+    private lateinit var chipEnviables: TextView
 
     private val campoMargen = ui.campo("Margen mínimo %, por ejemplo 1.0")
     private val campoComision = ui.campo("Comisión por operación %, por ejemplo 0.1")
@@ -73,7 +76,15 @@ class PaginaOportunidades(private val act: Activity) {
         t1.addView(campoFiltro, ui.params(arriba = 10))
         t1.addView(campoComision, ui.params(arriba = 10))
         t1.addView(ui.texto("La comisión se cobra en la compra y en la venta: cada fila muestra cuánto te queda neto con ese valor.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
+        chipEnviables = ui.chip("Solo las que se pueden enviar", soloEnviables) {
+            soloEnviables = !soloEnviables
+            ui.pintarChip(chipEnviables, soloEnviables)
+            versionPintada = -1
+            pintarEstado()
+        }
+        t1.addView(chipEnviables, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, arriba = 10))
         t1.addView(ui.chip("✔ Aplicar filtros", false) { versionPintada = -1; pintarEstado() }, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, arriba = 10))
+        t1.addView(ui.texto("«Se pueden enviar» solo muestra activos que podés comprar en el exchange barato y retirar a otro que los reciba, por una misma red. Solo se puede confirmar con KuCoin, Gate.io y Bitget.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
         col.addView(t1, ui.params(arriba = 12))
 
         // --- Resultados
@@ -110,7 +121,7 @@ class PaginaOportunidades(private val act: Activity) {
         Thread({
             try {
                 val r = b.buscar { mensaje = it }
-                synchronized(candado) { resultados = r.oportunidades; version++ }
+                synchronized(candado) { resultados = r.oportunidades; catalogo = r.catalogo; version++ }
                 informe = armarInforme(r)
                 mensaje = if (r.cancelado) "Detenido" else "✔ Listo"
             } catch (_: Exception) {
@@ -145,8 +156,23 @@ class PaginaOportunidades(private val act: Activity) {
         return todas
             .filter { it.margenPct >= margen }
             .filter { filtro.isEmpty() || it.moneda.simbolo.lowercase().contains(filtro) }
+            .filter { !soloEnviables || estadoDe(it) is Catalogo.Estado.Posible }
             .sortedByDescending { it.margenPct }
     }
+
+    private fun estadoDe(op: Oportunidad): Catalogo.Estado =
+        catalogo.estado(op.moneda.simbolo, op.barato.exchange, op.caro.exchange)
+
+    private fun leyendaEnvio(op: Oportunidad): Pair<String, Int> = when (val e = estadoDe(op)) {
+        is Catalogo.Estado.Posible -> {
+            val fee = e.comision?.let { " · comisión ${formatoNumero(it)} ${op.moneda.simbolo}" } ?: ""
+            "✔ Se puede enviar de ${op.barato.exchange} a ${op.caro.exchange} por ${e.red}$fee" to Paleta.VERDE
+        }
+        is Catalogo.Estado.NoPosible -> "✖ No se puede enviar: ${e.motivo}" to Paleta.ROJO
+        is Catalogo.Estado.NoVerificable -> "? No verificable: ${e.motivo}" to Paleta.AMARILLO
+    }
+
+    private fun formatoNumero(v: Double): String = String.format(Locale.US, "%.6f", v).trimEnd('0').trimEnd('.')
 
     private fun pintarEstado() {
         textoEstado.text = mensaje
@@ -184,6 +210,8 @@ class PaginaOportunidades(private val act: Activity) {
             fila.addView(ui.texto("${op.barato.exchange}: \$${formatoUsd(op.barato.precioUsd)}  →  ${op.caro.exchange}: \$${formatoUsd(op.caro.precioUsd)}", 13f, Paleta.TEXTO), ui.params(arriba = 6))
             val neto = Calculadora.netoPct(op, comision)
             fila.addView(ui.texto("Neto con comisiones: ${formatoPct(neto)}%", 12f, if (neto > 0) Paleta.VERDE else Paleta.ROJO, true), ui.params(arriba = 4))
+            val (leyenda, colorL) = leyendaEnvio(op)
+            fila.addView(ui.texto(leyenda, 12f, colorL), ui.params(arriba = 2))
             fila.addView(ui.texto("${op.exchanges} exchanges", 12f, Paleta.APAGADO), ui.params(arriba = 2))
             fila.setOnClickListener { detalle(op) }
             cajaResultados.addView(fila, ui.params(abajo = 8))
@@ -207,6 +235,14 @@ class PaginaOportunidades(private val act: Activity) {
         cuerpo.setPadding(ui.dp(18), ui.dp(10), ui.dp(18), ui.dp(4))
         val neto = Calculadora.netoPct(op, comision)
         cuerpo.addView(ui.texto("Neto con comisiones de ${formatoPct(comision)}% por operación: ${formatoPct(neto)}%", 13f, if (neto > 0) Paleta.VERDE else Paleta.ROJO, true))
+        val (leyenda, colorL) = leyendaEnvio(op)
+        cuerpo.addView(ui.texto(leyenda, 13f, colorL, true), ui.params(arriba = 8))
+        if (estadoDe(op) is Catalogo.Estado.Posible) {
+            val tag = (estadoDe(op) as Catalogo.Estado.Posible).requiereTag
+            val aviso = (if (tag) "⚠ Esa red pide memo/tag: no lo olvides. " else "") +
+                "Antes de enviar, verificá la dirección y la red en los dos exchanges: las comisiones y los estados cambian, y el precio puede moverse mientras el activo viaja."
+            cuerpo.addView(ui.texto(aviso, 12f, Paleta.APAGADO), ui.params(arriba = 8))
+        }
         for (t in op.tickers) {
             val f = ui.horizontal()
             f.addView(ui.texto("${t.exchange}  (${t.par})", 14f, Paleta.TEXTO, true), ui.params(ancho = 0, peso = 1f))

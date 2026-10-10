@@ -24,16 +24,23 @@ object Agregador {
     }
 }
 
-/** Lee los precios de cada exchange (uno por uno, con una sola llamada cada uno) y arma las oportunidades. */
+/** Lee los precios de cada exchange, y después qué redes permite cada uno para enviar, y arma las oportunidades. */
 class BuscadorExchanges(
     private val pedir: (String) -> ResultadoPedido,
     private val fuentes: List<Fuente> = Exchanges.TODAS,
+    private val envios: List<FuenteTransferencias> = Transferencias.FUENTES,
 ) {
     private val cancelado = AtomicBoolean(false)
     fun cancelar() = cancelado.set(true)
 
-    /** Lo que sale de una lectura: las oportunidades, qué exchanges fallaron y si se canceló. */
-    class Resultado(val oportunidades: List<Oportunidad>, val leidos: Int, val fallaron: List<String>, val cancelado: Boolean)
+    /** Lo que sale de una lectura: oportunidades, exchanges que fallaron, si se canceló y lo que se sabe de envíos. */
+    class Resultado(
+        val oportunidades: List<Oportunidad>,
+        val leidos: Int,
+        val fallaron: List<String>,
+        val cancelado: Boolean,
+        val catalogo: Catalogo,
+    )
 
     fun buscar(alEstado: (String) -> Unit): Resultado {
         cancelado.set(false)
@@ -41,7 +48,7 @@ class BuscadorExchanges(
         val fallaron = ArrayList<String>()
         var leidos = 0
         for ((i, f) in fuentes.withIndex()) {
-            if (cancelado.get()) return Resultado(emptyList(), leidos, fallaron, true)
+            if (cancelado.get()) return Resultado(emptyList(), leidos, fallaron, true, Catalogo(emptyMap()))
             alEstado("Leyendo ${f.nombre} (${i + 1}/${fuentes.size})…")
             val r = pedir(f.url)
             val cuerpo = r.cuerpo
@@ -53,11 +60,24 @@ class BuscadorExchanges(
             if (pares.isEmpty()) fallaron.add("${f.nombre} (formato no reconocido)") else leidos++
             todas.addAll(pares)
         }
+
+        val datosEnvio = HashMap<String, Map<String, List<RedDe>>>()
+        for ((i, f) in envios.withIndex()) {
+            if (cancelado.get()) return Resultado(emptyList(), leidos, fallaron, true, Catalogo(datosEnvio))
+            alEstado("Leyendo envíos de ${f.nombre} (${i + 1}/${envios.size})…")
+            val r = pedir(f.url)
+            val cuerpo = r.cuerpo
+            if (cuerpo == null) { fallaron.add("envíos de ${f.nombre} (código ${r.codigo})"); continue }
+            val d = f.parsear(cuerpo)
+            if (d.isEmpty()) fallaron.add("envíos de ${f.nombre} (formato no reconocido)") else datosEnvio[f.nombre] = d
+        }
+        val catalogo = Catalogo(datosEnvio)
+
         if (leidos == 0) {
             alEstado("No se pudo leer ningún exchange. ¿Estás sin internet?")
-            return Resultado(emptyList(), 0, fallaron, false)
+            return Resultado(emptyList(), 0, fallaron, false, catalogo)
         }
         alEstado("Armando comparaciones…")
-        return Resultado(Agregador.construir(todas), leidos, fallaron, false)
+        return Resultado(Agregador.construir(todas), leidos, fallaron, false, catalogo)
     }
 }
