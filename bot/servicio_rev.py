@@ -175,6 +175,18 @@ class Servicio:
             self.rev.anotar(rid, "nombre", token)
             return {"nombre": n, "fallaron": [x for _, x, _ in fallos], "motivos": self._motivos(fallos)}
 
+    def recrear(self, rid, token):
+        """Lo borra de su VPS y lo vuelve a crear igual (mismo token, nombre y vencimiento). No gasta monedas."""
+        with self._candado(rid):
+            self._activo(rid)
+            c = self._propio(rid, token)
+            oks, fallos = self._aplicar(c["maquinas"], lambda m: self._vps(self.ops.recrear, m, token, c["etq"]))
+            if not oks:
+                raise ErrorRevendedor(fallos[0][2] if len(fallos) == 1 else self._motivos(fallos))
+            self.rev.anotar(rid, "recrear", token)
+            self._datos.pop(token, None)
+            return {"token": token, "vence": oks[0][1], "fallaron": [n for _, n, _ in fallos], "motivos": self._motivos(fallos)}
+
     def eliminar(self, rid, token):
         """Lo borra de su VPS. Si esa no contesta, el usuario queda anotado para reintentar."""
         with self._candado(rid):

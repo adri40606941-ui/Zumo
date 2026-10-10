@@ -109,6 +109,50 @@ def renovar(m, token, dias, hoy=None, correr=None):
     return exp
 
 
+def recrear(m, token, nombre="cliente", correr=None):
+    """Borra el usuario de la VPS y lo vuelve a crear igual: mismo token, mismo nombre, mismo límite, misma fecha de
+    vencimiento y, si estaba bloqueado, bloqueado. Todo en un solo script en la VPS, así que no queda a medias por un
+    corte de la conexión. Gasta nada. Devuelve la fecha de vencimiento (date).
+    Si una vez quedó borrado y no se pudo crear (la fila de usuarios.db sigue ahí), se puede reintentar."""
+    t = _token(token)
+    gecos = shlex.quote("hwid," + limpiar_nombre(nombre))
+    script = ('# recrear\n'
+              f't={t}\n'
+              f'[ -f {LIB} ] || {{ echo SINPANEL; exit 0; }}\n'
+              f'source {LIB}\n'
+              f'linea=$(grep "^$t:" {DB} 2>/dev/null | head -1)\n'
+              'lim=$(echo "$linea" | cut -d: -f2); ven=$(echo "$linea" | cut -d: -f3)\n'
+              '[[ "$ven" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo SINFECHA; exit 0; }\n'
+              'g=""; b=""\n'
+              'if id "$t" >/dev/null 2>&1; then\n'
+              '  g=$(getent passwd "$t" | cut -d: -f5); b=$(passwd -S "$t" 2>/dev/null | cut -d" " -f2)\n'
+              '  pkill -9 -u "$t" 2>/dev/null; sleep 0.5\n'
+              '  userdel "$t" 2>/dev/null\n'
+              '  id "$t" >/dev/null 2>&1 && { echo QUEDA; exit 0; }\n'
+              'fi\n'
+              f'[ -n "$g" ] || g={gecos}\n'
+              'useradd --badname -M -s /bin/false -e "$(date -d "$ven + 1 day" +%F)" -c "$g" "$t" || { echo ERROR; exit 0; }\n'
+              'echo "$t:$t" | chpasswd\n'
+              'zumo_db_del "$t"; zumo_db_add "$t" "${lim:-1}" "$ven"\n'
+              'sed -i "/^$t:/d" /etc/zumo/datos.db 2>/dev/null\n'
+              '[ "$b" = L ] && usermod -L "$t"\n'
+              'echo "OK $ven"\n')
+    r = _sh(m, script, correr, timeout=40)
+    if "SINPANEL" in r:
+        raise ErrorCuenta("Esa VPS no tiene el panel instalado.")
+    if "SINFECHA" in r:
+        raise ErrorCuenta("No encontré a ese usuario ni su vencimiento en la VPS, así que no se puede recrear.")
+    if "QUEDA" in r:
+        raise ErrorCuenta("No pude borrar el usuario de la VPS (sigue ahí, no se tocó nada). Probá de nuevo en un momento.")
+    for linea in r.splitlines():
+        if linea.startswith("OK "):
+            try:
+                return date.fromisoformat(linea[3:].strip())
+            except ValueError:
+                break
+    raise ErrorCuenta("La VPS no pudo volver a crear el usuario. Probá de nuevo: si quedó borrado, Recrear lo vuelve a crear.")
+
+
 def eliminar(m, token, correr=None):
     t = _token(token)
     script = (f'[ -f {LIB} ] && source {LIB}\n'
