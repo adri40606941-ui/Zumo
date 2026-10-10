@@ -185,7 +185,7 @@ class BuscadorSubdominios(
         val hechas = AtomicInteger(0)
         val total = ips.size * puertos.size
         for (ip in ips) { abiertos[ip] = ConcurrentSkipListSet(); faltan[ip] = AtomicInteger(puertos.size) }
-        val sinSondeo = subs.flatMap { it.ips }.distinct().filter { it !in abiertos }
+        val sinSondeo = subs.flatMap { it.ips }.distinct().filter { !abiertos.containsKey(it) }
         fun completar(s: Subdominio) {
             if (s.ips.any { faltan[it]?.get()?.let { n -> n > 0 } == true }) return
             s.puertos = s.ips.flatMap { abiertos[it].orEmpty() }.distinct().sorted()
