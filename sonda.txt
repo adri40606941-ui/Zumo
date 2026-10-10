@@ -1,0 +1,51 @@
+===== https://api.huobi.pro/v2/reference/currencies
+HTTP 200 bytes 1045482
+{"code":200,"data":[{"currency":"usdt","assetType":1,"chains":[{"chain":"aptusdt","displayName":"APT","fullName":"Aptos","baseChain":"APTOS","baseChainProtocol":"APTCOINSTORE","contractAddress":"0x357b0b74bc833e95a115ad22604854d6b0fca151cecd94111770e5d6ffc9dc2b","chainType":1,"isDynamic":false,"numOfConfirmations":1,"numOfFastConfirmations":1,"depositStatus":"allowed","minDepositAmt":"1","withdrawStatus":"allowed","minWithdrawAmt":"10","withdrawPrecision":6,"maxWithdrawAmt":"999999999999999999.000000000000000000","withdrawQuotaPerDay":"999999999999999999.000000000000000000","withdrawQuotaPerYear":null,"withdrawQuotaTotal":null,"withdrawFeeType":"fixed","withdrawFeeExpandType":"fixed","withdrawFeeExpandData":null,"transactFeeWithdraw":"0.1","addrWithTag":false,"addrDepositTag":false},{"chain":"arc20usdt","displayName":"ARBITRUM","fullName":"Arbitrum One","baseChain":"ARB","baseChainProtocol":"ARC20","contractAddress":"0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9","chainType":1,"isDynamic":false,"numOfConfirmations":64,"numOfFastConfirmations":6,"depositStatus":"allowed","minDepositAmt":
+===== https://api.poloniex.com/v2/currencies
+HTTP 200 bytes 682735
+[ {
+  "id" : 2381,
+  "coin" : "0XY",
+  "delisted" : false,
+  "tradeEnable" : false,
+  "name" : "Oxytocin",
+  "networkList" : [ {
+    "id" : 2381,
+    "coin" : "0XY",
+    "name" : "Solana",
+    "currencyType" : "address",
+    "blockchain" : "SOL",
+    "withdrawalEnable" : true,
+    "depositEnable" : false,
+    "depositAddress" : null,
+    "withdrawMin" : "201018493.70000000",
+    "decimals" : 6,
+    "withdrawFee" : "100509246.85000000",
+    "minConfirm" : 300,
+    "contractAddress" : "oxynABVJXUEc9PLNx4m1XVdiFtRhStzRXG1G6qosni1"
+  } ],
+  "externalTransferEnabled" : false,
+  "supportCollateral" : false,
+  "supportBorrow" : false
+}, {
+  "id" : 2465,
+  "coin" : "1",
+  "delisted" : false,
+  "tradeEnable" : true,
+  "name" : "Ucan fix life in1day",
+  "networkList" : [ {
+    "id" : 2465,
+    "coin" : "1",
+    "name" : "Binance smart chain",
+    "currencyType" : "address",
+    "blockchain" : "BSC",
+    "withdrawalEnable" : true,
+    "depositEnable" : true,
+    "depositAddress" : null,
+    "withdrawMin" : "80.00000000",
+    "decimals" : 8,
+    "withdrawFee" : "864.57660000",
+    "minConfirm" :
+===== https://api.lbkex.com/v2/withdrawConfigs.do
+HTTP 200 bytes 305010
+{"msg":"Success","result":"true","data":[{"amountScale":"4","chain":"erc20","assetCode":"lbk","min":"2000","transferAmtScale":"4","canWithDraw":false,"fee":89.2379,"minTransfer":"0.0001","type":"1"},{"amountScale":"4","chain":"bep20(bsc)","assetCode":"usdt","min":"2","transferAmtScale":"4","canWithDraw":true,"fee":0.2000,"minTransfer":"0.0001","type":"1"},{"amountScale":"4","chain":"trc20","assetCode":"usdt","min":"5","transferAmtScale":"4","canWithDraw":true,"fee":1.5000,"minTransfer":"0.0001","type":"1"},{"amountScale":"4","chain":"erc20","assetCode":"usdt","min":"5","transferAmtScale":"4","canWithDraw":true,"fee":1.0000,"minTransfer":"0.0001","type":"1"},{"amountScale":"4","chain":"polygon","assetCode":"usdt","min":"5","transferAmtScale":"4","canWithDraw":true,"fee":1.0000,"minTransfer":"0.0001","type":"1"},{"amountScale":"4","chain":"omni","assetCode":"usdt","min":"0","transferAmtScale":"4","canWithDraw":false,"minTransfer":"0","type":"1"},{"amountScale":"4","chain":"arbitrum one","assetCode":"usdt","min":"5","transferAmtScale":"4","canWithDraw":true,"fee":0.5000,"minTransfer":"0
