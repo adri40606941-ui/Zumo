@@ -17,15 +17,9 @@ jobs:
             curl -sS -m 25 -A "ZumoCripto/1.0" -o body.txt -w "HTTP %{http_code} bytes %{size_download}\n" "$1" >> out/sonda.txt 2>&1
             head -c 1100 body.txt >> out/sonda.txt; echo >> out/sonda.txt
           }
-          probar "https://api.huobi.pro/v2/reference/currencies?currency=usdt"
-          probar "https://whitebit.com/api/v4/public/assets"
-          probar "https://api.lbkex.com/v2/withdrawConfigs.do?assetCode=usdt"
-          probar "https://api.lbkex.com/v2/assetConfigs.do"
-          probar "https://sapi.xt.com/v4/public/wallet/support/currency"
-          probar "https://api.poloniex.com/currencies/USDT"
-          probar "https://api.poloniex.com/v2/currencies/USDT"
-          probar "https://api.mexc.com/api/v3/capital/config/getall"
-          probar "https://api.crypto.com/exchange/v1/public/get-risk-parameters"
+          probar "https://api.huobi.pro/v2/reference/currencies"
+          probar "https://api.poloniex.com/v2/currencies"
+          probar "https://api.lbkex.com/v2/withdrawConfigs.do"
           cd out && git init -q && git checkout -q -b sonda-salida && git add -A
           git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm sonda
           git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" sonda-salida
