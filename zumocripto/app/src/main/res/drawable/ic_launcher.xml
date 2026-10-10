@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp" android:height="96dp"
+    android:viewportWidth="96" android:viewportHeight="96">
+    <path android:fillColor="#0A0F24" android:pathData="M0,0h96v96h-96z" />
+    <!-- velas de un gráfico, subiendo de izquierda a derecha -->
+    <path android:fillColor="#F87171" android:pathData="M16,58h8v16h-8z" />
+    <path android:fillColor="#8E99C4" android:strokeColor="#F87171" android:strokeWidth="1.4" android:pathData="M20,50 L20,80" />
+    <path android:fillColor="#22C55E" android:pathData="M34,46h8v22h-8z" />
+    <path android:fillColor="#8E99C4" android:strokeColor="#22C55E" android:strokeWidth="1.4" android:pathData="M38,38 L38,74" />
+    <path android:fillColor="#F87171" android:pathData="M52,40h8v10h-8z" />
+    <path android:fillColor="#8E99C4" android:strokeColor="#F87171" android:strokeWidth="1.4" android:pathData="M56,34 L56,56" />
+    <path android:fillColor="#22C55E" android:pathData="M70,22h8v26h-8z" />
+    <path android:fillColor="#8E99C4" android:strokeColor="#22C55E" android:strokeWidth="1.4" android:pathData="M74,14 L74,54" />
+    <!-- flecha de margen, subiendo -->
+    <path android:fillColor="#00000000" android:strokeColor="#22D3EE" android:strokeWidth="3.2" android:pathData="M14,70 L36,48 L54,56 L82,20" />
+    <path android:fillColor="#22D3EE" android:pathData="M82,20 L70,22 L80,32 Z" />
+</vector>
