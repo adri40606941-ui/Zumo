@@ -1,0 +1,34 @@
+name: Sonda temporal de transferencias
+on:
+  push:
+    branches: [zumocripto-transferir]
+jobs:
+  sonda:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Pedir cada endpoint
+        run: |
+          mkdir -p out
+          : > out/sonda.txt
+          for u in \
+            "https://api.kucoin.com/api/v3/currencies/USDT" \
+            "https://api.kucoin.com/api/v3/currencies" \
+            "https://api.gateio.ws/api/v4/spot/currencies/USDT" \
+            "https://api.gateio.ws/api/v4/spot/currencies" \
+            "https://api.bitget.com/api/v2/spot/public/coins?coin=USDT" \
+            "https://api.bitget.com/api/v2/spot/public/coins" \
+            "https://www.okx.com/api/v5/asset/currencies" \
+            "https://api.bybit.com/v5/asset/coin/query-info" \
+            "https://api.mexc.com/api/v3/capital/config/getall" \
+            "https://api.binance.com/sapi/v1/capital/config/getall" ; do
+            echo "===== $u" >> out/sonda.txt
+            curl -s -m 60 -o /tmp/r.json -w "HTTP %{http_code} bytes %{size_download}\n" "$u" >> out/sonda.txt
+            head -c 1500 /tmp/r.json >> out/sonda.txt; echo >> out/sonda.txt; echo >> out/sonda.txt
+          done
+      - name: Publicar resultado
+        run: |
+          cd out && git init -q && git checkout -q -b sonda-salida && git add -A
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -qm "sonda transferencias"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" sonda-salida
