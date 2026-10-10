@@ -57,6 +57,8 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
     private val botonProbar: TextView
     private val cajaFiltros = ui.horizontal()
     private val cajaResultados = ui.vertical()
+    private val tarjetaConectan = ui.tarjeta()
+    private val cajaConectan = ui.vertical()
     private lateinit var chipAsn: TextView
     private lateinit var chipPuertos: TextView
     private val chipsSalida = ArrayList<Pair<Salida, TextView>>()
@@ -149,6 +151,15 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
         botonProbar = ui.boton("🧪  PROBAR HTTP DE CADA SUBDOMINIO", relleno = false) { if (probando) detenerPrueba() else empezarPrueba() }
         botonProbar.visibility = View.GONE
         col.addView(botonProbar, ui.params(arriba = 14))
+
+        // Debajo del todo: los subdominios que conectaron por el 80 y/o el 443 al probar.
+        val cabC = ui.horizontal()
+        cabC.addView(ui.texto("✅  Conectan por 80 / 443", 16f, Paleta.TEXTO, true), ui.params(ancho = 0, peso = 1f))
+        cabC.addView(ui.chip("Copiar", false) { copiarConectan() }, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT))
+        tarjetaConectan.addView(cabC)
+        tarjetaConectan.addView(cajaConectan, ui.params(arriba = 8))
+        tarjetaConectan.visibility = View.GONE
+        col.addView(tarjetaConectan, ui.params(arriba = 14))
 
         vista.addView(col)
         pintarEstado()
@@ -333,7 +344,39 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
 
     private fun copia(): List<Subdominio> = synchronized(candado) { encontrados.sortedBy { it.nombre } }
 
+    /** Por cada subdominio probado, los puertos 80 y 443 por los que sí conectó (contestó algo). */
+    private fun conectan(): List<Pair<String, List<Int>>> = copia().mapNotNull { s ->
+        val ps = s.pruebas.filter { (it.puerto == 80 || it.puerto == 443) && it.tipo != null }.map { it.puerto }.distinct().sorted()
+        if (ps.isEmpty()) null else s.nombre to ps
+    }
+
+    private fun pintarConectan() {
+        val lista = conectan()
+        val hayPruebas = copia().any { it.pruebas.isNotEmpty() }
+        tarjetaConectan.visibility = if (hayPruebas) View.VISIBLE else View.GONE
+        cajaConectan.removeAllViews()
+        if (!hayPruebas) return
+        if (lista.isEmpty()) { cajaConectan.addView(ui.texto("Ninguno conectó por el 80 ni el 443.", 13f, Paleta.APAGADO)); return }
+        cajaConectan.addView(ui.texto("${lista.size} subdominios", 12f, Paleta.APAGADO))
+        for ((nombre, ps) in lista.take(MAX_FILAS)) {
+            val l = ui.horizontal()
+            l.addView(ui.texto(nombre, 14f, Paleta.CYAN, true), ui.params(ancho = 0, peso = 1f))
+            l.addView(ui.texto(ps.joinToString(" · "), 14f, Paleta.VERDE, true))
+            cajaConectan.addView(l, ui.params(arriba = 6))
+        }
+        if (lista.size > MAX_FILAS) cajaConectan.addView(ui.texto("… y ${lista.size - MAX_FILAS} más. Usá Copiar para llevarte todos.", 12f, Paleta.AMARILLO), ui.params(arriba = 6))
+    }
+
+    private fun copiarConectan() {
+        val t = conectan().joinToString("\n") { (n, ps) -> n + "  " + ps.joinToString(",") }
+        if (t.isEmpty()) { toast("No hay resultados"); return }
+        val cm = act.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("Zumo Port", t))
+        toast("Copiado")
+    }
+
     private fun pintarResultados() {
+        pintarConectan()
         val todos = copia()
         cajaFiltros.removeAllViews()
         cajaResultados.removeAllViews()
