@@ -44,8 +44,8 @@ class Hallazgo(
 /** Cuántos hilos y cuánto esperar por puerto. Suave cuida la batería y la red; Rápido barre más por segundo. */
 enum class Velocidad(val titulo: String, val hilos: Int, val esperaMs: Int) {
     SUAVE("Suave", 40, 1500),
-    NORMAL("Normal", 150, 1000),
-    RAPIDA("Rápida", 400, 600),
+    NORMAL("Normal", 300, 800),
+    RAPIDA("Rápida", 600, 500),
 }
 
 class Opciones(
@@ -72,39 +72,51 @@ class Escaner(private val resolver: (String) -> String? = { n -> resolverIpv4(n)
         alAvanzar: (Long, Long) -> Unit,
     ) {
         cancelado.set(false)
-        val pool = Executors.newFixedThreadPool(opc.velocidad.hilos)
+        val pool = Hilos.crear(opc.velocidad.hilos)
+        val dns = Hilos.crear(DNS_HILOS)                 // los nombres se resuelven aparte, para que un DNS lento no frene las conexiones
         val cupo = Semaphore(opc.velocidad.hilos * 4)
+        val cupoDns = Semaphore(DNS_HILOS * 2)
         val hechos = AtomicLong(0)
         val totalTareas = total * puertos.size
-        val ips = ConcurrentHashMap<String, String>()
         var ultimoAviso = 0L
+        fun adquirir(s: Semaphore): Boolean {
+            while (!cancelado.get()) if (s.tryAcquire(100, TimeUnit.MILLISECONDS)) return true
+            return false
+        }
         try {
             for (equipo in equipos) {
-                for (puerto in puertos) {
-                    if (cancelado.get()) break
-                    cupo.acquire()
-                    if (cancelado.get()) { cupo.release(); break }
-                    pool.execute {
-                        try {
-                            if (!cancelado.get()) {
-                                val ip = ips.getOrPut(equipo) { resolver(equipo) ?: "" }
-                                if (ip.isNotEmpty()) sondear(equipo, ip, puerto, opc)?.let(alHallar)
+                if (!adquirir(cupoDns)) break
+                dns.execute {
+                    try {
+                        if (!cancelado.get()) {
+                            val ip = resolver(equipo) ?: ""
+                            if (ip.isEmpty()) hechos.addAndGet(puertos.size.toLong())      // no existe: no hay nada que probar
+                            else for (puerto in puertos) {
+                                if (!adquirir(cupo)) break
+                                pool.execute {
+                                    try {
+                                        if (!cancelado.get()) sondear(equipo, ip, puerto, opc)?.let(alHallar)
+                                    } catch (_: Exception) {
+                                    } finally {
+                                        hechos.incrementAndGet()
+                                        cupo.release()
+                                    }
+                                }
                             }
-                        } catch (_: Exception) {
-                        } finally {
-                            hechos.incrementAndGet()
-                            cupo.release()
                         }
+                    } catch (_: Exception) {
+                    } finally {
+                        cupoDns.release()
                     }
-                    val ahora = System.currentTimeMillis()
-                    if (ahora - ultimoAviso > 150) { ultimoAviso = ahora; alAvanzar(hechos.get(), totalTareas) }
                 }
-                if (cancelado.get()) break
+                val ahora = System.currentTimeMillis()
+                if (ahora - ultimoAviso > 150) { ultimoAviso = ahora; alAvanzar(hechos.get(), totalTareas) }
             }
         } finally {
+            dns.shutdown()
+            Hilos.esperar(dns, 60, cancelado)
             pool.shutdown()
-            if (cancelado.get()) pool.shutdownNow()
-            try { pool.awaitTermination(1, TimeUnit.HOURS) } catch (_: InterruptedException) { pool.shutdownNow() }
+            Hilos.esperar(pool, 60, cancelado)
             alAvanzar(hechos.get(), totalTareas)
         }
     }
@@ -232,6 +244,7 @@ class Escaner(private val resolver: (String) -> String? = { n -> resolverIpv4(n)
     }
 
     companion object {
+        const val DNS_HILOS = 64
         val PUERTOS_CON_SALUDO = setOf(21, 22, 25, 110, 143, 465, 587, 993, 995, 3306, 5900)
 
         /** Un contexto TLS que acepta cualquier certificado: acá solo se mira si el puerto contesta, no se envía nada privado. */

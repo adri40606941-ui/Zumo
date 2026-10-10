@@ -388,9 +388,14 @@ class PaginaEscanear(private val act: Activity, private val ui: Ui, private val 
         return sb.toString().trim()
     }
 
+    /** Los equipos con el 80 o el 443 en verde (respuesta web 2xx/3xx), separados por coma: se pegan tal cual en otro escaneo. */
+    private fun textoOk(): String =
+        copia().filter { eq -> eq.hallazgos.any { it.webOk && (it.puerto == 80 || it.puerto == 443) } }
+            .map { if (it.nombre.isNotBlank()) it.nombre else it.ip }.distinct().joinToString(",")
+
     private fun copiar() {
-        val t = textoPlano()
-        if (t.isEmpty()) { toast("No hay resultados"); return }
+        val t = textoOk()
+        if (t.isEmpty()) { toast("Ningún 80 ni 443 respondió bien (verde)"); return }
         val cm = act.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Zumo Port", t))
         toast("Copiado")
