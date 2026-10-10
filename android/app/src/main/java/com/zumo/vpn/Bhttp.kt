@@ -21,6 +21,8 @@ object Bhttp {
     private const val SUBIDA_MAX = 16384
     private const val BAJADA_TAM = 16384
     private const val BAJADA_CANT = 4
+    private const val INTENTOS = 4               // reintentos de un pedido antes de dar la sesión por perdida
+    private const val PAUSA_REINTENTO_MS = 250L
 
     /** Flujo de claves: bloque = sid + modo + seq(8) + resp + contador(4); SHA-256; XOR cada 32 bytes. */
     fun xor(sid: ByteArray, modo: Int, seq: Long, resp: Boolean, datos: ByteArray, off: Int = 0, len: Int = datos.size - off): ByteArray {
@@ -171,11 +173,13 @@ object Bhttp {
         }
 
         /** Un pedido y su respuesta por una conexión persistente; si el servidor la cerró (límite de
-         *  pedidos por conexión, inactividad), se abre otra y se repite una vez. */
+         *  pedidos por conexión, inactividad) o la red parpadeó, se abre otra y se repite hasta [INTENTOS] veces,
+         *  esperando un poco más cada vez. */
         private fun pedirPor(get: () -> Socket?, set: (Socket?) -> Unit, datos: ByteArray, cant: Int): List<Respuesta> {
             var ultimo: Exception? = null
-            repeat(2) {
+            repeat(INTENTOS) { n ->
                 try {
+                    if (n > 0) Thread.sleep(PAUSA_REINTENTO_MS * n)
                     var s = get()
                     if (s == null) {
                         s = abrirSocket(); s.soTimeout = 20000; set(s)
@@ -227,7 +231,8 @@ object Bhttp {
                     seqBajada += BAJADA_CANT
                     if (total == 0) {
                         vacias++
-                        if (vacias > 3) Thread.sleep(if (vacias > 100) 40 else 15)
+                        // en reposo se pregunta cada vez menos seguido (menos batería y datos)
+                        if (vacias > 3) Thread.sleep(if (vacias > 600) 80 else if (vacias > 100) 40 else 15)
                     } else vacias = 0
                 }
             } catch (e: Exception) {

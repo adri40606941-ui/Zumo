@@ -105,6 +105,8 @@ object Transport {
                 etapa("Abriendo sesión BHTTP")
                 return Bhttp.abrir { abrirSocket(c, {}, proteger) }
             }
+            // se dice en pantalla qué pasó: si no hay BHTTP en ese puerto, sigue como SSH directo
+            etapa("Ese puerto no es BHTTP: probando SSH directo")
         }
         var s = abrirSocket(c, etapa, proteger)
         val pin = PushbackInputStream(StreamEspia(s.getInputStream(), CrudoDebug.entrada), 8192)

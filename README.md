@@ -47,6 +47,14 @@ zumo
 | **BHTTP** | Transporte BHTTP → SSH local (servidor + adaptador para DTunnel). Hay dos motores a elegir en el panel: BHTTP (el de siempre) y BHTTP v2. |
 | **HCR Server** | Transporte HCR → SSH local, con TLS, plano o `auto`. |
 
+**BHTTP: cómo lo usa la app.** Si en el servidor de la app ponés la IP o el dominio con el puerto de BHTTP y dejás el payload vacío,
+la app prueba el puerto con la misma sonda que usa el panel y, si contesta como BHTTP (v1 o v2), conecta por BHTTP sola; si no, sigue como SSH directo
+y lo dice en pantalla («Ese puerto no es BHTTP: probando SSH directo»). El adaptador de BHTTP (v1) tiene **espera larga**: cuando la app pregunta
+«¿hay datos?» y no hay, espera hasta 1 s en la VPS antes de contestar (`-espera-ms`, 0 la apaga), así que en reposo el tráfico baja ~95 % (medido: de
+~19 KB a ~1 KB cada 10 s) sin sumar demora cuando llegan datos. La app reintenta hasta 4 veces un pedido cortado antes de dar la sesión por perdida.
+Para tener el adaptador nuevo en una VPS que ya tiene BHTTP: panel → BHTTP → Desactivar y Activar de nuevo. En el diagnóstico de BHTTP (y en el estado de BHTTP v2)
+el panel manda la sonda y dice si el puerto contesta como BHTTP. Prueba del adaptador: `python3 tests/prueba-bhttp-espera.py` (x86_64).
+
 Los cuatro transportes (PDirect, BHTTP, HCR, BadVPN) son **paralelos**: cada uno
 entra al mismo `sshd` del puerto 22. No están apilados uno dentro de otro.
 
