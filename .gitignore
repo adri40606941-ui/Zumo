@@ -7,3 +7,9 @@ android/build/
 android/app/build/
 android/local.properties
 *.jks
+
+# Zumo Port (app Android aparte)
+zumoport/.gradle/
+zumoport/build/
+zumoport/app/build/
+zumoport/local.properties
