@@ -421,15 +421,9 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
             .show()
     }
 
+    /** Solo los nombres de dominio, uno por línea (sin IP, ASN ni puertos). */
     private fun textoPlano(): String =
-        copia().filter { it.resuelve || mostrarSinIp }.joinToString("\n") { s ->
-            val sb = StringBuilder(s.nombre)
-            sb.append(if (s.resuelve) "  " + s.ips.joinToString(",") else "  (sin IP)")
-            if (s.asns.isNotEmpty()) sb.append("  ").append(s.asns.joinToString(" / ") { "AS${it.numero} ${it.nombre}".trim() })
-            if (s.puertos.isNotEmpty()) sb.append("  puertos ").append(s.puertos.joinToString(","))
-            if (s.pruebas.isNotEmpty()) sb.append("  http ").append(s.pruebas.sortedBy { it.puerto }.joinToString(" ") { "${it.puerto}:" + (if (it.http > 0) it.http.toString() else if (it.tipo == null) "x" else "-") })
-            sb.toString()
-        }
+        copia().filter { it.resuelve || mostrarSinIp }.joinToString("\n") { it.nombre }
 
     private fun copiar() {
         val t = textoPlano()
