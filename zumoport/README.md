@@ -24,6 +24,6 @@ Velocidades: Suave (40 hilos), Normal (150), Rápida (400). Tope: 65 536 equipos
 
 ## Compilar el APK
 
-Lo compila GitHub: **Actions → Compilar Zumo Port → Run workflow** (también corre solo al subir cambios de `zumoport/` a `main`). Corre las pruebas, compila y publica `zumo-port.apk` en la rama `apk-port` y como artefacto de la ejecución (`zumo-port-apk`). La firma se crea una vez y queda en el caché de GitHub, así cada APK nuevo se instala encima del anterior.
+Lo compila GitHub: **Actions → Compilar Zumo Port → Run workflow** (también corre solo al subir cambios de `zumoport/` a `main`). Corre las pruebas, compila y publica `zumo-port.apk` en la rama `apk-port` y como artefacto de la ejecución (`zumo-port-apk`). La firma se crea una vez y queda en el caché de GitHub, así cada APK nuevo se instala encima del anterior. El caché se borra tras 7 días sin compilar: para que la firma no cambie nunca, usa los mismos secretos fijos de Zumo VPN (`ZUMO_KEYSTORE_B64` y `ZUMO_KS_PASS`) si ya los cargaste.
 
 Uso responsable: escaneá solo equipos, redes y dominios tuyos o con permiso de su dueño.

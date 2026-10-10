@@ -2,7 +2,7 @@ name: Compilar Zumo Port
 
 on:
   push:
-    branches: [main, 'bot/zumo-port']
+    branches: [main]
     paths: ['zumoport/**', '.github/workflows/zumoport.yml']
   workflow_dispatch:
 
@@ -37,10 +37,19 @@ jobs:
           path: ks-port
           key: zumoport-keystore-v1
 
+      # Si existen los secretos ZUMO_KEYSTORE_B64 y ZUMO_KS_PASS (los mismos de Zumo VPN) se usa esa clave fija y nunca se pierde.
+      # Si no, se usa la del caché de GitHub (que se borra tras 7 días sin compilar: ahí el próximo APK tendría otra firma).
       - name: Preparar firma
+        env:
+          KS_B64: ${{ secrets.ZUMO_KEYSTORE_B64 }}
+          KS_PASS_FIJA: ${{ secrets.ZUMO_KS_PASS }}
         run: |
           mkdir -p ks-port
-          if [ ! -f ks-port/zumo.jks ]; then
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS_FIJA" ]; then
+            printf '%s' "$KS_B64" | base64 -d > ks-port/zumo.jks
+            printf '%s' "$KS_PASS_FIJA" > ks-port/pass
+            echo "Firma: secreto fijo"
+          elif [ ! -f ks-port/zumo.jks ]; then
             P=$(openssl rand -hex 16)
             keytool -genkeypair -keystore ks-port/zumo.jks -storepass "$P" -keypass "$P" -alias zumo \
               -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=Zumo Port"
