@@ -138,6 +138,13 @@ el payload de cualquiera y tocás **🔨 Compilar y enviarme el APK**. El bot su
 `ZUMO_SERVIDORES` del repo, lanza la compilación en GitHub, espera y te manda el APK por Telegram. Si falla,
 te muestra el final del registro. El mensaje con el payload que escribís se borra del chat.
 
+**Siempre con lo que el bot tiene cargado.** Cada vez que cambiás un servidor en el bot, la lista queda publicada
+(cifrada) en la VPS del bot, en `https://<dominio>/servidores.bin`. Cuando la compilación arranca, por el botón del bot
+o a mano desde GitHub (*Actions → Run workflow*), baja esa lista de la VPS y la usa: la app sale con los servidores
+que el bot tenía en ese momento, sin pasos extra. Si la VPS no responde o la lista viene vacía, usa el secreto
+`ZUMO_SERVIDORES` y, si tampoco hay, `android/servidores.txt`. Esto requiere que el bot tenga dominio
+(`ZUMO_DOMINIO`) y se haya reiniciado con esta versión.
+
 ### Actualizar servidores sin recompilar (botón ↻ de la app)
 
 Para cambiar un host, un puerto o un payload **no hace falta recompilar ni reinstalar** la app.

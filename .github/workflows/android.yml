@@ -83,14 +83,46 @@ jobs:
           path: clave-export/clave-firma.enc
           retention-days: 1
 
-      # Lista de servidores de la app. Por defecto sale de android/servidores.txt; si existe el
-      # secreto ZUMO_SERVIDORES se usa ese texto (mismo formato) y nada queda a la vista en el repo.
+      # Lista de servidores de la app. Primero la que el bot tiene cargada en ese momento (se baja de su VPS); si no responde,
+      # el secreto ZUMO_SERVIDORES (mismo formato, nada queda a la vista en el repo) y, si no hay, android/servidores.txt.
       - name: Servidores de la app (secreto opcional)
         env:
           ZUMO_SERVIDORES: ${{ secrets.ZUMO_SERVIDORES }}
           ZUMO_URL_VPS: ${{ secrets.ZUMO_URL_ACTUALIZAR }}
         run: |
-          if [ -n "$ZUMO_SERVIDORES" ]; then
+          # 1) Lo que el bot tiene cargado en este momento: se baja (cifrada) de la VPS del bot, la misma de donde la baja
+          #    el botón ↻ de la app. Si la VPS no responde o la lista viene vacía, se sigue con el secreto o el archivo.
+          rm -f lista-viva
+          if [ -n "$ZUMO_URL_VPS" ]; then
+            pip install --quiet cryptography
+            python3 - <<'PY'
+          import os, re, sys, urllib.request
+          sys.path.insert(0, "bot")
+          import zs
+          for url in os.environ["ZUMO_URL_VPS"].split("|"):
+              url = url.strip()
+              if not url:
+                  continue
+              try:
+                  req = urllib.request.Request(url, headers={"User-Agent": "zumo-compilacion"})
+                  texto = zs.descifrar_lista(urllib.request.urlopen(req, timeout=20).read())
+              except Exception as e:
+                  print("Lista del bot no disponible en", url.split("/")[2] if "//" in url else url, "-", type(e).__name__)
+                  continue
+              n = sum(1 for l in texto.splitlines() if re.fullmatch(r"\s*\[[^\]=\[]+\]\s*", l))
+              if n:
+                  with open("android/servidores.txt", "w", encoding="utf-8") as f:
+                      f.write(texto)
+                  open("lista-viva", "w").write("1")
+                  print("Lista de servidores: EN VIVO desde el bot (%d servidores)" % n)
+                  break
+              print("La lista del bot vino vacía; se usa el respaldo")
+          PY
+          fi
+          # 2) Respaldo: el secreto ZUMO_SERVIDORES o, si no hay, android/servidores.txt.
+          if [ -f lista-viva ]; then
+            :
+          elif [ -n "$ZUMO_SERVIDORES" ]; then
             printf '%s\n' "$ZUMO_SERVIDORES" > android/servidores.txt
             echo "Lista de servidores: secreto ZUMO_SERVIDORES"
           else

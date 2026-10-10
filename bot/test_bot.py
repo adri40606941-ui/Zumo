@@ -269,6 +269,19 @@ class Pruebas(unittest.TestCase):
             self.assertEqual((bot.texto_minutos(1), bot.texto_minutos(90)), ("1 minuto", "90 minutos"))
             self.assertEqual(bot.fecha_cuenta("2026-12-31"), "2027-01-01")
 
+    def test_guardar_servidores_avisa_para_publicar_en_la_vps(self):
+        """Cada cambio en los servidores se avisa (el bot los publica en la VPS y la compilación baja de ahí lo último)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = cargar_bot(tmp)
+            avisos = []
+            bot.AL_GUARDAR_APP.append(avisos.append)
+            bot.AL_GUARDAR_APP.append(lambda l: 1 / 0)   # un aviso que falla no impide guardar ni avisar a los demás
+            bot.AL_GUARDAR_APP.append(avisos.append)
+            lista = [{"name": "APP 02", "host": "h.com", "port": 80, "payload": "GET /", "tls": False, "sni": ""}]
+            bot.guardar_app(lista)
+            self.assertEqual(bot.cargar_app(), lista)
+            self.assertEqual(avisos, [lista, lista])
+
     def test_servidores_formato_ida_y_vuelta(self):
         import servidores as sv
         t = "[APP 02]\nhost = a.com\npuerto = 8080\npayload = GET / HTTP/1.1[crlf]Host: [host][crlf][crlf]\n\n[APP 05]\nhost = b.com\ntls = si\nsni = x.net\n\n[roto]\nhost =\n"

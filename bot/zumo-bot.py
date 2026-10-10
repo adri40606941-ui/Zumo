@@ -78,12 +78,21 @@ def cargar_app():
         return []
 
 
+# Funciones a las que se avisa cada vez que cambia la lista de servidores (el bot deja ahí la lista publicada en la VPS).
+AL_GUARDAR_APP = []
+
+
 def guardar_app(lista):
     tmp = APPSRV + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(lista, f, ensure_ascii=False, indent=1)
     os.replace(tmp, APPSRV)
+    for aviso in list(AL_GUARDAR_APP):
+        try:
+            aviso(lista)
+        except Exception as e:
+            print("zumo-bot: aviso al guardar la lista falló:", e, flush=True)
 
 
 # ------------------------------------------------------------- apariencia de la app
@@ -1833,6 +1842,9 @@ def main():
                         conecto=srv.AvisoConecto(cuenta, bot.avisar_admins))
         if not publico.hay_lista():
             bot.publicar_en_vps(cargar_app())
+        # Cada cambio en los servidores queda publicado en la VPS al instante: la compilación en GitHub baja de ahí la lista
+        # y así la app sale siempre con los servidores que el bot tiene cargados en ese momento.
+        AL_GUARDAR_APP.append(bot.publicar_en_vps)
     threading.Thread(target=bot.respaldo_diario, daemon=True).start()
     threading.Thread(target=bot.sincronizar_diario, daemon=True).start()
     threading.Thread(target=bot.refrescar_maquinas_loop, daemon=True).start()
