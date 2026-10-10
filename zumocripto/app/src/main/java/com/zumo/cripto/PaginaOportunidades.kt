@@ -84,7 +84,7 @@ class PaginaOportunidades(private val act: Activity, private val almacen: Almace
         }
         t1.addView(chipEnviables, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, arriba = 10))
         t1.addView(ui.chip("✔ Aplicar filtros", false) { versionPintada = -1; pintarEstado() }, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, arriba = 10))
-        t1.addView(ui.texto("«Se pueden enviar» solo muestra activos que podés comprar en el exchange barato y retirar a otro que los reciba, por una misma red. Solo se puede confirmar con KuCoin, Gate.io y Bitget.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
+        t1.addView(ui.texto("«Se pueden enviar» solo muestra activos que podés comprar en el exchange barato y retirar a otro que los reciba, por una misma red. Se confirma sin clave con KuCoin, Gate.io, Bitget, HTX, WhiteBIT, XT.com y Poloniex; con Binance, Bybit, OKX, MEXC y BingX, cargando tu clave en Cuentas.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
         col.addView(t1, ui.params(arriba = 12))
 
         // --- Resultados

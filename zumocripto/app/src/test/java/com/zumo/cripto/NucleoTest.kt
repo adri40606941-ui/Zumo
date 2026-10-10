@@ -443,3 +443,60 @@ class CuentasTest {
         assertTrue(r.fallaron.contains("tu cuenta de Binance (código 401)")); assertEquals(1, r.oportunidades.size)
     }
 }
+
+class MasEnviosTest {
+    @Test fun reconoce_nombres_de_red_de_cada_exchange() {
+        assertEquals("ETH", Redes.canonica("Ethereum(ERC20)"))
+        assertEquals("TRX", Redes.canonica("Tron (TRC20)"))
+        assertEquals("BSC", Redes.canonica("Binance smart chain"))
+        assertEquals("BSC", Redes.canonica("BEP20(BSC)"))
+        assertEquals("ARB", Redes.canonica("Arbitrum One"))
+        assertEquals("ETC", Redes.canonica("ETC"))
+    }
+    @Test fun htx_lee_estado_comision_y_tag() {
+        val d = Transferencias.htx("""{"code":200,"data":[{"currency":"usdt","chains":[
+          {"chain":"trc20usdt","displayName":"TRC20","depositStatus":"allowed","withdrawStatus":"allowed","transactFeeWithdraw":"1","addrWithTag":false,"addrDepositTag":false},
+          {"chain":"arc20usdt","displayName":"ARBITRUM","depositStatus":"allowed","withdrawStatus":"prohibited","transactFeeWithdraw":"0.1","addrWithTag":false,"addrDepositTag":true}]}]}""")
+        val l = d.getValue("USDT")
+        assertTrue(l.first { it.red == "TRX" }.puedeRetirar); assertEquals(1.0, l.first { it.red == "TRX" }.comision!!, 1e-9)
+        val arb = l.first { it.red == "ARB" }
+        assertFalse(arb.puedeRetirar); assertTrue(arb.puedeDepositar); assertTrue(arb.requiereTag)
+    }
+    @Test fun whitebit_cruza_las_listas_de_depositos_y_retiros() {
+        val d = Transferencias.whitebit("""{"AAA":{"can_withdraw":true,"can_deposit":true,"networks":{"deposits":["ERC20","TRC20"],"withdraws":["ERC20"]},"is_memo":false},
+          "BBB":{"can_withdraw":false,"can_deposit":true,"networks":{"deposits":["BTC"],"withdraws":["BTC"]},"is_memo":true}}""")
+        val a = d.getValue("AAA")
+        assertTrue(a.first { it.red == "ETH" }.puedeRetirar); assertFalse(a.first { it.red == "TRX" }.puedeRetirar); assertTrue(a.first { it.red == "TRX" }.puedeDepositar)
+        assertFalse(d.getValue("BBB")[0].puedeRetirar); assertTrue(d.getValue("BBB")[0].requiereTag)
+    }
+    @Test fun xt_usa_la_comision_solo_si_se_cobra_en_el_mismo_activo() {
+        val d = Transferencias.xt("""{"rc":0,"result":[{"currency":"aaa","supportChains":[
+          {"chain":"Tron","depositEnabled":true,"withdrawEnabled":true,"withdrawFeeAmount":0.5,"withdrawFeeCurrency":"aaa"},
+          {"chain":"Ethereum","depositEnabled":true,"withdrawEnabled":true,"withdrawFeeAmount":3,"withdrawFeeCurrency":"eth"}]}]}""")
+        val l = d.getValue("AAA")
+        assertEquals(0.5, l.first { it.red == "TRX" }.comision!!, 1e-9); assertNull(l.first { it.red == "ETH" }.comision)
+    }
+    @Test fun poloniex_lee_la_lista_y_salta_los_deslistados() {
+        val d = Transferencias.poloniex("""[{"coin":"AAA","delisted":false,"networkList":[{"name":"Binance smart chain","blockchain":"BSC","withdrawalEnable":true,"depositEnable":false,"withdrawFee":"864.5766"}]},
+          {"coin":"OLD","delisted":true,"networkList":[{"name":"Tron","withdrawalEnable":true,"depositEnable":true,"withdrawFee":"1"}]}]""")
+        val r = d.getValue("AAA")[0]
+        assertEquals("BSC", r.red); assertTrue(r.puedeRetirar); assertFalse(r.puedeDepositar); assertEquals(864.5766, r.comision!!, 1e-6)
+        assertFalse(d.containsKey("OLD"))
+    }
+    @Test fun mexc_y_bingx_leen_redes_de_la_cuenta() {
+        val m = Privadas.mexc("""[{"coin":"AAA","networkList":[{"netWork":"TRX","network":"Tron(TRC20)","withdrawEnable":true,"depositEnable":true,"withdrawFee":"1.2","sameAddress":true}]}]""")
+        assertEquals("TRX", m.getValue("AAA")[0].red); assertTrue(m.getValue("AAA")[0].requiereTag); assertEquals(1.2, m.getValue("AAA")[0].comision!!, 1e-9)
+        val b = Privadas.bingx("""{"code":0,"data":[{"coin":"AAA","networkList":[{"network":"BEP20","withdrawEnable":false,"depositEnable":true,"withdrawFee":"0.3"}]}]}""")
+        assertEquals("BSC", b.getValue("AAA")[0].red); assertFalse(b.getValue("AAA")[0].puedeRetirar)
+    }
+    @Test fun mexc_y_bingx_firman_y_mandan_su_encabezado() {
+        val m = Privadas.MEXC.pedido(Credencial("MEXC", "K", "S"), 5)
+        assertEquals("K", m.cabeceras["X-MEXC-APIKEY"]); assertTrue(m.url.endsWith("signature=" + Firmas.hmacHex("S", "timestamp=5&recvWindow=10000")))
+        val b = Privadas.BINGX.pedido(Credencial("BingX", "K", "S"), 5)
+        assertEquals("K", b.cabeceras["X-BX-APIKEY"]); assertTrue(b.url.endsWith("signature=" + Firmas.hmacHex("S", "recvWindow=10000&timestamp=5")))
+    }
+    @Test fun los_nombres_de_las_fuentes_coinciden_con_los_exchanges_de_precios() {
+        val precios = Exchanges.TODAS.map { it.nombre }.toSet()
+        assertTrue((Transferencias.FUENTES.map { it.nombre } + Privadas.FUENTES.map { it.nombre }).all { it in precios })
+    }
+}

@@ -119,7 +119,7 @@ class MainActivity : Activity() {
             "• Con el campo de comisión ves cuánto te queda neto. Tocando una fila ves todos los exchanges y un enlace para operar.")
 
         seccion("Cuentas (claves API)",
-            "En la pestaña Cuentas podés cargar una clave API de solo lectura de Binance, Bybit u OKX. Con ella la app lee las redes de retiro y depósito reales de tu cuenta y la comisión de retiro, así sabe si podés mover cada cripto de un exchange a otro. Nunca pidas ni uses permisos de retiro o trading: no hacen falta. La clave queda cifrada en el teléfono.")
+            "En la pestaña Cuentas podés cargar una clave API de solo lectura de Binance, Bybit, OKX, MEXC o BingX. Con ella la app lee las redes de retiro y depósito reales de tu cuenta y la comisión de retiro. KuCoin, Gate.io, Bitget, HTX, WhiteBIT, XT.com y Poloniex ya se leen sin clave; con eso la app sabe si podés mover cada cripto de un exchange a otro. Crypto.com, LBank y Bitstamp quedan «no verificable». Nunca pidas ni uses permisos de retiro o trading: no hacen falta. La clave queda cifrada en el teléfono.")
 
         seccion("Sobre los datos",
             "Cada exchange publica sus precios en tiempo real sin clave. Algunos bloquean ciertos países: si no podés leer uno, la app lo dice en el resumen y compara con los demás. Solo se usan pares contra USDT, USDC o USD, y se ignoran los que tienen poco volumen, porque sus precios no son confiables.")

@@ -69,7 +69,7 @@ class FuentePrivada(
     fun parsear(json: String): Map<String, List<RedDe>> = try { leer(json) } catch (_: Exception) { emptyMap() }
 }
 
-/** Los tres exchanges que ya se leen con clave. Cada uno firma distinto; los lectores son funciones puras. */
+/** Los exchanges que se leen con clave de solo lectura. Cada uno firma distinto; los lectores son funciones puras. */
 object Privadas {
     private const val VENTANA_MS = 10000
 
@@ -141,6 +141,52 @@ object Privadas {
         return out
     }
 
+    /** MEXC GET /api/v3/capital/config/getall: [] con coin y networkList[] (netWork/network, withdrawEnable, depositEnable, withdrawFee, sameAddress = lleva memo). */
+    fun mexc(json: String): Map<String, List<RedDe>> {
+        val out = HashMap<String, MutableList<RedDe>>()
+        val filas = JSONArray(json)
+        for (i in 0 until filas.length()) {
+            val m = filas.optJSONObject(i) ?: continue
+            val activo = m.optString("coin").uppercase()
+            val redes = m.optJSONArray("networkList") ?: continue
+            if (activo.isBlank()) continue
+            for (j in 0 until redes.length()) {
+                val r = redes.optJSONObject(j) ?: continue
+                out.getOrPut(activo) { ArrayList() }.add(RedDe(
+                    red = Redes.canonica(r.optString("netWork").ifBlank { r.optString("network") }),
+                    puedeRetirar = r.optBoolean("withdrawEnable", false),
+                    puedeDepositar = r.optBoolean("depositEnable", false),
+                    comision = decimal(r, "withdrawFee"),
+                    requiereTag = r.optBoolean("sameAddress", false),
+                ))
+            }
+        }
+        return out
+    }
+
+    /** BingX GET /openApi/wallets/v1/capital/config/getall: data[] con coin y networkList[] (network, withdrawEnable, depositEnable, withdrawFee). */
+    fun bingx(json: String): Map<String, List<RedDe>> {
+        val out = HashMap<String, MutableList<RedDe>>()
+        val filas = JSONObject(json).getJSONArray("data")
+        for (i in 0 until filas.length()) {
+            val m = filas.optJSONObject(i) ?: continue
+            val activo = m.optString("coin").uppercase()
+            val redes = m.optJSONArray("networkList") ?: continue
+            if (activo.isBlank()) continue
+            for (j in 0 until redes.length()) {
+                val r = redes.optJSONObject(j) ?: continue
+                out.getOrPut(activo) { ArrayList() }.add(RedDe(
+                    red = Redes.canonica(r.optString("network").ifBlank { r.optString("name") }),
+                    puedeRetirar = r.optBoolean("withdrawEnable", false),
+                    puedeDepositar = r.optBoolean("depositEnable", false),
+                    comision = decimal(r, "withdrawFee"),
+                    requiereTag = false,
+                ))
+            }
+        }
+        return out
+    }
+
     fun horaOkx(ms: Long): String {
         val f = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
         f.timeZone = TimeZone.getTimeZone("UTC")
@@ -178,5 +224,21 @@ object Privadas {
         )
     }) { okx(it) }
 
-    val FUENTES: List<FuentePrivada> = listOf(BINANCE, BYBIT, OKX)
+    val MEXC = FuentePrivada("MEXC", false, { c, ahora ->
+        val q = "timestamp=$ahora&recvWindow=$VENTANA_MS"
+        PedidoFirmado(
+            "https://api.mexc.com/api/v3/capital/config/getall?$q&signature=${Firmas.hmacHex(c.secreto, q)}",
+            mapOf("X-MEXC-APIKEY" to c.clave),
+        )
+    }) { mexc(it) }
+
+    val BINGX = FuentePrivada("BingX", false, { c, ahora ->
+        val q = "recvWindow=$VENTANA_MS&timestamp=$ahora"
+        PedidoFirmado(
+            "https://open-api.bingx.com/openApi/wallets/v1/capital/config/getall?$q&signature=${Firmas.hmacHex(c.secreto, q)}",
+            mapOf("X-BX-APIKEY" to c.clave),
+        )
+    }) { bingx(it) }
+
+    val FUENTES: List<FuentePrivada> = listOf(BINANCE, BYBIT, OKX, MEXC, BINGX)
 }
