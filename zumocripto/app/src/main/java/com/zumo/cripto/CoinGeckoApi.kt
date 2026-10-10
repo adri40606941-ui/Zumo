@@ -12,8 +12,15 @@ class ResultadoPedido(val codigo: Int, val cuerpo: String?)
 object CoinGeckoApi {
     const val BASE = "https://api.coingecko.com/api/v3"
 
-    fun urlMercados(cantidad: Int): String =
-        "$BASE/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=$cantidad&page=1&sparkline=false&price_change_percentage=false"
+    /** CoinGecko devuelve como mucho 250 monedas por página: para llegar a un puesto alto hay que pedir varias páginas. */
+    const val POR_PAGINA = 250
+
+    /** Página [pagina] (1 = puestos 1 a 250) del ranking por capitalización. */
+    fun urlMercados(pagina: Int): String =
+        "$BASE/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=$POR_PAGINA&page=$pagina&sparkline=false&price_change_percentage=false"
+
+    /** Número de página que contiene el puesto [puesto] (1-based). */
+    fun paginaDe(puesto: Int): Int = (puesto - 1) / POR_PAGINA + 1
 
     fun urlTickers(id: String): String =
         "$BASE/coins/$id/tickers?include_exchange_logo=false&depth=false&order=volume_desc"
@@ -45,8 +52,8 @@ object Red {
 
 /** Convierte el JSON de CoinGecko en los modelos de la app. Funciones puras, sin red: fáciles de probar. */
 object Parseo {
-    /** La respuesta de /coins/markets: una lista de monedas. */
-    fun monedas(json: String): List<Moneda> {
+    /** La respuesta de /coins/markets: una lista de monedas. [base] es cuántas monedas hay antes de esta página (para el puesto de respaldo). */
+    fun monedas(json: String, base: Int = 0): List<Moneda> {
         val out = ArrayList<Moneda>()
         val arr = try { JSONArray(json) } catch (_: Exception) { return out }
         for (i in 0 until arr.length()) {
@@ -54,7 +61,7 @@ object Parseo {
             val id = o.optString("id"); if (id.isBlank()) continue
             val precio = o.optDouble("current_price", Double.NaN)
             if (precio.isNaN() || precio <= 0) continue
-            val puesto = o.optInt("market_cap_rank", i + 1)
+            val puesto = o.optInt("market_cap_rank", base + i + 1)
             out.add(Moneda(id, o.optString("symbol").uppercase(), o.optString("name", id), precio, puesto))
         }
         return out

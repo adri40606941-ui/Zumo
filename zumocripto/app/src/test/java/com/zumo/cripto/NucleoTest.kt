@@ -121,14 +121,14 @@ class EscaneoTest {
 
     @Test fun recorre_las_monedas_y_avisa_las_que_superan_el_minimo() {
         val respuestas = mapOf(
-            CoinGeckoApi.urlMercados(2) to ResultadoPedido(200, mercados("a", "b")),
+            CoinGeckoApi.urlMercados(1) to ResultadoPedido(200, mercados("a", "b")),
             CoinGeckoApi.urlTickers("a") to ResultadoPedido(200, tickers(100.0, 110.0)),   // 10 %
             CoinGeckoApi.urlTickers("b") to ResultadoPedido(200, tickers(100.0, 101.0)),   // 1 %
         )
         val hallados = CopyOnWriteArrayList<Oportunidad>()
         val estados = CopyOnWriteArrayList<String>()
         Escaneo({ url -> respuestas[url] ?: ResultadoPedido(404, null) }, dormir = {})
-            .buscar(2, 5.0, 0L, { estados.add(it) }, { hallados.add(it) }, { _, _ -> })
+            .buscar(1, 2, 5.0, 0L, { estados.add(it) }, { hallados.add(it) }, { _, _ -> })
         assertEquals(listOf("a"), hallados.map { it.moneda.id })
         assertTrue(estados.any { it.contains("Consultando") })
     }
@@ -146,7 +146,7 @@ class EscaneoTest {
                 } else respuestas[url] ?: ResultadoPedido(404, null)
             },
             dormir = { dormidas.add(it) },
-        ).buscar(1, 1.0, 0L, {}, { hallados.add(it) }, { _, _ -> })
+        ).buscar(1, 1, 1.0, 0L, {}, { hallados.add(it) }, { _, _ -> })
         assertEquals(3, pedidosTickersA)
         assertEquals(1, hallados.size)
         assertTrue("se esperó cada vez más", dormidas.size >= 2 && dormidas[0] < dormidas[1])
@@ -154,14 +154,14 @@ class EscaneoTest {
 
     @Test fun se_rinde_tras_los_reintentos_y_sigue_con_la_siguiente_moneda() {
         val respuestas = mapOf(
-            CoinGeckoApi.urlMercados(2) to ResultadoPedido(200, mercados("a", "b")),
+            CoinGeckoApi.urlMercados(1) to ResultadoPedido(200, mercados("a", "b")),
             CoinGeckoApi.urlTickers("a") to ResultadoPedido(429, null),
             CoinGeckoApi.urlTickers("b") to ResultadoPedido(200, tickers(100.0, 120.0)),
         )
         val hallados = CopyOnWriteArrayList<Oportunidad>()
         val avances = AtomicInteger(0)
         Escaneo({ respuestas[it] ?: ResultadoPedido(404, null) }, dormir = {})
-            .buscar(2, 1.0, 0L, {}, { hallados.add(it) }, { _, _ -> avances.incrementAndGet() })
+            .buscar(1, 2, 1.0, 0L, {}, { hallados.add(it) }, { _, _ -> avances.incrementAndGet() })
         assertEquals(listOf("b"), hallados.map { it.moneda.id })
         assertEquals(2, avances.get())
     }
@@ -172,14 +172,14 @@ class EscaneoTest {
         Escaneo(
             pedir = { url -> if (url.contains("/tickers")) { llamadasTickers++; ResultadoPedido(200, tickers(1.0, 2.0)) } else ResultadoPedido(0, null) },
             dormir = {},
-        ).buscar(5, 1.0, 0L, { estados.add(it) }, {}, { _, _ -> })
+        ).buscar(1, 5, 1.0, 0L, { estados.add(it) }, {}, { _, _ -> })
         assertEquals(0, llamadasTickers)
         assertTrue(estados.any { it.contains("No se pudo consultar") })
     }
 
     @Test fun busca_una_sola_cripto_por_simbolo_sin_importar_mayusculas() {
         val respuestas = mapOf(
-            CoinGeckoApi.urlMercados(250) to ResultadoPedido(200, mercados("a", "b")),
+            CoinGeckoApi.urlMercados(1) to ResultadoPedido(200, mercados("a", "b")),
             CoinGeckoApi.urlTickers("b") to ResultadoPedido(200, tickers(100.0, 103.0)),
         )
         val estados = CopyOnWriteArrayList<String>()
@@ -190,7 +190,7 @@ class EscaneoTest {
     }
 
     @Test fun busqueda_individual_sin_coincidencia_avisa_y_devuelve_null() {
-        val respuestas = mapOf(CoinGeckoApi.urlMercados(250) to ResultadoPedido(200, mercados("a")))
+        val respuestas = mapOf(CoinGeckoApi.urlMercados(1) to ResultadoPedido(200, mercados("a")))
         val estados = CopyOnWriteArrayList<String>()
         val op = Escaneo({ respuestas[it] ?: ResultadoPedido(404, null) }, dormir = {})
             .buscarUna("zzz", { estados.add(it) })
@@ -207,11 +207,11 @@ class EscaneoTest {
 
     @Test fun cancelar_corta_entre_una_moneda_y_otra() {
         val ids = (1..50).map { "m$it" }.toTypedArray()
-        val respuestas = mutableMapOf(CoinGeckoApi.urlMercados(50) to ResultadoPedido(200, mercados(*ids)))
+        val respuestas = mutableMapOf(CoinGeckoApi.urlMercados(1) to ResultadoPedido(200, mercados(*ids)))
         for (id in ids) respuestas[CoinGeckoApi.urlTickers(id)] = ResultadoPedido(200, tickers(100.0, 120.0))
         val e = Escaneo({ respuestas[it] ?: ResultadoPedido(404, null) }, dormir = {})
         val hallados = CopyOnWriteArrayList<Oportunidad>()
-        val t = Thread { e.buscar(50, 1.0, 50L, {}, { hallados.add(it); if (hallados.size == 3) e.cancelar() }, { _, _ -> }) }
+        val t = Thread { e.buscar(1, 50, 1.0, 50L, {}, { hallados.add(it); if (hallados.size == 3) e.cancelar() }, { _, _ -> }) }
         t.start(); t.join(10000)
         assertFalse(t.isAlive)
         assertTrue("se cortó antes de terminar las 50", hallados.size < 50)
@@ -256,17 +256,68 @@ class PausaAdaptativaTest {
 
     @Test fun el_escaneo_acorta_la_pausa_entre_monedas_si_todo_responde_bien() {
         val ids = (1..6).map { "m$it" }
-        val respuestas = mutableMapOf(CoinGeckoApi.urlMercados(6) to ResultadoPedido(200,
+        val respuestas = mutableMapOf(CoinGeckoApi.urlMercados(1) to ResultadoPedido(200,
             "[" + ids.joinToString(",") { """{"id":"$it","symbol":"$it","name":"$it","current_price":100,"market_cap_rank":1}""" } + "]"))
         for (id in ids) respuestas[CoinGeckoApi.urlTickers(id)] = ResultadoPedido(200,
             """{"tickers":[{"base":"X","target":"USDT","market":{"name":"a"},"converted_last":{"usd":100},"converted_volume":{"usd":1},"trust_score":"green","is_anomaly":false,"is_stale":false},{"base":"X","target":"USDT","market":{"name":"b"},"converted_last":{"usd":101},"converted_volume":{"usd":1},"trust_score":"green","is_anomaly":false,"is_stale":false}]}""")
         val pausas = CopyOnWriteArrayList<Long>()
         Escaneo({ respuestas[it] ?: ResultadoPedido(404, null) }, dormir = { pausas.add(it) })
-            .buscar(6, 0.0, 2000L, {}, {}, { _, _ -> })
+            .buscar(1, 6, 0.0, 2000L, {}, {}, { _, _ -> })
         // 5 esperas entre 6 monedas: cada una más corta que la anterior, sin bajar del mínimo
         assertEquals(5, pausas.size)
         assertTrue(pausas.zipWithNext().all { (a, b) -> b <= a })
         assertTrue(pausas.last() >= Escaneo.PAUSA_MIN_MS)
         assertTrue(pausas.last() < 2000L)
+    }
+}
+
+class RangoRankingTest {
+    private val tick = """{"tickers":[{"base":"X","target":"USDT","market":{"name":"a"},"converted_last":{"usd":100},"converted_volume":{"usd":1},"trust_score":"green","is_anomaly":false,"is_stale":false},{"base":"X","target":"USDT","market":{"name":"b"},"converted_last":{"usd":110},"converted_volume":{"usd":1},"trust_score":"green","is_anomaly":false,"is_stale":false}]}"""
+
+    @Test fun pide_solo_la_pagina_del_rango_y_filtra_por_puesto() {
+        val pagina21 = """[
+          {"id":"x1","symbol":"x1","name":"x1","current_price":1,"market_cap_rank":4999},
+          {"id":"x2","symbol":"x2","name":"x2","current_price":1,"market_cap_rank":5001},
+          {"id":"x3","symbol":"x3","name":"x3","current_price":1,"market_cap_rank":5002},
+          {"id":"x4","symbol":"x4","name":"x4","current_price":1,"market_cap_rank":5003}]"""
+        val pedidos = CopyOnWriteArrayList<String>()
+        val hallados = CopyOnWriteArrayList<Oportunidad>()
+        Escaneo({ url ->
+            pedidos.add(url)
+            when {
+                url == CoinGeckoApi.urlMercados(21) -> ResultadoPedido(200, pagina21)
+                url.contains("/tickers") -> ResultadoPedido(200, tick)
+                else -> ResultadoPedido(404, null)
+            }
+        }, dormir = {}).buscar(5001, 5002, 0.0, 0L, {}, { hallados.add(it) }, { _, _ -> })
+        assertEquals(CoinGeckoApi.urlMercados(21), pedidos.first())
+        assertEquals(setOf("x2", "x3"), hallados.map { it.moneda.id }.toSet())
+        assertTrue(pedidos.none { it.contains("x1/") || it.contains("x4/") })
+    }
+
+    @Test fun un_rango_que_cruza_dos_paginas_pide_las_dos() {
+        val p1 = """[{"id":"p1","symbol":"p1","name":"p1","current_price":1,"market_cap_rank":245}]"""
+        val p2 = """[{"id":"p2","symbol":"p2","name":"p2","current_price":1,"market_cap_rank":255}]"""
+        val pedidos = CopyOnWriteArrayList<String>()
+        val hallados = CopyOnWriteArrayList<Oportunidad>()
+        Escaneo({ url ->
+            pedidos.add(url)
+            when {
+                url == CoinGeckoApi.urlMercados(1) -> ResultadoPedido(200, p1)
+                url == CoinGeckoApi.urlMercados(2) -> ResultadoPedido(200, p2)
+                url.contains("/tickers") -> ResultadoPedido(200, tick)
+                else -> ResultadoPedido(404, null)
+            }
+        }, dormir = {}).buscar(240, 260, 0.0, 0L, {}, { hallados.add(it) }, { _, _ -> })
+        assertTrue(pedidos.contains(CoinGeckoApi.urlMercados(1)) && pedidos.contains(CoinGeckoApi.urlMercados(2)))
+        assertEquals(setOf("p1", "p2"), hallados.map { it.moneda.id }.toSet())
+    }
+
+    @Test fun el_rango_se_recorta_al_maximo_por_busqueda() {
+        val pedidos = CopyOnWriteArrayList<String>()
+        Escaneo({ url -> pedidos.add(url); ResultadoPedido(200, "[]") }, dormir = {})
+            .buscar(1, 999999, 0.0, 0L, {}, {}, { _, _ -> })
+        // 1000 puestos = 4 páginas de 250 como máximo
+        assertTrue(pedidos.size <= 4)
     }
 }

@@ -31,12 +31,13 @@ class PaginaOportunidades(private val act: Activity) {
     private var hubo = false
     @Volatile private var mensaje = "Listo para buscar"
     private var inicio = 0L
-    private var cantidad = 100
     private var comision = 0.1
 
     private val campoMargen = ui.campo("Margen mínimo %, por ejemplo 1.0")
     private val campoComision = ui.campo("Comisión por operación %, por ejemplo 0.1")
     private val campoBuscar = ui.campo("BTC, ETH, solana…")
+    private val campoDesde = ui.campo("Desde el puesto")
+    private val campoHasta = ui.campo("Hasta el puesto")
     private val campoClave = ui.campo("Clave de CoinGecko (opcional)")
     private var clave = ""
     private val botonPrincipal: TextView
@@ -45,7 +46,6 @@ class PaginaOportunidades(private val act: Activity) {
     private val barra = Barra(act, ui)
     private val textoResumen = ui.texto("", 13f, Paleta.APAGADO)
     private val cajaResultados = ui.vertical()
-    private val chipsCantidad = ArrayList<Pair<Int, TextView>>()
 
     val vista: ScrollView = ScrollView(act)
 
@@ -59,6 +59,10 @@ class PaginaOportunidades(private val act: Activity) {
     init {
         campoMargen.setText("1.0")
         campoComision.setText("0.1")
+        campoDesde.setText("1")
+        campoHasta.setText("100")
+        campoDesde.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        campoHasta.inputType = android.text.InputType.TYPE_CLASS_NUMBER
         campoMargen.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         campoComision.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         val col = ui.vertical()
@@ -73,20 +77,23 @@ class PaginaOportunidades(private val act: Activity) {
         tUna.addView(botonUna, ui.params(arriba = 10))
         col.addView(tUna)
 
-        // --- Cuántas monedas
+        // --- Qué puestos del ranking revisar
         val t1 = ui.tarjeta()
-        t1.addView(ui.texto("📊  Cuántas criptos revisar", 16f, Paleta.TEXTO, true))
-        val filaC = ui.horizontal()
-        for (c in CANTIDADES) {
-            val chip = ui.chip("Top $c", c == cantidad) { cantidad = c; pintarCantidad() }
-            chipsCantidad.add(c to chip)
-            filaC.addView(chip, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, der = 6))
+        t1.addView(ui.texto("📊  Qué puestos del ranking revisar", 16f, Paleta.TEXTO, true))
+        val filaRango = ui.horizontal()
+        filaRango.addView(campoDesde, ui.params(ancho = 0, peso = 1f, der = 6))
+        filaRango.addView(campoHasta, ui.params(ancho = 0, peso = 1f))
+        t1.addView(filaRango, ui.params(arriba = 10))
+        val filaP = ui.horizontal()
+        for ((nombre, d, h) in PRESETS) {
+            val chip = ui.chip(nombre, false) { campoDesde.setText(d.toString()); campoHasta.setText(h.toString()) }
+            filaP.addView(chip, ui.params(ancho = ViewGroup.LayoutParams.WRAP_CONTENT, der = 6))
         }
-        val scrollC = android.widget.HorizontalScrollView(act)
-        scrollC.isHorizontalScrollBarEnabled = false
-        scrollC.addView(filaC)
-        t1.addView(scrollC, ui.params(arriba = 10))
-        t1.addView(ui.texto("Del ranking de CoinGecko por capitalización. Cuantas más, más tarda (pide de a una para no chocar con el límite de pedidos).", 12f, Paleta.APAGADO), ui.params(arriba = 8))
+        val scrollP = android.widget.HorizontalScrollView(act)
+        scrollP.isHorizontalScrollBarEnabled = false
+        scrollP.addView(filaP)
+        t1.addView(scrollP, ui.params(arriba = 10))
+        t1.addView(ui.texto("Puestos del ranking por capitalización de CoinGecko. Máximo ${Escaneo.MAX_RANGO} por búsqueda. Cuantos más, más tarda: pide de a una para no chocar con el límite de pedidos.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
         t1.addView(campoClave, ui.params(arriba = 12))
         t1.addView(ui.texto("Opcional. Una clave gratuita de CoinGecko (demo) sube el límite de pedidos y la búsqueda va más rápido. No se guarda: pegala cada vez que abras la app.", 12f, Paleta.APAGADO), ui.params(arriba = 8))
         col.addView(t1, ui.params(arriba = 12))
@@ -116,11 +123,8 @@ class PaginaOportunidades(private val act: Activity) {
         col.addView(t4, ui.params(arriba = 14))
 
         vista.addView(col)
-        pintarCantidad()
         pintarEstado()
     }
-
-    private fun pintarCantidad() { for ((c, chip) in chipsCantidad) ui.pintarChip(chip, c == cantidad) }
 
     private fun toast(t: String) { Toast.makeText(act, t, Toast.LENGTH_SHORT).show() }
 
@@ -139,11 +143,12 @@ class PaginaOportunidades(private val act: Activity) {
         if (com == null) { toast("Poné una comisión válida, por ejemplo 0.1"); return }
         comision = com
         ocultarTeclado()
-        val n = cantidad
+        val rango = parseRango() ?: return
         clave = campoClave.text.toString().trim()
         iniciar { e ->
             e.buscar(
-                cantidadMonedas = n,
+                desde = rango.first,
+                hasta = rango.second,
                 margenMinimoPct = margen,
                 pausaMs = PAUSA_MS,
                 alEstado = { mensaje = it },
@@ -151,6 +156,16 @@ class PaginaOportunidades(private val act: Activity) {
                 alAvanzar = { _, _ -> },
             )
         }
+    }
+
+    /** Lee el rango de puestos; avisa y devuelve null si no es válido. */
+    private fun parseRango(): Pair<Int, Int>? {
+        val d = campoDesde.text.toString().trim().toIntOrNull()
+        val h = campoHasta.text.toString().trim().toIntOrNull()
+        if (d == null || h == null || d < 1) { toast("Poné los puestos desde y hasta, por ejemplo 1 y 100"); return null }
+        if (h < d) { toast("El puesto de «hasta» tiene que ser mayor o igual que «desde»"); return null }
+        if (h - d + 1 > Escaneo.MAX_RANGO) { toast("Como máximo ${Escaneo.MAX_RANGO} por búsqueda: achicá el rango"); return null }
+        return d to h
     }
 
     private fun empezarUna() {
@@ -284,6 +299,11 @@ class PaginaOportunidades(private val act: Activity) {
     companion object {
         const val MAX_FILAS = 200
         const val PAUSA_MS = 700L
-        val CANTIDADES = listOf(50, 100, 200, 500)
+        /** Atajos: nombre, puesto desde y puesto hasta. */
+        val PRESETS = listOf(
+            Triple("Top 100", 1, 100),
+            Triple("Top 500", 1, 500),
+            Triple("5000 en adelante", 5000, 5999),
+        )
     }
 }
