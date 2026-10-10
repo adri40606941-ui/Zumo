@@ -317,5 +317,21 @@ class NuevosExchangesTest {
         val r = Exchanges.BITSTAMP.parsear("""[{"pair":"BTC/USD","last":"80000","volume":"2"},{"pair":"BTC/EUR","last":"73000","volume":"9"}]""")
         assertEquals(1, r.size); assertEquals(160000.0, r[0].volumen, 1e-6)
     }
-    @Test fun hay_13_exchanges() { assertEquals(13, Exchanges.TODAS.size) }
+    @Test fun hay_15_exchanges() { assertEquals(15, Exchanges.TODAS.size) }
+}
+
+class WhitebitBingxTest {
+    @Test fun whitebit_lee_claves_como_mercados_y_salta_perp_y_otras_monedas() {
+        val r = Exchanges.WHITEBIT.parsear("""{"0G_USDT":{"last_price":"0.2601","quote_volume":"284382.5"},
+          "0G_PERP":{"last_price":"0.26","quote_volume":"3168710"},"1INCH_UAH":{"last_price":"4.2","quote_volume":"17274"},
+          "1INCH_BTC":{"last_price":"0.000001","quote_volume":"0.23"}}""")
+        assertEquals(listOf("0G"), r.map { it.base }); assertEquals(0.2601, r[0].precio, 1e-9)
+    }
+    @Test fun bingx_lee_numeros_con_guion() {
+        val r = Exchanges.BINGX.parsear("""{"code":0,"data":[{"symbol":"BTC-USDT","lastPrice":82684.01,"quoteVolume":139505497.53},{"symbol":"ETH-BTC","lastPrice":0.03,"quoteVolume":5}]}""")
+        assertEquals(1, r.size); assertEquals("BTC", r[0].base); assertEquals(139505497.53, r[0].volumen, 1e-3)
+    }
+    @Test fun bingx_pide_con_hora_actual_en_cada_pedido() {
+        assertTrue(Exchanges.BINGX.url.contains("?timestamp="))
+    }
 }

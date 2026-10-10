@@ -17,7 +17,15 @@ data class Cotizacion(
 )
 
 /** Un exchange del que la app lee precios: su URL pública y cómo interpretar su respuesta. */
-class Fuente(val nombre: String, val url: String, private val leer: (String) -> List<Cotizacion>) {
+class Fuente(
+    val nombre: String,
+    private val base: String,
+    /** Parte de la URL que cambia en cada pedido (por ejemplo una marca de hora). */
+    private val sufijo: () -> String = { "" },
+    private val leer: (String) -> List<Cotizacion>,
+) {
+    val url: String get() = base + sufijo()
+
     /** Devuelve los pares de la respuesta; si el JSON no tiene el formato esperado, devuelve lista vacía en vez de romper. */
     fun parsear(json: String): List<Cotizacion> = try { leer(json) } catch (_: Exception) { emptyList() }
 }
@@ -158,5 +166,25 @@ object Exchanges {
         out
     }
 
-    val TODAS: List<Fuente> = listOf(BINANCE, BYBIT, OKX, KUCOIN, GATE, BITGET, MEXC, HTX, CRYPTOCOM, LBANK, XT, POLONIEX, BITSTAMP)
+    /** WhiteBIT: objeto cuyas claves son los mercados ("BTC_USDT") con last_price y quote_volume. Los "_PERP" y "_UAH" no encajan y se saltan. */
+    val WHITEBIT = Fuente("WhiteBIT", "https://whitebit.com/api/v4/public/ticker") { json ->
+        val o = JSONObject(json); val out = ArrayList<Cotizacion>()
+        val claves = o.keys()
+        while (claves.hasNext()) {
+            val k = claves.next(); val m = o.optJSONObject(k) ?: continue
+            sumar(out, "WhiteBIT", k, "_", num(m, "last_price"), num(m, "quote_volume")) { b, q -> "https://whitebit.com/trade/$b-$q" }
+        }
+        out
+    }
+
+    /** BingX: data[] con symbol ("BTC-USDT"), lastPrice y quoteVolume (números). Pide una marca de hora actual. */
+    val BINGX = Fuente("BingX", "https://open-api.bingx.com/openApi/spot/v1/ticker/24hr", sufijo = { "?timestamp=" + System.currentTimeMillis() }) { json ->
+        val a = JSONObject(json).getJSONArray("data"); val out = ArrayList<Cotizacion>()
+        for (i in 0 until a.length()) { val o = a.optJSONObject(i) ?: continue
+            sumar(out, "BingX", o.optString("symbol"), "-", num(o, "lastPrice"), num(o, "quoteVolume")) { b, q -> "https://bingx.com/en/spot/$b$q/" }
+        }
+        out
+    }
+
+    val TODAS: List<Fuente> = listOf(BINANCE, BYBIT, OKX, KUCOIN, GATE, BITGET, MEXC, HTX, CRYPTOCOM, LBANK, XT, POLONIEX, BITSTAMP, WHITEBIT, BINGX)
 }
