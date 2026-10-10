@@ -61,6 +61,17 @@ class ObjetivosTest {
         assertTrue(Objetivos.analizar("10.0.0.0/16 11.0.0.0/16").errores.isNotEmpty())   // juntos pasan el tope
     }
 
+    @Test fun detecta_redes_locales() {
+        assertTrue(Objetivos.analizar("192.168.1.1-254").hayLocales)
+        assertTrue(Objetivos.analizar("10.0.0.0/24").hayLocales)
+        assertTrue(Objetivos.analizar("172.20.1.5").hayLocales)
+        assertTrue(Objetivos.analizar("8.8.8.8, 192.168.0.1").hayLocales)
+        assertFalse(Objetivos.analizar("172.32.1.5").hayLocales)
+        assertFalse(Objetivos.analizar("8.8.8.8").hayLocales)
+        assertFalse(Objetivos.analizar("ejemplo.com").hayLocales)
+        assertFalse(Objetivos.analizar("100.64.0.1").hayLocales)   // CGNAT de la operadora: sí se alcanza por datos móviles
+    }
+
     @Test fun dominio_con_guion_no_se_toma_por_rango() = assertEquals(listOf("mi-sitio.com"), lista("mi-sitio.com"))
 }
 
