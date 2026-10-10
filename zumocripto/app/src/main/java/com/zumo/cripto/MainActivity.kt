@@ -110,7 +110,7 @@ class MainActivity : Activity() {
         }
 
         seccion("¿Qué hace Zumo Cripto?",
-            "• Lee los precios de 7 exchanges (Binance, Bybit, OKX, KuCoin, Gate.io, Bitget y MEXC) directamente desde sus APIs públicas.\n" +
+            "• Lee los precios de 13 exchanges (Binance, Bybit, OKX, KuCoin, Gate.io, Bitget, MEXC, HTX, Crypto.com, LBank, XT.com, Poloniex y Bitstamp) directamente desde sus APIs públicas.\n" +
             "• Busca los activos que se operan en dos o más exchanges y compara su precio entre ellos.\n" +
             "• Te muestra dónde está más barato y dónde más caro, y cuánto es la diferencia en porcentaje.\n" +
             "• Con el campo de comisión ves cuánto te queda neto. Tocando una fila ves todos los exchanges y un enlace para operar.")
@@ -124,7 +124,7 @@ class MainActivity : Activity() {
             "• Los precios pueden cambiar en los segundos que tarda el pedido, y hay exchanges con poco volumen donde el precio no es confiable.\n" +
             "• Revisá siempre el precio real en cada exchange antes de mover dinero.")
 
-        seccion("Fuentes", "Precios leídos de las APIs públicas de Binance, Bybit, OKX, KuCoin, Gate.io, Bitget y MEXC.")
+        seccion("Fuentes", "Precios leídos de las APIs públicas de 13 exchanges.")
 
         sv.addView(col)
         return sv
