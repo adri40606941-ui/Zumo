@@ -431,3 +431,51 @@ class BotPublica(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Conecto(unittest.TestCase):
+    """La app avisa por cuál IP de un rango entró; el bot se lo manda al admin una sola vez cada tanto."""
+
+    def setUp(self):
+        import servidores as sv
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        self.avisos = []
+        self.ahora = [1000.0]
+        cuenta = lambda tok: ("Adrián", "2026-11-09") if tok == "b9da1a72f68f59b8" else None
+        self.aviso = sv.AvisoConecto(cuenta, self.avisos.append, reloj=lambda: self.ahora[0])
+        self.puerto = puerto_libre()
+        self.s = publico.servir(self.puerto, t.name, host="127.0.0.1", conecto=self.aviso)
+        self.addCleanup(lambda: (self.s.shutdown(), self.s.server_close()))
+
+    def pedir(self, consulta):
+        c = http.client.HTTPConnection("127.0.0.1", self.puerto, timeout=5)
+        c.request("GET", "/conecto?" + consulta)
+        r = c.getresponse()
+        r.read()
+        return r.status
+
+    def test_avisa_la_ip_al_admin(self):
+        q = "t=b9da1a72f68f59b8&s=Claro&ip=104.16.0.77&r=104.16.0.0%2F24"
+        self.assertEqual(self.pedir(q), 200)
+        self.assertEqual(len(self.avisos), 1)
+        self.assertIn("Adrián", self.avisos[0])
+        self.assertIn("«Claro»", self.avisos[0])
+        self.assertIn("104.16.0.77", self.avisos[0])
+        self.assertIn("104.16.0.0/24 (254 IP)", self.avisos[0])
+        # reconecta por la misma IP: no se repite el aviso
+        self.assertEqual(self.pedir(q), 200)
+        self.assertEqual(len(self.avisos), 1)
+        # otra IP del rango, o pasada la ventana: sí
+        self.assertEqual(self.pedir(q.replace("0.77", "0.78")), 200)
+        self.assertEqual(len(self.avisos), 2)
+        self.ahora[0] += 7 * 3600
+        self.assertEqual(self.pedir(q), 200)
+        self.assertEqual(len(self.avisos), 3)
+
+    def test_rechaza_token_desconocido_o_datos_malos(self):
+        self.assertEqual(self.pedir("t=zzzzzzzzzzzz&s=Claro&ip=104.16.0.77&r=104.16.0.0%2F24"), 404)
+        self.assertEqual(self.pedir("t=b9da1a72f68f59b8&s=Claro&ip=104.16.0.777&r=104.16.0.0%2F24"), 400)
+        self.assertEqual(self.pedir("t=b9da1a72f68f59b8&s=Claro&ip=104.16.0.77&r=hola.com"), 404)
+        self.assertEqual(self.pedir("t=b9da1a72f68f59b8&s=&ip=104.16.0.77&r=104.16.0.0%2F24"), 400)
+        self.assertEqual(self.avisos, [])

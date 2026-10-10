@@ -71,8 +71,8 @@ object Hosts {
         return ordenarTodos(cands, nombre, esperaMs, sondear)
     }
 
-    /** Un TCP al host (ya sacado de la VPN con [proteger]); true si conectó. */
-    fun sondeoTcp(c: Config, proteger: (Socket) -> Unit): Boolean = try {
+    /** Un TCP al host (ya sacado de la VPN con [proteger]); true si conectó. Un rango de IP cuenta como vivo: sus IP se prueban después (ver Rangos). */
+    fun sondeoTcp(c: Config, proteger: (Socket) -> Unit): Boolean = if (Rangos.esRango(c.host)) true else try {
         Socket().use { s -> proteger(s); s.connect(InetSocketAddress(c.host, c.sshPort), 3000); true }
     } catch (_: Exception) { false }
 }

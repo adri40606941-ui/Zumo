@@ -82,11 +82,12 @@ curl -fsSL "$ZUMO_BASE/$S" | bash
 
 
 TOKEN_RE = re.compile(r"^[A-Za-z0-9]{8,32}$")
+IP_RE = re.compile(r"^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$")
 MAX_CUENTA_POR_MIN = 30          # consultas de /cuenta por IP y por minuto
 MAX_POST = 8192                  # tamaño máximo de un formulario del panel de revendedores (/r)
 
 
-def _handler(directorio, repo=None, accesos=None, dominio="", cuenta=None, reloj=time.time, web=None):
+def _handler(directorio, repo=None, accesos=None, dominio="", cuenta=None, reloj=time.time, web=None, conecto=None):
     pedidos = {}                 # ip -> [momentos] de las consultas de /cuenta del último minuto
 
     def _frenado(ip):
@@ -155,6 +156,17 @@ def _handler(directorio, repo=None, accesos=None, dominio="", cuenta=None, reloj
                 nombre, vence = datos
                 nombre = re.sub(r"[\r\n]+", " ", nombre or "").strip()
                 return self._texto(200, f"{nombre}\n{vence or ''}\n".encode("utf-8"), con_cuerpo=con_cuerpo)
+            elif ruta == "/conecto" and conecto:
+                # La app entró a un servidor con rango de IP y avisa por cuál IP: el bot se lo manda al admin.
+                if _frenado(self._ip()):
+                    return self._texto(429)
+                q = urllib.parse.parse_qs(consulta)
+                t, srv_, ip, rango = (q.get(k, [""])[0] for k in ("t", "s", "ip", "r"))
+                if not (TOKEN_RE.match(t) and IP_RE.match(ip) and 0 < len(rango) <= 40 and 0 < len(srv_) <= 40):
+                    return self._texto(400)
+                if not conecto(t, srv_, ip, rango):
+                    return self._texto(404)
+                return self._texto(200, b"ok\n", con_cuerpo=con_cuerpo)
             elif ruta == "/i" and dominio and accesos:
                 return self._texto(200, (CARGADOR % {"dominio": dominio}).encode(), con_cuerpo=con_cuerpo)
             elif ruta == "/canje" and accesos:
@@ -217,10 +229,10 @@ def _handler(directorio, repo=None, accesos=None, dominio="", cuenta=None, reloj
     return H
 
 
-def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=None, accesos=None, dominio="", cuenta=None, web=None):
+def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=None, accesos=None, dominio="", cuenta=None, web=None, conecto=None):
     """Abre un puerto en un hilo. Devuelve el servidor, o None si no se pudo abrir (nunca lanza)."""
     try:
-        s = ThreadingHTTPServer((host, puerto), _handler(directorio or DIR, repo, accesos, dominio, cuenta, web=web))
+        s = ThreadingHTTPServer((host, puerto), _handler(directorio or DIR, repo, accesos, dominio, cuenta, web=web, conecto=conecto))
         s.daemon_threads = True
         if cert:
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -233,9 +245,9 @@ def servir(puerto, directorio=None, cert=None, clave=None, host="0.0.0.0", repo=
         return None
 
 
-def iniciar(directorio=None, http=80, https=443, accesos=None, dominio="", cuenta=None, web=None):
+def iniciar(directorio=None, http=80, https=443, accesos=None, dominio="", cuenta=None, web=None, conecto=None):
     """Arranca los puertos que se puedan. Devuelve la lista de servidores abiertos."""
-    extra = dict(accesos=accesos, dominio=dominio, cuenta=cuenta, web=web)
+    extra = dict(accesos=accesos, dominio=dominio, cuenta=cuenta, web=web, conecto=conecto)
     abiertos = [servir(http, directorio, **extra)]
     if os.path.isfile(CERT) and os.path.isfile(CLAVE):
         abiertos.append(servir(https, directorio, CERT, CLAVE, **extra))
