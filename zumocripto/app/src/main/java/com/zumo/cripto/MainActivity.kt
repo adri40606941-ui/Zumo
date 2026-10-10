@@ -11,10 +11,11 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
-/** Zumo Cripto: compara el precio de cada activo entre varios exchanges. Todo en código: cabecera, dos pestañas abajo y sus páginas. */
+/** Zumo Cripto: compara el precio de cada activo entre varios exchanges. Todo en código: cabecera, tres pestañas abajo y sus páginas. */
 class MainActivity : Activity() {
     private lateinit var ui: Ui
     private lateinit var oportunidades: PaginaOportunidades
+    private lateinit var cuentas: PaginaCuentas
     private lateinit var info: ScrollView
     private val paginas = ArrayList<View>()
     private val botones = ArrayList<TextView>()
@@ -26,7 +27,9 @@ class MainActivity : Activity() {
         window.navigationBarColor = Paleta.TARJETA
         ui = Ui(this)
 
-        oportunidades = PaginaOportunidades(this)
+        val almacen = AlmacenCuentas(this)
+        oportunidades = PaginaOportunidades(this, almacen)
+        cuentas = PaginaCuentas(this, almacen)
         info = paginaInfo()
 
         val raiz = LinearLayout(this)
@@ -35,7 +38,7 @@ class MainActivity : Activity() {
         raiz.addView(cabecera())
 
         val contenido = FrameLayout(this)
-        for (p in listOf<View>(oportunidades.vista, info)) {
+        for (p in listOf<View>(oportunidades.vista, cuentas.vista, info)) {
             paginas.add(p)
             contenido.addView(p, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
@@ -67,7 +70,7 @@ class MainActivity : Activity() {
         b.orientation = LinearLayout.HORIZONTAL
         b.setBackgroundColor(Paleta.TARJETA)
         b.setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6))
-        val items = listOf("💹" to "Oportunidades", "ℹ️" to "Info")
+        val items = listOf("💹" to "Oportunidades", "🔐" to "Cuentas", "ℹ️" to "Info")
         for ((i, par) in items.withIndex()) {
             val col = LinearLayout(this)
             col.orientation = LinearLayout.VERTICAL
@@ -114,6 +117,9 @@ class MainActivity : Activity() {
             "• Busca los activos que se operan en dos o más exchanges y compara su precio entre ellos.\n" +
             "• Te muestra dónde está más barato y dónde más caro, y cuánto es la diferencia en porcentaje.\n" +
             "• Con el campo de comisión ves cuánto te queda neto. Tocando una fila ves todos los exchanges y un enlace para operar.")
+
+        seccion("Cuentas (claves API)",
+            "En la pestaña Cuentas podés cargar una clave API de solo lectura de Binance, Bybit u OKX. Con ella la app lee las redes de retiro y depósito reales de tu cuenta y la comisión de retiro, así sabe si podés mover cada cripto de un exchange a otro. Nunca pidas ni uses permisos de retiro o trading: no hacen falta. La clave queda cifrada en el teléfono.")
 
         seccion("Sobre los datos",
             "Cada exchange publica sus precios en tiempo real sin clave. Algunos bloquean ciertos países: si no podés leer uno, la app lo dice en el resumen y compara con los demás. Solo se usan pares contra USDT, USDC o USD, y se ignoran los que tienen poco volumen, porque sus precios no son confiables.")
