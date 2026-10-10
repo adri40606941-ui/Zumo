@@ -153,7 +153,7 @@ class Escaner(private val resolver: (String) -> String? = { n -> resolverIpv4(n)
             s.soTimeout = espera
             if (opc.verificarWeb && Puertos.esTls(puerto)) return sondearTls(equipo, ip, puerto, s)
             if (opc.verificarWeb && Puertos.esWeb(puerto)) {
-                val r = pedirWeb(s, equipo)
+                val r = pedirWeb(s, equipo) ?: pedirWebConGet(equipo, ip, puerto, opc)
                 if (r != null) return Hallazgo(equipo, ip, puerto, Hallazgo.Tipo.WEB, r.codigo, r.detalle)
                 return Hallazgo(equipo, ip, puerto, Hallazgo.Tipo.ABIERTO)
             }
@@ -195,9 +195,10 @@ class Escaner(private val resolver: (String) -> String? = { n -> resolverIpv4(n)
     class RespuestaWeb(val codigo: Int, val detalle: String)
 
     /** Manda un HEAD y lee la línea de estado y las cabeceras que sirven (Server, Location). */
-    private fun pedirWeb(s: Socket, equipo: String): RespuestaWeb? {
+    private fun pedirWeb(s: Socket, equipo: String, metodo: String = "HEAD"): RespuestaWeb? {
         val host = if (Objetivos.esIp(equipo)) "localhost" else equipo
-        val pedido = "HEAD / HTTP/1.1\r\nHost: $host\r\nUser-Agent: ZumoPort/1.0\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+        val agente = if (metodo == "HEAD") "ZumoPort/1.0" else "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
+        val pedido = "$metodo / HTTP/1.1\r\nHost: $host\r\nUser-Agent: $agente\r\nAccept: */*\r\nConnection: close\r\n\r\n"
         s.getOutputStream().write(pedido.toByteArray(Charsets.ISO_8859_1))
         s.getOutputStream().flush()
         val buf = ByteArrayOutputStream()
@@ -210,6 +211,17 @@ class Escaner(private val resolver: (String) -> String? = { n -> resolverIpv4(n)
             if (String(buf.toByteArray(), Charsets.ISO_8859_1).contains("\r\n\r\n")) break
         }
         return leerCabecera(String(buf.toByteArray(), Charsets.ISO_8859_1))
+    }
+
+    /** Algunos servidores o redes cortan el HEAD: se reintenta con un GET normal en otra conexión. */
+    private fun pedirWebConGet(equipo: String, ip: String, puerto: Int, opc: Opciones): RespuestaWeb? {
+        val s = Socket()
+        return try {
+            s.tcpNoDelay = true
+            s.connect(InetSocketAddress(ip, puerto), opc.velocidad.esperaMs)
+            s.soTimeout = (opc.velocidad.esperaMs * 2).coerceIn(1000, 4000)
+            pedirWeb(s, equipo, "GET")
+        } catch (_: Exception) { null } finally { try { s.close() } catch (_: Exception) {} }
     }
 
     private fun leerSaludo(s: Socket): String {

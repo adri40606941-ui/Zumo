@@ -368,7 +368,7 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
     }
 
     private fun copiarConectan() {
-        val t = conectan().joinToString("\n") { (n, ps) -> n + "  " + ps.joinToString(",") }
+        val t = conectan().joinToString(",") { it.first }
         if (t.isEmpty()) { toast("No hay resultados"); return }
         val cm = act.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Zumo Port", t))
@@ -464,9 +464,9 @@ class PaginaSubdominios(private val act: Activity, private val ui: Ui, private v
             .show()
     }
 
-    /** Solo los nombres de dominio, uno por línea (sin IP, ASN ni puertos). */
+    /** Solo los nombres de dominio separados por coma (sin IP, ASN ni puertos): se pegan tal cual en Escanear. */
     private fun textoPlano(): String =
-        copia().filter { it.resuelve || mostrarSinIp }.joinToString("\n") { it.nombre }
+        copia().filter { it.resuelve || mostrarSinIp }.joinToString(",") { it.nombre }
 
     private fun copiar() {
         val t = textoPlano()
