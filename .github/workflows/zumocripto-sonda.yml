@@ -9,20 +9,25 @@ jobs:
       contents: write
     steps:
       - name: Pedir cada endpoint
+        shell: bash {0}
         run: |
           mkdir -p out
           : > out/sonda.txt
-          for u in \
-            "https://api-cloud.bitmart.com/spot/quotation/v3/tickers" \
-            "https://api-cloud.bitmart.com/spot/v2/ticker" \
-            "https://whitebit.com/api/v4/public/ticker" \
-            "https://whitebit.com/api/v1/public/tickers" \
-            "https://open-api.bingx.com/openApi/spot/v1/ticker/24hr?timestamp=1791608870000" \
-            "https://open-api.bingx.com/openApi/spot/v2/ticker/24hr?timestamp=1791608870000" ; do
-            echo "===== $u" >> out/sonda.txt
-            curl -s -m 60 -o /tmp/r.json -w "HTTP %{http_code} bytes %{size_download}\n" "$u" >> out/sonda.txt || echo "curl falló: $?" >> out/sonda.txt
-            head -c 800 /tmp/r.json >> out/sonda.txt; echo >> out/sonda.txt; echo >> out/sonda.txt
-          done
+          probar() {
+            echo "===== $1" >> out/sonda.txt
+            curl -s -m 30 -o /tmp/r.json -w "HTTP %{http_code} bytes %{size_download}\n" "$1" >> out/sonda.txt 2>&1
+            echo "curl exit $?" >> out/sonda.txt
+            head -c 700 /tmp/r.json >> out/sonda.txt 2>/dev/null
+            rm -f /tmp/r.json
+            printf '\n\n' >> out/sonda.txt
+          }
+          probar "https://api-cloud.bitmart.com/spot/quotation/v3/tickers"
+          probar "https://api-cloud.bitmart.com/spot/v2/ticker"
+          probar "https://whitebit.com/api/v4/public/ticker"
+          probar "https://whitebit.com/api/v1/public/tickers"
+          probar "https://open-api.bingx.com/openApi/spot/v1/ticker/24hr?timestamp=1791608870000"
+          probar "https://open-api.bingx.com/openApi/spot/v2/ticker/24hr?timestamp=1791608870000"
+          exit 0
       - name: Publicar resultado
         run: |
           cd out && git init -q && git checkout -q -b sonda-salida && git add -A
