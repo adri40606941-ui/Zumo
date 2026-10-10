@@ -38,14 +38,18 @@ class AlmacenCuentas(ctx: Context) {
     }
 
     /** La credencial guardada, o null si no hay o no se pudo descifrar (por ejemplo, si se borró la llave del aparato). */
-    fun leer(exchange: String): Credencial? = try {
-        val g = prefs.getString(PREFIJO + exchange, null) ?: return null
-        val (iv, datos) = g.split(":").let { it[0] to it[1] }
-        val cifrador = Cipher.getInstance("AES/GCM/NoPadding")
-        cifrador.init(Cipher.DECRYPT_MODE, llave(), GCMParameterSpec(128, Firmas.deHex(iv)))
-        val partes = String(cifrador.doFinal(Firmas.deHex(datos)), Charsets.UTF_8).split("\n")
-        Credencial(exchange, partes[0], partes[1], partes.getOrElse(2) { "" })
-    } catch (_: Exception) { null }
+    fun leer(exchange: String): Credencial? {
+        return try {
+            val g = prefs.getString(PREFIJO + exchange, null) ?: return null
+            val trozos = g.split(":")
+            val cifrador = Cipher.getInstance("AES/GCM/NoPadding")
+            cifrador.init(Cipher.DECRYPT_MODE, llave(), GCMParameterSpec(128, Firmas.deHex(trozos[0])))
+            val partes = String(cifrador.doFinal(Firmas.deHex(trozos[1])), Charsets.UTF_8).split("\n")
+            Credencial(exchange, partes[0], partes[1], partes.getOrElse(2) { "" })
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     fun borrar(exchange: String) { prefs.edit().remove(PREFIJO + exchange).apply() }
 
