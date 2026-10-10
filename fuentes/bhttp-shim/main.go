@@ -292,11 +292,6 @@ func handle(c net.Conn, backend string, verbose bool, espera time.Duration) {
 		sid := h[1:17]
 		seq := binary.BigEndian.Uint64(h[17:25])
 		ln := binary.BigEndian.Uint32(h[25:29])
-		// el largo viene de afuera: cualquiera que mande texto cualquiera al puerto (un navegador, un escáner)
-		// lo leería como un largo enorme y el adaptador reservaría esa memoria. La app sube de a 16 KB.
-		if ln > 1<<20 {
-			return
-		}
 
 		switch mode {
 		case 3: // bajada en lote: con espera larga si se puede, si no túnel transparente
