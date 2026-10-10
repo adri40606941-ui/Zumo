@@ -1,0 +1,21 @@
+name: Sonda temporal de APIs de exchanges
+on:
+  workflow_dispatch:
+jobs:
+  sonda:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Pedir cada endpoint
+        run: |
+          for u in \
+            "https://api.binance.com/api/v3/ticker/24hr" \
+            "https://api.bybit.com/v5/market/tickers?category=spot" \
+            "https://www.okx.com/api/v5/market/tickers?instType=SPOT" \
+            "https://api.kucoin.com/api/v1/market/allTickers" \
+            "https://api.gateio.ws/api/v4/spot/tickers" \
+            "https://api.bitget.com/api/v2/spot/market/tickers" \
+            "https://api.mexc.com/api/v3/ticker/24hr" ; do
+            echo "===== $u"
+            curl -s -m 60 -o /tmp/r.json -w "HTTP %{http_code} bytes %{size_download}\n" "$u"
+            head -c 700 /tmp/r.json; echo; echo
+          done
